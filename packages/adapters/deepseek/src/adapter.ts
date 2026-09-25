@@ -1,4 +1,5 @@
-import { accessSync, constants } from 'node:fs'
+import { accessSync, constants, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import {
   spawn,
@@ -71,6 +72,18 @@ function discoverExecutable(name: string): string | undefined {
     for (const extension of extensions) {
       const candidate = join(directory, `${name}${extension}`)
       if (canExecute(candidate)) return candidate
+    }
+  }
+  if (name === 'dsh') {
+    const npxRoot = join(homedir(), '.npm', '_npx')
+    try {
+      const candidates = readdirSync(npxRoot)
+        .map((entry) => join(npxRoot, entry, 'node_modules', '.bin', 'dsh'))
+        .filter(canExecute)
+        .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)
+      if (candidates[0]) return candidates[0]
+    } catch {
+      // npm/npx is optional; PATH discovery remains the primary source.
     }
   }
   return undefined

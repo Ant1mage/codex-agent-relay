@@ -56,3 +56,8 @@ export class HostSessionRegistry {
   }
 }
 
+export interface HostSessionStore {
+  upsertCodex(input: HostSessionUpsert): HostSession
+  get(id: string): HostSession | undefined
+  list(): HostSession[]
+}

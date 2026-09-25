@@ -1,0 +1,30 @@
+{
+  "name": "@relay/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview"
+  },
+  "dependencies": {
+    "@relay/adapter-deepseek": "workspace:*",
+    "@relay/core": "workspace:*",
+    "@relay/i18n": "workspace:*",
+    "@relay/protocol": "workspace:*",
+    "lucide-react": "^0.544.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^44.4.5",
+    "electron-vite": "^5.0.0",
+    "vite": "^7.0.0"
+  }
+}

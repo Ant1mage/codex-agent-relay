@@ -6,6 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "deepseek:smoke": "tsx packages/adapters/deepseek/src/smoke.ts",
+    "desktop:build": "pnpm --filter @relay/desktop build",
+    "desktop:dev": "pnpm --filter @relay/desktop dev",
     "mcp:dev": "tsx packages/mcp/src/stdio.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -21,6 +23,7 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "better-sqlite3",
+      "electron",
       "esbuild"
     ]
   }
