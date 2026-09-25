@@ -1,0 +1,11 @@
+{
+  "name": "@relay/i18n",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@relay/protocol": "workspace:*"
+  }
+}
+

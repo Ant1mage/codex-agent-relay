@@ -1,0 +1,29 @@
+import { RelayError, relayEventSchema, type RelayEvent } from '@relay/protocol'
+
+export interface EventStore {
+  append(event: RelayEvent): void | Promise<void>
+  list(runId: string): RelayEvent[] | Promise<RelayEvent[]>
+}
+
+export class MemoryEventStore implements EventStore {
+  readonly #events = new Map<string, RelayEvent[]>()
+
+  append(input: RelayEvent): void {
+    const event = relayEventSchema.parse(input)
+    const events = this.#events.get(event.runId) ?? []
+    const expected = events.length + 1
+    if (event.seq !== expected) {
+      throw new RelayError(
+        'EVENT_SEQUENCE_CONFLICT',
+        `Expected sequence ${expected} for run ${event.runId}, received ${event.seq}`,
+      )
+    }
+    events.push(event)
+    this.#events.set(event.runId, events)
+  }
+
+  list(runId: string): RelayEvent[] {
+    return [...(this.#events.get(runId) ?? [])]
+  }
+}
+

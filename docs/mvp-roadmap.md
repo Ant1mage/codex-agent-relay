@@ -25,6 +25,7 @@
 - HostSession → Run → WorkerSession → Event 数据链路。
 - SQLite append-only Event Store 和基础 projection。
 - Sessions、Run 列表、Live Log、Agents、Settings 五个最小页面。
+- 英语与简体中文界面；默认跟随系统语言，并允许用户切换后持久化。
 - Global / Workspace policy；Session 临时 override 可做最小版本。
 - Read-only 与 write capability；并行 writer 的保守冲突保护。
 - cancel；handoff 可作为 MVP 后半程能力。
@@ -56,6 +57,7 @@ MVP 采用全栈 TypeScript，优先降低本地进程与协议集成的复杂�
 | 内部 IPC | Unix Domain Socket / Windows Named Pipe，使用 Node `net` |
 | 持久化 | SQLite + `better-sqlite3` |
 | Schema | Zod |
+| i18n | 类型安全的内置资源（`en` / `zh-CN`），Renderer 与 Core 共用翻译键 |
 | Monorepo | pnpm workspace |
 | 打包 | Electron Forge 或 electron-builder（二选一，早期不并存） |
 | Logging | 自定义、版本化的 `RelayEvent` |
@@ -157,4 +159,3 @@ relay/
 - 基于历史数据的自动路由推荐。
 
 这些都应建立在稳定的 Adapter、Event 与 HostSession 边界之上，而不是反过来驱动 MVP 架构。
-
