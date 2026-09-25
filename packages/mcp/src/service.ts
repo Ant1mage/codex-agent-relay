@@ -1,9 +1,6 @@
 import type { CodexThreadMetadataResolver } from '@relay/integration-codex'
-import {
-  HostSessionRegistry,
-  RunController,
-  type RunProjection,
-} from '@relay/core'
+import { RunController, type RunProjection } from '@relay/core'
+import type { HostSessionStore } from '@relay/core'
 import type { AccessMode, AgentProfile, Isolation } from './types.js'
 import type { CodexInvocationContext } from './context.js'
 
@@ -17,11 +14,12 @@ export interface RunAgentInput {
 export class RelayService {
   constructor(
     readonly controller: RunController,
-    readonly sessions: HostSessionRegistry,
+    readonly sessions: HostSessionStore,
     readonly codexThreads: CodexThreadMetadataResolver,
+    readonly beforeRun?: (workspace: string) => void | Promise<void>,
   ) {}
 
-  async syncSession(context: CodexInvocationContext): Promise<ReturnType<HostSessionRegistry['upsertCodex']>> {
+  async syncSession(context: CodexInvocationContext): Promise<ReturnType<HostSessionStore['upsertCodex']>> {
     const metadata = await this.codexThreads.resolve(context.threadId)
     return this.sessions.upsertCodex({
       nativeSessionId: metadata.id,
@@ -55,6 +53,7 @@ export class RelayService {
     hostSessionDisplayName: string
   }> {
     const session = await this.syncSession(context)
+    await this.beforeRun?.(session.cwd)
     const active = await this.controller.start({
       hostSessionId: session.id,
       profileId: input.agentId,
@@ -86,4 +85,3 @@ export class RelayService {
     await this.controller.cancelWorker(workerSessionId)
   }
 }
-

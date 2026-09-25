@@ -40,6 +40,10 @@ export class PolicyResolver {
     this.#workspace.set(resolve(workspace), relayPolicyOverrideSchema.parse(override))
   }
 
+  clearWorkspace(workspace: string): void {
+    this.#workspace.delete(resolve(workspace))
+  }
+
   setSession(hostSessionId: string, override: RelayPolicyOverride): void {
     this.#session.set(hostSessionId, relayPolicyOverrideSchema.parse(override))
   }
@@ -72,4 +76,3 @@ export function assertPolicyAllows(
     throw new RelayError('CAPABILITY_DENIED', 'Network access is disabled by policy')
   }
 }
-
