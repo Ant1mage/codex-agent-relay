@@ -24,7 +24,10 @@ export interface ResumeInput {
   runId: string
   workerSessionId: string
   nativeSessionId: string
-  message?: string
+  task: string
+  cwd: string
+  accessMode: StartInput['accessMode']
+  instructions?: string
 }
 
 export interface WorkerSessionHandle {
@@ -42,4 +45,3 @@ export interface AgentAdapter extends Disposable {
   cancel(nativeSessionId: string): Promise<void>
   resume?(input: ResumeInput): Promise<WorkerSessionHandle>
 }
-
