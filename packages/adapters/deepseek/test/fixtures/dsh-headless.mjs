@@ -5,6 +5,11 @@ if (process.argv.includes('--version')) {
   process.exit(0)
 }
 
+if (process.argv.includes('--help')) {
+  process.stdout.write('Options:\n  --json\n  --session-id <id>\n')
+  process.exit(0)
+}
+
 let task = ''
 process.stdin.setEncoding('utf8')
 for await (const chunk of process.stdin) task += chunk
@@ -27,4 +32,3 @@ if (task.includes('HANG')) {
   write({ type: 'status', phase: 'turn_end', turn: 1, reason: { kind: 'completed' } })
   write({ type: 'final', text: 'work complete' })
 }
-
