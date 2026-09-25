@@ -1,0 +1,11 @@
+{
+  "name": "@relay/adapter-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@relay/protocol": "workspace:*"
+  }
+}
+
