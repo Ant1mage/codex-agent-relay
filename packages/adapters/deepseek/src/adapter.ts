@@ -1,6 +1,11 @@
 import { accessSync, constants } from 'node:fs'
 import { delimiter, join } from 'node:path'
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  spawn,
+  spawnSync,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams,
+} from 'node:child_process'
 import { createInterface } from 'node:readline'
 import type {
   AdapterEvent,
@@ -76,7 +81,8 @@ export class DeepSeekAdapter implements AgentAdapter {
   readonly #configuredExecutable: string | undefined
   readonly #prefixArgs: string[]
   readonly #environment: NodeJS.ProcessEnv | undefined
-  readonly #processes = new Map<string, ChildProcessWithoutNullStreams>()
+  readonly #processes = new Map<string, ChildProcess>()
+  #features = { json: true, resume: true }
   #disposed = false
 
   constructor(options: DeepSeekAdapterOptions = {}) {
@@ -88,9 +94,9 @@ export class DeepSeekAdapter implements AgentAdapter {
   capabilities(): AdapterCapabilities {
     return {
       nonInteractive: true,
-      structuredEvents: true,
+      structuredEvents: this.#features.json,
       cwd: true,
-      resume: true,
+      resume: this.#features.resume,
       send: false,
       cancel: true,
       childSessions: false,
@@ -107,6 +113,7 @@ export class DeepSeekAdapter implements AgentAdapter {
       timeout: 5_000,
       env: { ...process.env, ...this.#environment },
     })
+    this.#features = this.#probeFeatures(executablePath)
     const version = result.status === 0 ? result.stdout.trim() || result.stderr.trim() : undefined
     return {
       runtimes: [
@@ -121,7 +128,12 @@ export class DeepSeekAdapter implements AgentAdapter {
       ],
       diagnostics:
         result.status === 0
-          ? ['Authentication is validated by DeepSeek Harness when a run starts']
+          ? [
+              'Authentication is validated by DeepSeek Harness when a run starts',
+              ...(this.#features.json
+                ? []
+                : ['This dsh version has no --json stream; Relay will use bounded plain-text mode']),
+            ]
           : [`DeepSeek Harness version check failed: ${result.stderr.trim() || 'unknown error'}`],
     }
   }
@@ -138,6 +150,8 @@ export class DeepSeekAdapter implements AgentAdapter {
     if (this.#disposed) throw new Error('DeepSeek adapter is disposed')
     const executablePath = this.#configuredExecutable ?? discoverExecutable('dsh')
     if (!executablePath) throw new Error('DeepSeek Harness executable `dsh` was not found')
+    this.#features = this.#probeFeatures(executablePath)
+    if (!this.#features.json) return this.#launchPlain(executablePath, input, resumeSessionId)
 
     const args = [
       ...this.#prefixArgs,
@@ -222,6 +236,96 @@ export class DeepSeekAdapter implements AgentAdapter {
 
     child.stdin.end(input.task)
     const nativeSessionId = await ready
+    return {
+      nativeSessionId,
+      ...(child.pid === undefined ? {} : { processId: child.pid }),
+      events: queue,
+    }
+  }
+
+  #probeFeatures(executablePath: string): { json: boolean; resume: boolean } {
+    const help = spawnSync(
+      executablePath,
+      [...this.#prefixArgs, '--profile', 'headless', '--help'],
+      {
+        encoding: 'utf8',
+        timeout: 5_000,
+        env: { ...process.env, ...this.#environment },
+      },
+    )
+    const output = `${help.stdout ?? ''}\n${help.stderr ?? ''}`
+    return { json: output.includes('--json'), resume: output.includes('--session-id') }
+  }
+
+  async #launchPlain(
+    executablePath: string,
+    input: StartInput | ResumeInput,
+    resumeSessionId?: string,
+  ): Promise<WorkerSessionHandle> {
+    if (resumeSessionId && !this.#features.resume) {
+      throw new Error('This DeepSeek Harness version does not support --session-id')
+    }
+    const args = [
+      ...this.#prefixArgs,
+      '--profile',
+      'headless',
+      ...(resumeSessionId ? ['--session-id', resumeSessionId] : []),
+      input.task,
+    ]
+    const child = spawn(executablePath, args, {
+      cwd: input.cwd,
+      env: { ...process.env, ...this.#environment, NO_COLOR: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const nativeSessionId = `dsh-process:${input.workerSessionId}`
+    this.#processes.set(input.workerSessionId, child)
+    this.#processes.set(nativeSessionId, child)
+    const queue = new AsyncEventQueue()
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdout = `${stdout}${chunk}`.slice(-128_000)
+    })
+    child.stderr.on('data', (chunk: string) => {
+      stderr = `${stderr}${chunk}`.slice(-32_000)
+      if (chunk.trim()) {
+        queue.push({
+          type: 'worker/reasoning',
+          data: { text: chunk },
+          nativeEvent: { stream: 'stderr', text: chunk },
+        })
+      }
+    })
+    child.on('error', (error) => {
+      queue.push({ type: 'worker/failed', data: { message: error.message } })
+      queue.close()
+    })
+    child.on('close', (code, signal) => {
+      this.#processes.delete(input.workerSessionId)
+      this.#processes.delete(nativeSessionId)
+      if (stdout.trim()) {
+        queue.push({
+          type: 'worker/message',
+          data: { kind: 'final', text: stdout.trim() },
+          nativeEvent: { stream: 'stdout', text: stdout },
+        })
+      }
+      queue.push(
+        code === 0
+          ? { type: 'worker/completed', data: { summary: stdout.trim(), exitCode: code } }
+          : {
+              type: 'worker/failed',
+              data: {
+                message: stderr.trim() || 'DeepSeek Harness exited unsuccessfully',
+                exitCode: code,
+                signal,
+              },
+            },
+      )
+      queue.close()
+    })
     return {
       nativeSessionId,
       ...(child.pid === undefined ? {} : { processId: child.pid }),

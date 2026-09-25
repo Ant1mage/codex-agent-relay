@@ -2,7 +2,9 @@ import { resolve } from 'node:path'
 import process from 'node:process'
 import { DeepSeekAdapter } from './adapter.js'
 
-const [task, cwdArgument] = process.argv.slice(2)
+const commandArguments = process.argv.slice(2)
+if (commandArguments[0] === '--') commandArguments.shift()
+const [task, cwdArgument] = commandArguments
 if (!task) {
   process.stderr.write('Usage: pnpm deepseek:smoke -- "task" [cwd]\n')
   process.exitCode = 2
