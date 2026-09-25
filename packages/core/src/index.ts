@@ -1,4 +1,5 @@
 export * from './memory-event-store.js'
+export * from './host-sessions.js'
 export * from './run-controller.js'
 export * from './policy.js'
 export * from './projection.js'

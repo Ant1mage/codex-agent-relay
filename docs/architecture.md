@@ -73,6 +73,8 @@ type HostSession = {
   id: string                 // 例如 codex:<native-session-id>
   host: 'codex'              // MVP 只做 Codex
   nativeSessionId: string
+  displayName: string        // 始终使用 Codex 当前的线程名称
+  nameSource: 'codex'        // Relay 不创建独立别名
   cwd: string
   model?: string
   status: 'active' | 'offline' | 'ended'
@@ -258,4 +260,3 @@ Worker CLIs
 ```
 
 三个通信面彼此独立，全程不需要 TCP 端口。Renderer 通过 Electron IPC 读取 Core projection。
-

@@ -105,8 +105,14 @@ export class SqliteEventStore implements EventStore {
     return rows.map((row) => row.run_id)
   }
 
+  findRunIdByWorker(workerSessionId: string): string | undefined {
+    const row = this.#database
+      .prepare('SELECT run_id FROM relay_events WHERE worker_session_id = ? LIMIT 1')
+      .get(workerSessionId) as { run_id: string } | undefined
+    return row?.run_id
+  }
+
   close(): void {
     this.#database.close()
   }
 }
-

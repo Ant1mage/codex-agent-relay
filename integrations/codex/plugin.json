@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "relay",
+  "version": "0.0.0",
+  "description": "Delegate bounded Codex tasks to locally managed coding-agent runtimes.",
+  "extensions": {
+    "com.openai": {
+      "hooks": "./hooks/hooks.json",
+      "interface": {
+        "displayName": "Relay",
+        "shortDescription": "Control local coding subagents from Codex",
+        "developerName": "Relay",
+        "category": "Developer Tools",
+        "capabilities": ["Read", "Write"]
+      }
+    }
+  }
+}
+

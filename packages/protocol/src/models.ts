@@ -50,13 +50,24 @@ export const hostSessionSchema = z.object({
   id: identifierSchema,
   host: z.literal('codex'),
   nativeSessionId: identifierSchema,
+  displayName: z.string().trim().min(1).max(500),
+  nameSource: z.literal('codex'),
   cwd: z.string().min(1),
   model: z.string().min(1).optional(),
   status: hostSessionStatusSchema,
   startedAt: isoTimestampSchema,
+  updatedAt: isoTimestampSchema,
   endedAt: isoTimestampSchema.optional(),
 })
 export type HostSession = z.infer<typeof hostSessionSchema>
+
+export const hostSessionUpsertSchema = hostSessionSchema.pick({
+  nativeSessionId: true,
+  displayName: true,
+  cwd: true,
+  model: true,
+}).extend({ status: hostSessionStatusSchema.default('active') })
+export type HostSessionUpsert = z.infer<typeof hostSessionUpsertSchema>
 
 export const accessModeSchema = z.enum(['read_only', 'propose', 'write'])
 export const isolationSchema = z.enum(['shared', 'worktree'])

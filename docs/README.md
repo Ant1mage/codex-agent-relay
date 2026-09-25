@@ -59,6 +59,7 @@ Relay 不画复杂 Agent 拓扑图。主界面围绕真实工作展开：
 
 - [architecture.md](architecture.md)：概念模型、进程架构、数据模型、日志、Routing 与安全边界。
 - [integrations-and-adapters.md](integrations-and-adapters.md)：Codex 集成、Adapter 设计、DeepSeek Harness 借鉴与 backend 优先级。
+- [codex-integration.md](codex-integration.md)：Codex session 对齐、名称同步与 stdio MCP 工具面。
 - [mvp-roadmap.md](mvp-roadmap.md)：MVP 范围、技术栈和开发顺序。
 
 ## 一句话架构
@@ -73,4 +74,3 @@ Codex
                  ↓
         DeepSeek / Antigravity / Kimi CLI
 ```
-

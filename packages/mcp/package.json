@@ -1,0 +1,16 @@
+{
+  "name": "@relay/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.1.0",
+    "@relay/adapter-deepseek": "workspace:*",
+    "@relay/core": "workspace:*",
+    "@relay/integration-codex": "workspace:*",
+    "@relay/protocol": "workspace:*",
+    "zod": "^4.1.0"
+  }
+}
+
