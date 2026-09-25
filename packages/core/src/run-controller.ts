@@ -14,6 +14,7 @@ import {
 } from '@relay/protocol'
 import type { EventStore } from './memory-event-store.js'
 import { assertPolicyAllows, PolicyResolver } from './policy.js'
+import { projectRun, type RunProjection } from './projection.js'
 import { AdapterRegistry, ProfileRegistry, RuntimeRegistry } from './registry.js'
 
 export interface ActiveRun {
@@ -75,6 +76,53 @@ export class RunController {
 
   listActive(): Array<{ run: Run; worker: WorkerSession }> {
     return [...this.#active.values()].map(({ run, worker }) => ({ run, worker }))
+  }
+
+  async get(runId: string): Promise<RunProjection> {
+    const events = await this.eventStore.list(runId)
+    if (events.length === 0) throw new RelayError('RUN_NOT_FOUND', `Unknown run ${runId}`)
+    return projectRun(events)
+  }
+
+  async wait(runId: string): Promise<RunProjection> {
+    const active = this.#active.get(runId)
+    if (active) {
+      while (this.#active.has(runId)) await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    return this.get(runId)
+  }
+
+  async getByWorker(workerSessionId: string): Promise<RunProjection> {
+    const runId = await this.eventStore.findRunIdByWorker(workerSessionId)
+    if (!runId) throw new RelayError('WORKER_NOT_FOUND', `Unknown worker ${workerSessionId}`)
+    return this.get(runId)
+  }
+
+  async waitForWorker(workerSessionId: string): Promise<RunProjection> {
+    const runId = await this.eventStore.findRunIdByWorker(workerSessionId)
+    if (!runId) throw new RelayError('WORKER_NOT_FOUND', `Unknown worker ${workerSessionId}`)
+    return this.wait(runId)
+  }
+
+  async send(workerSessionId: string, message: string): Promise<void> {
+    const active = [...this.#active.values()].find(
+      (candidate) => candidate.worker.id === workerSessionId,
+    )
+    if (!active) throw new RelayError('WORKER_NOT_FOUND', `Worker ${workerSessionId} is not active`)
+    if (!active.adapter.send) {
+      throw new RelayError('OPERATION_UNSUPPORTED', `Adapter ${active.adapter.id} does not support send`)
+    }
+    const nativeSessionId = active.handle?.nativeSessionId
+    if (!nativeSessionId) throw new RelayError('WORKER_NOT_FOUND', `Worker ${workerSessionId} is starting`)
+    await active.adapter.send(nativeSessionId, message)
+  }
+
+  async cancelWorker(workerSessionId: string): Promise<void> {
+    const active = [...this.#active.values()].find(
+      (candidate) => candidate.worker.id === workerSessionId,
+    )
+    if (!active) throw new RelayError('WORKER_NOT_FOUND', `Worker ${workerSessionId} is not active`)
+    await this.cancel(active.run.id)
   }
 
   async start(input: RunRequest): Promise<ActiveRun> {

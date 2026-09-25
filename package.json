@@ -1,10 +1,12 @@
 {
   "name": "relay",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.32.1",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "deepseek:smoke": "tsx packages/adapters/deepseek/src/smoke.ts",
+    "mcp:dev": "tsx packages/mcp/src/stdio.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"

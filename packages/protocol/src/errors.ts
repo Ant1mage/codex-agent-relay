@@ -3,6 +3,7 @@ import { z } from 'zod'
 export const relayErrorCodeSchema = z.enum([
   'INVALID_REQUEST',
   'HOST_SESSION_NOT_FOUND',
+  'SESSION_NAME_UNAVAILABLE',
   'PROFILE_NOT_FOUND',
   'PROFILE_DISABLED',
   'RUNTIME_NOT_FOUND',
@@ -29,4 +30,3 @@ export class RelayError extends Error {
     this.details = details
   }
 }
-
