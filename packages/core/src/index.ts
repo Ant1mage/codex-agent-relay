@@ -1,3 +1,6 @@
 export * from './memory-event-store.js'
 export * from './run-controller.js'
-
+export * from './policy.js'
+export * from './projection.js'
+export * from './registry.js'
+export * from './sqlite-event-store.js'

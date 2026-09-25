@@ -9,7 +9,7 @@ export class MemoryEventStore implements EventStore {
   readonly #events = new Map<string, RelayEvent[]>()
 
   append(input: RelayEvent): void {
-    const event = relayEventSchema.parse(input)
+    const event = structuredClone(relayEventSchema.parse(input))
     const events = this.#events.get(event.runId) ?? []
     const expected = events.length + 1
     if (event.seq !== expected) {
@@ -26,4 +26,3 @@ export class MemoryEventStore implements EventStore {
     return [...(this.#events.get(runId) ?? [])]
   }
 }
-

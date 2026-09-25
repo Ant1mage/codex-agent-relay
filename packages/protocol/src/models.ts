@@ -145,6 +145,19 @@ export const runRequestSchema = z.object({
 })
 export type RunRequest = z.infer<typeof runRequestSchema>
 
+export const relayPolicySchema = z.object({
+  maxConcurrentRuns: z.number().int().positive(),
+  maxConcurrentWriters: z.number().int().positive(),
+  requireWorktreeForParallelWriters: z.boolean(),
+  allowWrite: z.boolean(),
+  allowCommands: z.boolean(),
+  allowNetwork: z.boolean(),
+})
+export type RelayPolicy = z.infer<typeof relayPolicySchema>
+
+export const relayPolicyOverrideSchema = relayPolicySchema.partial()
+export type RelayPolicyOverride = z.infer<typeof relayPolicyOverrideSchema>
+
 export const startInputSchema = z.object({
   runId: identifierSchema,
   workerSessionId: identifierSchema,
