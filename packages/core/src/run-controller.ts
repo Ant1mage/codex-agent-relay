@@ -388,6 +388,8 @@ export class RunController {
             cwd: run.cwd,
             accessMode: run.accessMode,
             ...(profile.instructions ? { instructions: profile.instructions } : {}),
+            ...(profile.model ? { model: profile.model } : {}),
+            ...(profile.reasoning ? { reasoning: profile.reasoning } : {}),
           })
       active.handle = handle
       if (handle.nativeSessionId) worker.nativeSessionId = handle.nativeSessionId
