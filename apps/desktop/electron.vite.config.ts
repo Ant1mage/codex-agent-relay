@@ -50,6 +50,7 @@ export default defineConfig({
   renderer: {
     resolve: { alias: workspaceAliases },
     root: resolve(import.meta.dirname, 'src/renderer'),
+    publicDir: resolve(import.meta.dirname, '../../assets'),
     plugins: [react()],
     build: {
       rollupOptions: {
