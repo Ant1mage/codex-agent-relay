@@ -125,12 +125,12 @@ export function parseModels(evidence: HelpEvidence): { models: ModelOption[]; fl
   return { models, flag: `--${match.flag}`, diagnostics: [] }
 }
 
-const DEFAULT_LEVEL_LABELS = ['Low', 'Medium', 'High', 'Very high', 'Max']
-
 /**
  * Builds reasoning levels from the CLI's enumeration. When the CLI accepts a
- * reasoning flag but does not enumerate values, this falls back to a plain
- * numeric scale and records that the labels are Relay's, not the CLI's.
+ * reasoning flag but does not enumerate values, Relay leaves the list empty.
+ * A made-up 1–5 scale would look selectable while passing arguments the
+ * runtime may not understand; it also prevents the provider HTTP fallback
+ * from supplying the real values.
  */
 export function parseReasoning(evidence: HelpEvidence): {
   levels: ReasoningLevel[]
@@ -149,14 +149,10 @@ export function parseReasoning(evidence: HelpEvidence): {
   const values = unique(match.values).slice(0, 5)
   if (!values.length) {
     return {
-      levels: DEFAULT_LEVEL_LABELS.map((label, index) => ({
-        strength: index + 1,
-        label,
-        value: String(index + 1),
-      })),
       flag: `--${match.flag}`,
+      levels: [],
       diagnostics: [
-        `${evidence.executablePath} accepts --${match.flag} without listing levels; Relay shows a 1-5 scale and passes the number`,
+        `${evidence.executablePath} accepts --${match.flag} but does not list reasoning levels in --help`,
       ],
     }
   }

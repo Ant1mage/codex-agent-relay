@@ -631,8 +631,9 @@ CLI, not a list Relay defines:
   advertises a model flag, so the UI can tell "this CLI has no models" apart
   from "selection is unsupported here"
 - Relay never invents a model name, a reasoning label, or a fallback list. When
-  a CLI publishes neither, the profile stores nothing for that field and the
-  runtime's own default applies
+  the CLI does not publish a usable list, Relay asks the provider HTTP catalogue
+  below; if that is unavailable too, the profile stores nothing for that field
+  and the runtime's own default applies
 - the number of reasoning stops follows the CLI: a CLI with four levels gets
   four stops, not a forced three
 - a stored reasoning value is an opaque CLI token, so it is not restricted to
@@ -893,6 +894,86 @@ Avoid:
 - dashboard grids
 - excessive pill badges
 - decorative AI illustrations
+
+---
+
+## 20.1 Implementation Foundation
+
+Relay's UI is composed from **shadcn/ui primitives on Tailwind CSS**. Nothing in
+the renderer hand-rolls an interaction, a control, or a layout primitive that the
+framework already provides.
+
+```text
+Tailwind CSS v4   design tokens and utilities
+shadcn/ui         component primitives (added as source under components/ui)
+lucide            the only icon set
+```
+
+### Why primitives rather than bespoke markup
+
+Relay is a **monitoring surface**, not a product with its own interaction
+language. Its value is that it shows what Codex delegated and what the worker is
+doing; every pixel spent re-implementing a dropdown, a dialog, a tab strip or a
+focus trap is a pixel not spent on that. The framework brings the keyboard
+behaviour, focus management, accessible names, and disabled/selected states that
+a hand-written equivalent gets subtly wrong.
+
+So: reach for a component first, compose second, write CSS last. Custom CSS is
+limited to what a component genuinely cannot express, and it belongs with the
+component, not in a parallel stylesheet.
+
+### The four layers map onto primitives
+
+The product principle (section 2) already describes the composition. Its parts
+are standard desktop structures, so they use standard components:
+
+| Layer / surface | Structure | Primitive |
+| --- | --- | --- |
+| Sessions | persistent master list | `Sidebar` |
+| Step | horizontal navigator over one run | `Tabs` (horizontal, scrollable) |
+| Console | primary detail pane, long scroll | `ScrollArea` + row primitives |
+| CLI Info | secondary detail inspector | `Card` in a side panel |
+| Raw Output / Changes | drill-down over the workspace | `Sheet` |
+| Add / edit agent | bounded configuration task | `Dialog` |
+| Settings | centred preferences surface | `Dialog` + `Card` sections |
+| Session actions | contextual menu | `DropdownMenu` |
+| Onboarding | first-run checklist | `Card` groups |
+| Theme, language | exclusive small choice | `ToggleGroup` |
+| Enable/disable | boolean | `Switch` |
+| Provider rows | selectable list rows | `Item` |
+
+### Rules
+
+- **No bespoke control.** A new select, dialog, tab strip, tooltip or menu is a
+  bug: use the primitive. If a primitive genuinely does not fit, that is a
+  conversation, not a new CSS class.
+
+### Where each surface stands
+
+| Surface | Primitive in use |
+| --- | --- |
+| Session rows, Settings nav, provider rows | `Item` / `ItemGroup` |
+| Step strip | `Tabs` / `TabsList` / `TabsTrigger` |
+| Console body, Raw Output / Changes | `ScrollArea`, `Sheet` |
+| Settings surface, agent editor | `Dialog` + `Card` |
+| Theme, language | `ToggleGroup` |
+| Enable, policy booleans | `Switch`, `Checkbox` |
+| Model, font size, scope | `Select` |
+| Reasoning strength | discrete `Slider` using runtime-provided stops |
+| Name, description, numeric | `Input`, `Textarea` |
+| Agent fields | `Field` / `FieldSet` / `FieldLegend` |
+| Toolbar, actions | `Button`, `Badge` |
+
+What remains as Relay-owned CSS is the **window shell** — the app grid, the
+sidebar column, the workspace surface and the code-log row grid. Those describe
+this application's layout, not a control, and the framework has no primitive for
+them.
+- **Tokens, not literals.** Colours, radii and spacing come from the theme.
+  `bg-surface` / `text-muted-foreground`, never a raw hex or a one-off pixel.
+- **Semantic variants over local overrides.** `variant="outline"`, `size="sm"`.
+- **One spacing scale.** A 4px base; no arbitrary values to nudge one element.
+- **`className` for layout, not for look.** Positioning and size may be set
+  locally; colour, typography and control appearance may not.
 
 ---
 
@@ -1244,6 +1325,10 @@ The workspace should feel focused almost entirely on:
 ```text
 Step + Console
 ```
+
+Those two are the whole product while work is in flight, which is why the Step
+strip is a scrollable tab list and the Console is the only region that grows —
+everything else is chrome that can be hidden.
 
 ---
 

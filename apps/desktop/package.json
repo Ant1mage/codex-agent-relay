@@ -14,22 +14,28 @@
     "@relay/adapter-deepseek": "workspace:*",
     "@relay/adapter-gemini": "workspace:*",
     "@relay/adapter-kimi": "workspace:*",
-    "@relay/adapter-zai": "workspace:*",
     "@relay/adapter-sdk": "workspace:*",
+    "@relay/adapter-zai": "workspace:*",
     "@relay/core": "workspace:*",
     "@relay/i18n": "workspace:*",
     "@relay/protocol": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "lucide-react": "^0.544.0",
+    "radix-ui": "^1.6.7",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "tailwind-merge": "^3.7.0",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "^44.4.5",
     "electron-vite": "^5.0.0",
+    "tailwindcss": "^4.3.3",
     "vite": "^7.0.0"
   }
 }

@@ -1,8 +1,10 @@
 import { resolve } from 'node:path'
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'electron-vite'
 
 const workspaceAliases = {
+  '@': resolve(import.meta.dirname, 'src'),
   '@relay/adapter-antigravity': resolve(import.meta.dirname, '../../packages/adapters/antigravity/src/index.ts'),
   '@relay/adapter-deepseek': resolve(import.meta.dirname, '../../packages/adapters/deepseek/src/index.ts'),
   '@relay/adapter-gemini': resolve(import.meta.dirname, '../../packages/adapters/gemini/src/index.ts'),
@@ -51,7 +53,7 @@ export default defineConfig({
     resolve: { alias: workspaceAliases },
     root: resolve(import.meta.dirname, 'src/renderer'),
     publicDir: resolve(import.meta.dirname, '../../assets'),
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
     build: {
       rollupOptions: {
         input: resolve(import.meta.dirname, 'src/renderer/index.html'),

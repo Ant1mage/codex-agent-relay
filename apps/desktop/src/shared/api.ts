@@ -51,6 +51,12 @@ export interface CodexIntegrationStatus {
   configured: boolean
 }
 
+/** Result of the explicit first-run Codex installation step. */
+export interface CodexIntegrationInstallResult {
+  status: CodexIntegrationStatus
+  messages: string[]
+}
+
 export interface RelayDesktopApi {
   snapshot(): Promise<DesktopSnapshot>
   saveSettings(settings: DesktopSettings): Promise<DesktopSettings>
@@ -58,6 +64,7 @@ export interface RelayDesktopApi {
   cancelWorker(workerSessionId: string): Promise<{ accepted: boolean; message?: string }>
   cancelSessionWorkers(hostSessionId: string): Promise<{ accepted: boolean; count: number }>
   codexStatus(): Promise<CodexIntegrationStatus>
+  installCodexIntegration(): Promise<CodexIntegrationInstallResult>
   runtimeOptions(runtimeId: string): Promise<RuntimeOptions>
   completeOnboarding(): Promise<DesktopSettings>
   openWorkspace(path: string): Promise<{ ok: boolean; message?: string }>

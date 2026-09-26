@@ -83,6 +83,7 @@ void app.whenReady().then(async () => {
     dataSource?.cancelSessionWorkers(hostSessionId),
   )
   ipcMain.handle('relay:codex:status', () => dataSource?.codexIntegration())
+  ipcMain.handle('relay:codex:install', () => dataSource?.installCodexIntegration())
   ipcMain.handle('relay:runtime:options', (_event, runtimeId: string) =>
     dataSource?.runtimeOptions(runtimeId),
   )

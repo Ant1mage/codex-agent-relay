@@ -55,6 +55,25 @@ Relay：约束、生命周期、Session 绑定、记录与传输
 
 Relay 不负责选择 Profile、拆解计划、验收结果或自动重试；这些智能决策始终由 Codex 完成。
 
+### 1.1 渲染层不承载领域概念
+
+Renderer 只做三件事：订阅 snapshot、把投影结果画出来、把用户动作发回主进程。它不解析事件、不推导状态、不决定哪个 Profile 该被使用——这些分别属于 `@relay/core` 的投影、和 Codex 的编排。
+
+因此 UI 的结构直接对应第 1 节的概念层级，而不是另发明一套：
+
+```text
+Sidebar    = HostSession 列表（Codex 的会话）
+Step       = 一次 Run 上的顶层 Worker 导航
+Console    = 选中 Worker 的可观察活动
+CLI Info   = 该 Worker 的配置与结果元数据
+```
+
+界面上不存在“Profile 选择器”或“计划编辑器”，因为那两项决策属于 Codex。Relay 展示的是**委派结果与运行状态**，不是一个可以在此处规划工作的第二工作台。
+
+组件的选择同样服从这一点：见 `ui.md` 20.1。
+
+---
+
 ## 2. Session / TaskRun / Step / WorkerSession / Event
 
 建议采用五层模型：

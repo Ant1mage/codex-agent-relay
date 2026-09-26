@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Check,
   CircleAlert,
@@ -12,7 +12,33 @@ import {
 } from 'lucide-react'
 import type { HostSession, Step, StepStatus } from '@relay/protocol'
 import type { DesktopRunView } from '../../shared/api.js'
+import type { CodexIntegrationStatus } from '../../shared/api.js'
 import { useAppStore } from './store.js'
+import { Badge } from './components/ui/badge.js'
+import { Item, ItemContent, ItemGroup, ItemMedia, ItemTitle } from './components/ui/item.js'
+import { ScrollArea } from './components/ui/scroll-area.js'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './components/ui/select.js'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from './components/ui/sheet.js'
+import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs.js'
+import { Button } from './components/ui/button.js'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from './components/ui/dropdown-menu.js'
 import { createTranslator } from '@relay/i18n'
 import { Onboarding } from './onboarding.js'
 import { SettingsSheet } from './settings.js'
@@ -36,6 +62,42 @@ import {
 /* Sidebar (docs/ui.md 4-5)                                            */
 /* ------------------------------------------------------------------ */
 
+
+/**
+ * Relay's environment at a glance, in the window chrome beside the sidebar
+ * control. It reports what was actually detected rather than a decorative
+ * status, and doubles as the way back into setup once onboarding is done.
+ */
+function EnvironmentChip({ t }: { t: Translator }) {
+  const { snapshot, openOnboarding } = useAppStore()
+  const [codex, setCodex] = useState<CodexIntegrationStatus>()
+
+  // Same checks the first-run flow performs, so the chip and setup agree.
+  useEffect(() => { void window.relay.codexStatus().then(setCodex) }, [])
+
+  const failed = (codex?.checks ?? []).filter((check) => !check.ok)
+  const ready = Boolean(codex?.configured)
+  const detail = (codex?.checks ?? [])
+    .map((check) => `${check.ok ? '✓' : '✗'} ${t(`onboarding.check.${check.id}`)}${check.ok ? '' : ` — ${check.detail}`}`)
+    .join('\n')
+
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      className="env-chip"
+      title={detail}
+      // Always the setup surface: this reports Codex integration state, and the
+      // first-run flow is the only place that explains or fixes it.
+      onClick={openOnboarding}
+    >
+      <span className={ready ? 'size-1.5 rounded-full bg-[var(--green)]' : 'size-1.5 rounded-full bg-[var(--amber)]'} aria-hidden="true" />
+      <span>{ready ? t('env.ready') : t('env.needsSetup')}</span>
+      {failed.length > 0 && <Badge variant="secondary" className="h-4 px-1.5 text-[9px]">{failed.length}</Badge>}
+    </Button>
+  )
+}
+
 function Sidebar({ t }: { t: Translator }) {
   const { snapshot, selectedSessionId, selectSession, setSettingsOpen } = useAppStore()
   const sessions = snapshot?.sessions ?? []
@@ -48,24 +110,40 @@ function Sidebar({ t }: { t: Translator }) {
         </div>
       </div>
       <div className="sidebar-section-title">{t('sessions.title')}</div>
-      <div className="session-list">
+      <ItemGroup className="min-h-0 flex-1 gap-0 overflow-auto px-2 pb-4">
         {/* Text-first rows, no per-session icons (docs/ui.md 4.3) */}
         {sessions.map((session) => (
-          <button
-            className={session.id === selectedSessionId ? 'session-name selected' : 'session-name'}
+          <Item
+            asChild
             key={session.id}
-            onClick={() => selectSession(session.id)}
-            title={session.displayName}
+            size="sm"
+            className={`rounded-md px-2 py-1.5 ${
+              session.id === selectedSessionId ? 'bg-[color-mix(in_srgb,var(--text)_9%,transparent)]' : ''
+            }`}
           >
-            <strong>{session.displayName}</strong>
-            <span>{relativeTime(session.updatedAt, session.status, t)}</span>
-          </button>
+            <button
+              type="button"
+              className="w-full text-left"
+              onClick={() => selectSession(session.id)}
+              title={session.displayName}
+            >
+              <ItemContent className="gap-0.5">
+                <ItemTitle className="text-xs font-medium">{session.displayName}</ItemTitle>
+                <span className="truncate text-[9px] text-faint">
+                  {relativeTime(session.updatedAt, session.status, t)}
+                </span>
+              </ItemContent>
+            </button>
+          </Item>
         ))}
-        {!sessions.length && <p className="sidebar-empty">{t('sessions.empty')}</p>}
-      </div>
-      <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}>
-        <SettingsIcon size={15} />{t('settings.title')}
-      </button>
+        {!sessions.length && <p className="px-2 text-[11px] leading-snug text-faint">{t('sessions.empty')}</p>}
+      </ItemGroup>
+      <Item asChild size="sm" className="m-2 rounded-md">
+        <button type="button" className="w-full text-left text-[11px] text-muted" onClick={() => setSettingsOpen(true)}>
+          <ItemMedia><SettingsIcon size={15} /></ItemMedia>
+          <ItemContent><ItemTitle className="text-[11px] font-normal">{t('settings.title')}</ItemTitle></ItemContent>
+        </button>
+      </Item>
     </aside>
   )
 }
@@ -76,53 +154,35 @@ function Sidebar({ t }: { t: Translator }) {
  */
 function SessionMenu({ session, view, t }: { session: HostSession; view: DesktopRunView | undefined; t: Translator }) {
   const { setNotice, refresh } = useAppStore()
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const close = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false)
-    }
-    window.addEventListener('mousedown', close)
-    return () => window.removeEventListener('mousedown', close)
-  }, [open])
 
   const stopAll = async () => {
-    setOpen(false)
     const result = await window.relay.cancelSessionWorkers(session.id)
     setNotice(result.count ? t('session.stopped').replace('{count}', String(result.count)) : t('session.stoppedNone'))
     await refresh()
   }
   const openWorkspace = async () => {
-    setOpen(false)
     const result = await window.relay.openWorkspace(session.cwd)
     if (!result.ok) setNotice(result.message ?? t('error.generic'))
   }
   const copyId = async () => {
-    setOpen(false)
     await navigator.clipboard.writeText(session.nativeSessionId)
     setNotice(t('session.idCopied'))
   }
 
   return (
-    <div className="session-menu" ref={ref}>
-      <button
-        className="plain-icon"
-        aria-label={t('session.menu')}
-        aria-expanded={open}
-        title={t('session.menu')}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <MoreHorizontal size={16} />
-      </button>
-      {open && (
-        <div className="menu-popover" role="menu">
-          <button onClick={() => void stopAll()}>{t('session.stopAll')}</button>
-          <button onClick={() => void openWorkspace()}>{t('session.openWorkspace')}</button>
-          <button onClick={() => void copyId()}>{t('session.copyId')}</button>
-        </div>
-      )}
+    <div className="session-menu">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon-xs" aria-label={t('session.menu')} title={t('session.menu')}>
+            <MoreHorizontal size={16} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => void stopAll()}>{t('session.stopAll')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void openWorkspace()}>{t('session.openWorkspace')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void copyId()}>{t('session.copyId')}</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {view && <span className="session-run-status"><StatusLabel status={view.run.status} t={t} /></span>}
     </div>
   )
@@ -266,58 +326,87 @@ function StepGroupNode({
   )
 }
 
+/**
+ * Step is a horizontal navigator over the top-level workers of one run, which is
+ * exactly a scrollable tab strip — so it uses Tabs rather than a hand-built row
+ * of buttons (docs/ui.md 7.4, 20.1). TabsList keeps the selected trigger
+ * scrolled into view and gives the pattern correct keyboard behaviour for free.
+ */
 function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
-  const { selectedRunId, selectedStepId } = useAppStore()
-  const currentRef = useRef<HTMLButtonElement>(null)
+  const { selectedRunId, selectedStepId, selectStep } = useAppStore()
   const groups = useMemo(() => groupSteps(items), [items])
 
-  // Selection and current execution are different concepts. Auto-scroll follows
-  // the running worker so it stays discoverable; selecting an older node never
-  // scrolls the active worker out of view (docs/ui.md 7.4).
-  const activeStep = items.find((item) => stepIsActive(item.step))
-  const activeRunId = activeStep?.view.run.id
-  const activeStepId = activeStep?.step.id
-  useEffect(() => {
-    currentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
-  }, [activeRunId, activeStepId])
-
-  const selectedGroup = groups.find((group) =>
-    group.items.some((item) => item.view.run.id === selectedRunId && item.step.id === selectedStepId))
+  // Tab values must be unique across runs; a step id alone can repeat.
+  const valueOf = (item: StepItem) => `${item.view.run.id}:${item.step.id}`
+  const current = items.find(
+    (item) => item.view.run.id === selectedRunId && item.step.id === selectedStepId,
+  )
+  const value = current ? valueOf(current) : ''
 
   return (
-    <section className="step-strip" aria-label={t('steps.title')}>
+    <Tabs
+      value={value}
+      onValueChange={(next) => {
+        const target = items.find((item) => valueOf(item) === next)
+        if (target) selectStep(target.view.run.id, target.step.id)
+      }}
+      className="step-strip"
+    >
       <div className="step-strip-label">{t('steps.title')}</div>
-      <div className="step-scroll">
+      <TabsList className="step-scroll" aria-label={t('steps.title')}>
         {groups.map((group) => {
-          const isActiveGroup = group.items.some((item) => item.step.id === activeStepId && item.view.run.id === activeRunId)
           if (group.items.length === 1) {
             const item = group.items[0]!
             return (
-              <div className="step-link" key={group.key}>
-                <StepNode
-                  item={item}
-                  selected={selectedGroup === group}
-                  active={stepIsActive(item.step)}
-                  t={t}
-                  registerRef={(element) => { if (isActiveGroup) currentRef.current = element }}
-                />
-              </div>
+              <TabsTrigger key={group.key} value={valueOf(item)} className={`step-node ${item.step.status}${stepIsActive(item.step) ? ' current' : ''}`}>
+                <StepNodeBody item={item} t={t} />
+              </TabsTrigger>
             )
           }
+          // Concurrent workers read as one bounded unit (docs/ui.md 10).
           return (
-            <div className="step-link" key={group.key}>
-              <StepGroupNode
-                group={group}
-                t={t}
-                selectedKey={selectedStepId}
-                activeKey={isActiveGroup ? group.key : undefined}
-                registerRef={(element) => { if (isActiveGroup) currentRef.current = element }}
-              />
-            </div>
+            <TabsTrigger
+              key={group.key}
+              value={valueOf(group.items[0]!)}
+              className="step-node step-parallel"
+            >
+              <span className="step-parallel-head">
+                <i className="step-glyph running" aria-hidden="true">{statusGlyph('running')}</i>
+                <strong>
+                  {t('steps.parallel')} · {group.items.filter((i) => stepIsActive(i.step)).length || group.items.length}
+                </strong>
+              </span>
+              <span className="step-parallel-members">
+                {group.items.map((item) => (
+                  <span key={item.step.id} className="step-parallel-member">
+                    <StepNodeBody item={item} t={t} />
+                  </span>
+                ))}
+              </span>
+            </TabsTrigger>
           )
         })}
-      </div>
-    </section>
+      </TabsList>
+    </Tabs>
+  )
+}
+
+/** The inner content of a Step node: status glyph, provider, name, timing. */
+function StepNodeBody({ item, t }: { item: StepItem; t: Translator }) {
+  const { snapshot } = useAppStore()
+  const { view, step } = item
+  const profile = snapshot?.profiles.find((candidate) => candidate.id === view.run.profileId)
+  const runtime = snapshot?.runtimes.find((candidate) => candidate.id === profile?.runtimeId)
+  const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
+  return (
+    <>
+      <span className="step-node-head">
+        <i className={`step-glyph ${step.status}`} aria-hidden="true">{statusGlyph(step.status)}</i>
+        <ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} />
+        <strong>{profile?.name ?? view.run.profileId}</strong>
+      </span>
+      <em>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</em>
+    </>
   )
 }
 
@@ -356,34 +445,37 @@ function Console({
           <span>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</span>
         </div>
         <div className="console-actions">
-          <button onClick={() => openInspector('raw')}>{t('console.rawOutput')} <b>{rawCount}</b></button>
+          <Button variant="outline" size="xs" onClick={() => openInspector('raw')}>{t('console.rawOutput')} <span className="text-muted">{rawCount}</span></Button>
           {/* Stop is worker-level and sits beside the selected CLI (docs/ui.md 19) */}
           {active && worker && (
-            <button
-              className="stop-button"
+            <Button
+              variant="outline"
+              size="xs"
+              className="text-danger"
               onClick={async () => {
                 const response = await window.relay.cancelWorker(worker.id)
                 setNotice(response.accepted ? t('runs.cancelQueued') : response.message)
               }}
             >
               <Square size={11} />{t('action.stop')}
-            </button>
+            </Button>
           )}
-          <button
-            className="info-toggle"
+          <Button
+            variant={cliInfoOpen ? 'secondary' : 'ghost'}
+            size="icon-xs"
             aria-pressed={cliInfoOpen}
             aria-label={cliInfoOpen ? t('cliInfo.hide') : t('cliInfo.show')}
             title={cliInfoOpen ? t('cliInfo.hide') : t('cliInfo.show')}
             onClick={toggleCliInfo}
           >
             <Info size={15} />
-          </button>
+          </Button>
         </div>
       </header>
-      <div className="console-body">
+      <ScrollArea className="console-body min-h-0 h-full">
         {!rows.length && <div className="console-empty">{t('console.empty')}</div>}
         <ConsoleRows rows={rows} t={t} />
-      </div>
+      </ScrollArea>
     </section>
   )
 }
@@ -393,6 +485,7 @@ function Console({
 /* ------------------------------------------------------------------ */
 
 type Override = { model?: string; reasoning?: string }
+const PROFILE_SELECTION = '__relay_profile_selection__'
 
 function overrideKey(runId: string): string {
   return `relay.override.${runId}`
@@ -453,7 +546,7 @@ function CliInfo({ view, step, t, close, openInspector }: {
           </span>
           <em>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</em>
         </div>
-        <button className="plain-icon" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></button>
+        <Button variant="ghost" size="icon-xs" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></Button>
       </header>
       <dl>
         <div><dt>{t('cliInfo.runtime')}</dt><dd>{runtime?.adapterId ?? worker?.runtimeId ?? t('common.notAvailable')}</dd></div>
@@ -462,16 +555,18 @@ function CliInfo({ view, step, t, close, openInspector }: {
           <dd>
             {/* Session-level override; applies to the next run (docs/ui.md 16.2) */}
             {options?.models.length ? (
-              <select
-                aria-label={t('agents.model')}
-                value={override.model ?? ''}
-                onChange={(event) => applyOverride('model', event.target.value)}
+              <Select
+                value={override.model ?? PROFILE_SELECTION}
+                onValueChange={(next) => applyOverride('model', next === PROFILE_SELECTION ? '' : next)}
               >
-                <option value="">{profile?.model ?? t('agents.runtimeDefault')}</option>
-                {options.models.map((model) => (
-                  <option value={model.value} key={model.value}>{model.label ?? model.value}</option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={PROFILE_SELECTION}>{profile?.model ?? t('agents.notSelected')}</SelectItem>
+                  {options.models.map((model) => (
+                    <SelectItem value={model.value} key={model.value}>{model.label ?? model.value}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : (
               <span className="field-note">{t('agents.noModelList')}</span>
             )}
@@ -481,16 +576,18 @@ function CliInfo({ view, step, t, close, openInspector }: {
           <dt>{t('agents.reasoning')}</dt>
           <dd>
             {options?.levels.length ? (
-              <select
-                aria-label={t('agents.reasoning')}
-                value={override.reasoning ?? profile?.reasoning ?? ''}
-                onChange={(event) => applyOverride('reasoning', event.target.value)}
+              <Select
+                value={override.reasoning ?? PROFILE_SELECTION}
+                onValueChange={(next) => applyOverride('reasoning', next === PROFILE_SELECTION ? '' : next)}
               >
-                <option value="">{reasoningLabel(profile?.reasoning)}</option>
-                {options.levels.map((level) => (
-                  <option value={level.value} key={level.value}>{level.label}</option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={PROFILE_SELECTION}>{reasoningLabel(profile?.reasoning)}</SelectItem>
+                  {options.levels.map((level) => (
+                    <SelectItem value={level.value} key={level.value}>{level.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : (
               <span className="field-note">{t('agents.noReasoningLevels')}</span>
             )}
@@ -505,9 +602,9 @@ function CliInfo({ view, step, t, close, openInspector }: {
           <dd>
             {changeCount
               ? (
-                <button className="link-button" onClick={() => openInspector('changes')}>
+                <Button variant="link" size="xs" onClick={() => openInspector('changes')}>
                   {changeCount} {t('console.files')}
-                </button>
+                </Button>
               )
               : t('console.noChanges')}
           </dd>
@@ -521,6 +618,10 @@ function CliInfo({ view, step, t, close, openInspector }: {
 /* Drill-down sheets (docs/ui.md 14, 18)                               */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Raw Output and Changes are drill-downs over the workspace, not permanent
+ * regions — a Sheet is the framework's answer for exactly that (docs/ui.md 14).
+ */
 function InspectorSheet({ inspector, view, step, t, close }: {
   inspector: Exclude<Inspector, undefined>
   view: DesktopRunView
@@ -531,42 +632,43 @@ function InspectorSheet({ inspector, view, step, t, close }: {
   const events = view.events.filter((event) => !event.stepId || event.stepId === step.id)
   const changes = events.filter((event) => event.type === 'tool/edit')
   const raw = events.filter((event) => event.nativeEvent !== undefined)
+  const title = inspector === 'changes' ? t('console.changes') : t('console.rawOutput')
+
   return (
-    <div className="sheet-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}>
-      <aside className="inspector-sheet">
-        <header>
-          <div>
-            <span>{view.run.profileId}</span>
-            <h2>{inspector === 'changes' ? t('console.changes') : t('console.rawOutput')}</h2>
-          </div>
-          <button className="plain-icon" onClick={close}><X size={16} /></button>
-        </header>
-        {inspector === 'changes'
-          ? (
-            <div className="change-list">
-              {!changes.length && <p>{t('console.noChanges')}</p>}
-              {changes.map((event) => (
-                <article key={event.id}>
-                  <strong className="change-path">{eventSummary(event)}</strong>
-                  <pre>{JSON.stringify(event.data, null, 2)}</pre>
-                </article>
-              ))}
-            </div>
-          )
-          : (
-            <div className="raw-output">
-              {!raw.length && <p>{t('console.noRawOutput')}</p>}
-              {raw.map((event) => (
-                <article key={event.id}>
-                  <time>{event.timestamp}</time>
-                  <strong>{event.type}</strong>
-                  <pre>{JSON.stringify(event.nativeEvent, null, 2)}</pre>
-                </article>
-              ))}
-            </div>
-          )}
-      </aside>
-    </div>
+    <Sheet open onOpenChange={(next) => { if (!next) close() }}>
+      <SheetContent side="right" className="inspector-sheet w-full max-w-[520px] gap-0">
+        <SheetHeader>
+          <SheetTitle>{title}</SheetTitle>
+          <SheetDescription>{view.run.profileId}</SheetDescription>
+        </SheetHeader>
+        <ScrollArea className="min-h-0 flex-1">
+          {inspector === 'changes'
+            ? (
+              <div className="change-list">
+                {!changes.length && <p>{t('console.noChanges')}</p>}
+                {changes.map((event) => (
+                  <article key={event.id}>
+                    <strong className="change-path">{eventSummary(event)}</strong>
+                    <pre>{JSON.stringify(event.data, null, 2)}</pre>
+                  </article>
+                ))}
+              </div>
+            )
+            : (
+              <div className="raw-output">
+                {!raw.length && <p>{t('console.noRawOutput')}</p>}
+                {raw.map((event) => (
+                  <article key={event.id}>
+                    <time>{event.timestamp}</time>
+                    <strong>{event.type}</strong>
+                    <pre>{JSON.stringify(event.nativeEvent, null, 2)}</pre>
+                  </article>
+                ))}
+              </div>
+            )}
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -627,9 +729,9 @@ function SessionWorkspace({ t }: { t: Translator }) {
           </p>
         </div>
         <div className="heading-actions">
-          <button className="plain-icon" title={t('common.refresh')} onClick={() => void refresh()}>
+          <Button variant="ghost" size="icon-xs" title={t('common.refresh')} onClick={() => void refresh()}>
             <RefreshCw className={loading ? 'spin' : ''} size={15} />
-          </button>
+          </Button>
           <SessionMenu session={session} view={selectedView} t={t} />
         </div>
       </header>
@@ -704,6 +806,9 @@ export function App() {
   }, [theme])
   useEffect(() => {
     document.documentElement.style.setProperty('--relay-font-scale', String(fontSize / 14))
+    // Tailwind/shadcn use rem, so changing the root size keeps framework
+    // components and Relay-owned layout in the same typography system.
+    document.documentElement.style.fontSize = `${fontSize}px`
   }, [fontSize])
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -733,19 +838,24 @@ export function App() {
 
   return (
     <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}${macOS ? ' macos' : ''}`}>
+      {/* Transparent chrome plane over the content: the sidebar control sits
+          beside the native traffic lights, the environment chip reports what
+          Relay detected. An overlay, not a layout row. */}
+      <div className="window-chrome">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="sidebar-toggle"
+          aria-label={sidebarLabel}
+          title={`${sidebarLabel} (\u2318B)`}
+          aria-expanded={!sidebarCollapsed}
+          onClick={toggleSidebar}
+        >
+          <PanelLeft />
+        </Button>
+        <EnvironmentChip t={t} />
+      </div>
       <div className="app-main">
-        {/* Kept outside the sidebar so collapsing it cannot clip the control. */}
-        <div className="sidebar-rail">
-          <button
-            className="plain-icon sidebar-toggle"
-            aria-label={sidebarLabel}
-            title={`${sidebarLabel} (\u2318B)`}
-            aria-expanded={!sidebarCollapsed}
-            onClick={toggleSidebar}
-          >
-            <PanelLeft size={15} />
-          </button>
-        </div>
         <Sidebar t={t} />
         <SessionWorkspace t={t} />
       </div>
