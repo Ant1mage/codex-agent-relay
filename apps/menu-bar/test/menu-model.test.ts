@@ -137,7 +137,7 @@ describe('buildMenuBarItems', () => {
             { id: 'a', name: 'DeepSeek Code' },
             { id: 'b', name: 'Kimi Code', blocked: 'auth' },
             { id: 'c', name: 'GLM Code', blocked: 'missing' },
-            { id: 'd', name: 'Gemini Code', blocked: 'disabled' },
+            { id: 'd', name: 'Grok Code', blocked: 'disabled' },
           ],
         }),
       }),
@@ -149,7 +149,7 @@ describe('buildMenuBarItems', () => {
       'DeepSeek Code',
       'Kimi Code · Authentication required',
       'GLM Code · Not installed',
-      'Gemini Code · disabled',
+      'Grok Code · disabled',
     ])
     // A blocked agent is still reachable: the editor is where you fix it.
     expect(agents[2]?.action).toEqual({

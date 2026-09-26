@@ -55,7 +55,7 @@ export function repoRoot(): string | undefined {
 /**
  * Where the runtime files live: Contents/Resources inside a packaged app, the
  * build tree in development. The daemon is told about it explicitly instead of
- * guessing a path relative to a bundle file (docs/menu-bar.md 5).
+ * guessing a path relative to a bundle file.
  */
 export function resourcesDir(): string {
   if (app.isPackaged) return process.resourcesPath

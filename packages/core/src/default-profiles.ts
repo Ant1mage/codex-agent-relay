@@ -24,11 +24,6 @@ export function defaultProfiles(runtimes: Runtime[]): AgentProfile[] {
       description: 'General coding worker powered by Kimi Code CLI.',
       capabilities: { readWorkspace: true, writeWorkspace: true, executeCommands: true, networkAccess: true }, enabled: true,
     }]
-    if (runtime.adapterId === 'gemini-cli') return [{
-      id: 'gemini-code', name: 'Gemini Code', runtimeId: runtime.id,
-      description: 'Gemini CLI worker with structured headless events and native session resume.',
-      capabilities: { readWorkspace: true, writeWorkspace: true, executeCommands: true, networkAccess: true }, enabled: true,
-    }]
     if (runtime.adapterId === 'zai-cli') return [{
       id: 'glm-zai', name: 'GLM / Z.ai', runtimeId: runtime.id,
       description: 'GLM-backed structured CLI assistant for bounded analysis and second opinions.',

@@ -8,11 +8,11 @@ import type { AppUpdater, ProgressInfo, UpdateInfo } from 'electron-updater'
  * Relay App updates, and only App updates.
  *
  * electron-updater drives download/verify/replace/relaunch from the signed
- * macOS build electron-builder produces; Relay does not implement any of it
- * (docs/updates.md). The Codex integration has its own lifecycle and is never
+ * macOS build electron-builder produces; Relay does not implement any of it.
+ * The Codex integration has its own lifecycle and is never
  * touched here: installing a new Relay does not mean the Codex MCP server, its
  * skill or its hooks were updated, and the integration checks say so on their
- * own (docs/codex-integration.md 2).
+ * own (docs/codex-integration.md).
  */
 
 /**

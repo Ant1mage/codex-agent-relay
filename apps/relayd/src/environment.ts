@@ -6,7 +6,6 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { AntigravityAdapter } from '@relay/adapter-antigravity'
 import { DeepSeekAdapter } from '@relay/adapter-deepseek'
-import { GeminiAdapter } from '@relay/adapter-gemini'
 import { KimiAdapter } from '@relay/adapter-kimi'
 import { ZaiAdapter } from '@relay/adapter-zai'
 import type { AgentAdapter } from '@relay/adapter-sdk'
@@ -52,7 +51,6 @@ function adapters(): AgentAdapter[] {
     new DeepSeekAdapter(),
     new AntigravityAdapter(),
     new KimiAdapter(),
-    new GeminiAdapter(),
     new ZaiAdapter(),
   ]
 }

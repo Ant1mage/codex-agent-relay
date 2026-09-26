@@ -98,12 +98,11 @@ function withCount(label: string, count: number): string {
 /**
  * Builds the whole menu. Everything is either a projection of the daemon's
  * snapshot or an OS-level switch; the tray never decides which agent should run
- * (docs/menu-bar.md 6).
  */
 /**
  * The App update section. It is deliberately independent of the daemon: a new
  * Relay can be available while the log service is down, and the Codex
- * integration has its own lifecycle (docs/updates.md).
+ * integration has its own lifecycle.
  */
 function updateItems(t: Translator, view: MenuBarView): MenuBarItem[] {
   const items: MenuBarItem[] = []

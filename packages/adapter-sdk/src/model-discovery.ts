@@ -5,7 +5,7 @@ import type { ModelOption, ReasoningLevel, RuntimeOptions } from '@relay/protoco
  *
  * Some runtime CLIs do not publish their model list (the DeepSeek Harness CLI has
  * no model flag at all). When the CLI cannot answer, Relay asks the provider's
- * official API instead and caches the result - see docs/ui.md 16.1.
+ * official API instead and caches the result.
  *
  * Two rules this module holds to:
  *  - the API key is read from the environment only. It is never written to disk,
@@ -46,13 +46,6 @@ export const httpModelQueries: Record<string, HttpModelQuery> = {
     endpoint: 'https://api.moonshot.ai/v1/models',
     keyEnv: ['MOONSHOT_API_KEY', 'KIMI_API_KEY'],
   },
-  gemini: {
-    provider: 'Gemini',
-    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
-    keyEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
-    // Gemini takes the key as a query parameter rather than a bearer token.
-    headers: {},
-  },
   grok: {
     provider: 'Grok',
     endpoint: 'https://api.x.ai/v1/models',
@@ -74,8 +67,8 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 /**
  * Reads models out of the documented response shapes. DeepSeek, Kimi and Grok
- * return an OpenAI-style `{ data: [...] }`; Gemini returns `{ models: [...] }`
- * with names prefixed `models/`.
+ * return an OpenAI-style `{ data: [...] }`; a provider that answers with
+ * `{ models: [...] }` and `models/`-prefixed names is understood as well.
  */
 export function parseModelPayload(payload: unknown): ModelOption[] {
   const root = asRecord(payload)
@@ -91,7 +84,7 @@ export function parseModelPayload(payload: unknown): ModelOption[] {
     if (!record) continue
     const rawId = typeof record.id === 'string' ? record.id : typeof record.name === 'string' ? record.name : undefined
     if (!rawId) continue
-    // Gemini reports "models/gemini-2.5-pro"; the CLI wants the bare id.
+    // Some APIs report "models/<id>"; the CLI wants the bare id.
     const value = rawId.replace(/^models\//, '')
     if (!value) continue
     const label = typeof record.display_name === 'string'
@@ -155,10 +148,11 @@ export async function listModelsOverHttp(
   }
 
   const url = new URL(query.endpoint)
-  // Gemini authenticates with a query parameter; the rest use a bearer header.
-  const headers: Record<string, string> = { accept: 'application/json', ...query.headers }
-  if (query.provider === 'Gemini') url.searchParams.set('key', credential.key)
-  else headers.authorization = `Bearer ${credential.key}`
+  const headers: Record<string, string> = {
+    accept: 'application/json',
+    ...query.headers,
+    authorization: `Bearer ${credential.key}`,
+  }
 
   try {
     const response = await fetchImpl(url.toString(), {

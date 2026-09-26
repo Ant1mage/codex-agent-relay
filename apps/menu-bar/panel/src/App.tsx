@@ -25,7 +25,7 @@ import { RuntimeView } from './views/runtime.js'
 /**
  * Relay's control panel: everything that configures Relay itself lives here, in
  * the menu bar's own window. The web inspector stays a viewer
- * (docs/menu-bar.md 1).
+ * (see docs/architecture.md).
  *
  * Layout rules that keep it readable in a 420px popover: one column, every text
  * node either truncates or wraps, and no element may set its own width from

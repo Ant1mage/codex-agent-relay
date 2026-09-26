@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 /**
  * The tray drives navigation inside the panel instead of reloading it: a menu
  * pick such as "新建智能体…" becomes a message, so the panel keeps its state and
- * no second window is ever created (docs/menu-bar.md 3).
+ * no second window is ever created.
  */
 export interface PanelNavigate {
   tab?: 'agents' | 'policy' | 'codex' | 'runtime'

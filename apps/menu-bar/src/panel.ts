@@ -18,7 +18,7 @@ export { panelUrl, type PanelIntent, type PanelTab, type PanelTarget } from './p
  * which a native NSMenu cannot carry — so the menu keeps status and quick
  * actions and this panel carries the forms. It is served by relayd, which makes
  * the panel same-origin with the API: no file:// module restrictions and no
- * special case in the daemon's Origin guard (docs/menu-bar.md 6).
+ * special case in the daemon's Origin guard.
  */
 
 let panel: BrowserWindow | undefined

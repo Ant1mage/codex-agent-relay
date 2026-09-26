@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Local menu bar control plane for Relay coding-agent runtimes.",
   "author": "Ant1mage",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "main": "out/main.cjs",

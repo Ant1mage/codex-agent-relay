@@ -281,8 +281,8 @@ function dispatch(action: MenuBarAction): void {
 }
 
 /**
- * Development-only hook used to capture the open menu in screenshots
- * (docs/menu-bar.md 8). A packaged build never opens a menu on its own.
+ * Development-only hook used to capture the open menu in screenshots.
+ * A packaged build never opens a menu on its own.
  */
 function previewIfRequested(): void {
   // Opt-in only, and usable in a packaged build too: this is how a support

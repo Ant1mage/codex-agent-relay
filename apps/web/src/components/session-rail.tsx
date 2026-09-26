@@ -7,7 +7,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from './ui/empty.js'
 import { useAppStore } from '../store.js'
 
 /**
- * Sessions are Codex threads, not directories (docs/architecture.md 2): the name
+ * Sessions are Codex threads, not directories (see docs/architecture.md): the name
  * comes from Codex and Relay never invents one.
  */
 export function SessionRail({ t, onSelect }: { t: Translator; onSelect(sessionId: string): void }) {

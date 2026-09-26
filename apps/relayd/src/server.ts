@@ -396,7 +396,7 @@ export function createRelayServer(options: RelayServerOptions): Server {
    * One stamp covers everything a client can see: the event log, the runtime
    * scan, the configuration files and the Codex integration. Without the last
    * three a client would keep rendering state that changed elsewhere
-   * (docs/inspector.md 9).
+   * (see docs/architecture.md).
    */
   async function stamp(): Promise<string> {
     const codex = await options.codex()

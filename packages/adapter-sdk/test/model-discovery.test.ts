@@ -35,15 +35,15 @@ describe('parseModelPayload', () => {
     expect(models[0]).toEqual({ value: 'deepseek-chat', label: 'DeepSeek Chat' })
   })
 
-  it('strips the models/ prefix Gemini uses', () => {
+  it('strips a models/ name prefix when a provider uses one', () => {
     const models = parseModelPayload({
       models: [
-        { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' },
-        { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
+        { name: 'models/example-pro', displayName: 'Example Pro' },
+        { name: 'models/example-flash', displayName: 'Example Flash' },
       ],
     })
-    expect(models.map((model) => model.value)).toEqual(['gemini-2.5-pro', 'gemini-2.5-flash'])
-    expect(models[0]?.label).toBe('Gemini 2.5 Pro')
+    expect(models.map((model) => model.value)).toEqual(['example-pro', 'example-flash'])
+    expect(models[0]?.label).toBe('Example Pro')
   })
 
   it('de-duplicates repeated ids', () => {
@@ -106,18 +106,6 @@ describe('listModelsOverHttp', () => {
     expect(init.headers.authorization).toBe('Bearer sk-test-123')
     expect(result.models.map((model) => model.value)).toEqual(['deepseek-chat'])
     expect(result.authRequired).toBe(false)
-  })
-
-  it('passes the Gemini key as a query parameter, as that API requires', async () => {
-    process.env.GEMINI_API_KEY = 'gm-test-456'
-    const fetchSpy = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ models: [{ name: 'models/gemini-2.5-pro' }] }),
-    })
-    await listModelsOverHttp('gemini', undefined, fetchSpy as unknown as typeof fetch)
-    const [url, init] = fetchSpy.mock.calls[0] as [string, { headers: Record<string, string> }]
-    expect(url).toContain('key=gm-test-456')
-    expect(init.headers.authorization).toBeUndefined()
   })
 
   it('reports an HTTP failure without leaking the key', async () => {

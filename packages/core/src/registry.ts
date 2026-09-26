@@ -112,7 +112,7 @@ export class ProfileRegistry {
   /**
    * Replaces the registered set with what is on disk now. Profiles are user
    * configuration, so a long-running process has to follow edits without a
-   * restart (docs/inspector.md 9).
+   * restart (see docs/architecture.md).
    */
   sync(inputs: AgentProfile[]): { added: string[]; updated: string[]; removed: string[] } {
     const parsed = inputs.map((input) => agentProfileSchema.parse(input))

@@ -6,7 +6,7 @@ export const localeSchema = z.enum(['en', 'zh-CN'])
 export type Locale = z.infer<typeof localeSchema>
 /**
  * Reasoning is a value the runtime's CLI defines and reports, not a fixed Relay
- * scale, so it is stored as an opaque token (docs/ui.md 16.1). Relay only ever
+ * scale, so it is stored as an opaque token. Relay only ever
  * writes a value the CLI itself listed.
  */
 export const reasoningEffortSchema = z.string().trim().min(1).max(64)

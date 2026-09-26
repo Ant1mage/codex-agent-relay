@@ -134,7 +134,7 @@ function listen(server: Server, port: number): Promise<number> {
 /**
  * Only a daemon that answers with the recorded nonce counts as running. A PID is
  * not identity: they get reused, and a stale server.json must never block a
- * fresh start (docs/inspector.md 2).
+ * fresh start (see docs/architecture.md).
  */
 async function confirmedRunningDaemon(): Promise<{ url: string; pid: number } | undefined> {
   const info = readServerInfo()

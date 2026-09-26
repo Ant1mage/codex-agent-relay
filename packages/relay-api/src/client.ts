@@ -62,7 +62,7 @@ export function normalizeBaseUrl(url: string): string {
 /**
  * Talks to apps/relayd. The daemon binds loopback and requires the run token, so
  * every call carries it; the browser gets it once in the URL fragment and keeps
- * it in local storage (docs/inspector.md 4).
+ * it in local storage (see docs/architecture.md).
  */
 export class RelayClient {
   readonly baseUrl: string

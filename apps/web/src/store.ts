@@ -9,7 +9,7 @@ export type InspectorTab = 'console' | 'changes' | 'raw'
 /**
  * Client-side projection. The daemon owns the truth; this store only merges what
  * arrived over SSE, de-duplicating by sequence so a reconnect, a history fetch
- * and a live delta can all land in the same list (docs/inspector.md 3).
+ * and a live delta can all land in the same list (see docs/architecture.md).
  */
 export function mergeEvents(existing: RelayEvent[] | undefined, incoming: RelayEvent[]): RelayEvent[] {
   if (!existing || existing.length === 0) return [...incoming].sort((l, r) => l.seq - r.seq)
