@@ -1,0 +1,28 @@
+{
+  "name": "@relay/relayd",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "bin": {
+    "relayd": "./src/serve.ts"
+  },
+  "scripts": {
+    "start": "tsx src/serve.ts",
+    "dev": "tsx src/serve.ts"
+  },
+  "dependencies": {
+    "@relay/adapter-antigravity": "workspace:*",
+    "@relay/adapter-deepseek": "workspace:*",
+    "@relay/adapter-gemini": "workspace:*",
+    "@relay/adapter-kimi": "workspace:*",
+    "@relay/adapter-zai": "workspace:*",
+    "@relay/adapter-sdk": "workspace:*",
+    "@relay/core": "workspace:*",
+    "@relay/protocol": "workspace:*",
+    "@relay/relay-api": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0"
+  }
+}

@@ -16,7 +16,7 @@
     "sourceMap": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["apps/desktop/src/*"]
+      "@/*": ["apps/web/src/*"]
     },
     "outDir": "dist",
     "rootDir": "."

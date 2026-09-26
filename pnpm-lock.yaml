@@ -24,7 +24,26 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.15)
 
-  apps/desktop:
+  apps/menu-bar:
+    dependencies:
+      '@relay/i18n':
+        specifier: workspace:*
+        version: link:../../packages/i18n
+      '@relay/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@relay/relay-api':
+        specifier: workspace:*
+        version: link:../../packages/relay-api
+    devDependencies:
+      electron:
+        specifier: ^44.4.5
+        version: 44.4.5
+      esbuild:
+        specifier: ^0.25.0
+        version: 0.25.12
+
+  apps/relayd:
     dependencies:
       '@relay/adapter-antigravity':
         specifier: workspace:*
@@ -47,12 +66,28 @@ importers:
       '@relay/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@relay/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@relay/relay-api':
+        specifier: workspace:*
+        version: link:../../packages/relay-api
+    devDependencies:
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
+
+  apps/web:
+    dependencies:
       '@relay/i18n':
         specifier: workspace:*
         version: link:../../packages/i18n
       '@relay/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@relay/relay-api':
+        specifier: workspace:*
+        version: link:../../packages/relay-api
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -93,12 +128,6 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^5.0.0
         version: 5.2.0(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.15))
-      electron:
-        specifier: ^44.4.5
-        version: 44.4.5
-      electron-vite:
-        specifier: ^5.0.0
-        version: 5.0.0(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.15))
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -223,6 +252,15 @@ importers:
         specifier: ^4.1.0
         version: 4.6.5
 
+  packages/relay-api:
+    dependencies:
+      '@relay/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.5
+
 packages:
 
   '@babel/code-frame@7.29.7':
@@ -283,12 +321,6 @@ packages:
     resolution: {integrity: sha512-CjXrNHTnvqBVqHgdBysY3vk2T8tpJHb5/RMeHJBTyVa9xgugCB0CJTx/3oO8RV2QRQP391RWpB7D6hLjm8V9uA==}
     engines: {node: '>=6.0.0'}
     hasBin: true
-
-  '@babel/plugin-transform-arrow-functions@7.29.7':
-    resolution: {integrity: sha512-N7zArUXWzAMzm+/N0uPBeVB3Fam5lMxtUwMmDK5f/IBBS7a7p1qeUoxd/6CckXoxUdgsntq1Dh8xNW06maZbDQ==}
-    engines: {node: '>=6.9.0'}
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
 
   '@babel/plugin-transform-react-jsx-self@7.29.7':
     resolution: {integrity: sha512-TL0hMc9xzy86VD31nUiwzd5otRAcyEPcsegCxolO0PvcXuH1v0kECe/UIznYFihpkvU5wg/jk4v0TTEFfm53fw==}
@@ -1776,17 +1808,6 @@ packages:
   electron-to-chromium@1.5.439:
     resolution: {integrity: sha512-qu6QIPXhsb+CRcAiTMNjR4A1y/7tCYKkKjr5CZXRVih6qkDf79peZ2BpEU3qoDBNCRrcy3Mra3X9nG5oruuA7Q==}
 
-  electron-vite@5.0.0:
-    resolution: {integrity: sha512-OHp/vjdlubNlhNkPkL/+3JD34ii5ov7M0GpuXEVdQeqdQ3ulvVR7Dg/rNBLfS5XPIFwgoBLDf9sjjrL+CuDyRQ==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    hasBin: true
-    peerDependencies:
-      '@swc/core': ^1.0.0
-      vite: ^5.0.0 || ^6.0.0 || ^7.0.0
-    peerDependenciesMeta:
-      '@swc/core':
-        optional: true
-
   electron@44.4.5:
     resolution: {integrity: sha512-SjgoaeYsSWZfJzubgQU7juvuXMTvn6/e1gAHdGFA/yuMbpF+I+skYqIJ6DdXBXHeWbkbpNpmwZCTpiivtlWZSw==}
     engines: {node: '>= 22.12.0'}
@@ -2512,11 +2533,6 @@ snapshots:
   '@babel/parser@7.29.9':
     dependencies:
       '@babel/types': 7.29.8
-
-  '@babel/plugin-transform-arrow-functions@7.29.7(@babel/core@7.29.7)':
-    dependencies:
-      '@babel/core': 7.29.7
-      '@babel/helper-plugin-utils': 7.29.7
 
   '@babel/plugin-transform-react-jsx-self@7.29.7(@babel/core@7.29.7)':
     dependencies:
@@ -3845,18 +3861,6 @@ snapshots:
   detect-node-es@1.1.0: {}
 
   electron-to-chromium@1.5.439: {}
-
-  electron-vite@5.0.0(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.15)):
-    dependencies:
-      '@babel/core': 7.29.7
-      '@babel/plugin-transform-arrow-functions': 7.29.7(@babel/core@7.29.7)
-      cac: 6.7.14
-      esbuild: 0.25.12
-      magic-string: 0.30.21
-      picocolors: 1.1.1
-      vite: 7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.15)
-    transitivePeerDependencies:
-      - supports-color
 
   electron@44.4.5:
     dependencies:

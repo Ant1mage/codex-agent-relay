@@ -3,7 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./projection": "./src/projection.ts",
+    "./policy": "./src/policy.ts",
+    "./default-profiles": "./src/default-profiles.ts"
+  },
   "dependencies": {
     "@relay/adapter-sdk": "workspace:*",
     "@relay/protocol": "workspace:*",

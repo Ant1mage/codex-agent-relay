@@ -1,0 +1,21 @@
+{
+  "name": "@relay/menu-bar",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main.js",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --external:electron --outfile=out/main.js --sourcemap",
+    "dev": "pnpm build && electron .",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@relay/i18n": "workspace:*",
+    "@relay/protocol": "workspace:*",
+    "@relay/relay-api": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "esbuild": "^0.25.0"
+  }
+}
