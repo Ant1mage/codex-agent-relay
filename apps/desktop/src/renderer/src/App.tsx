@@ -2,16 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
   CircleAlert,
-  FileDiff,
+  Info,
   MoreHorizontal,
   PanelLeft,
-  PanelRight,
   RefreshCw,
   Settings as SettingsIcon,
   Square,
   X,
 } from 'lucide-react'
-import type { HostSession, Step } from '@relay/protocol'
+import type { HostSession, Step, StepStatus } from '@relay/protocol'
 import type { DesktopRunView } from '../../shared/api.js'
 import { useAppStore } from './store.js'
 import { createTranslator } from '@relay/i18n'
@@ -42,9 +41,11 @@ function Sidebar({ t }: { t: Translator }) {
   const sessions = snapshot?.sessions ?? []
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand">
-        <span className="sidebar-mark mark-tinted" role="img" aria-label="Relay" />
-        <strong>{t('app.name')}</strong>
+      <div className="sidebar-top">
+        <div className="sidebar-brand">
+          <span className="sidebar-mark mark-tinted" role="img" aria-label="Relay" />
+          <strong>{t('app.name')}</strong>
+        </div>
       </div>
       <div className="sidebar-section-title">{t('sessions.title')}</div>
       <div className="session-list">
@@ -133,16 +134,59 @@ function SessionMenu({ session, view, t }: { session: HostSession; view: Desktop
 
 interface StepItem { view: DesktopRunView; step: Step }
 
+/** A node is either one worker or a group of workers Codex ran concurrently. */
+interface StepGroup { key: string; items: StepItem[] }
+
+const ACTIVE_STEP_STATUSES: StepStatus[] = ['running', 'starting']
+
+function stepIsActive(step: Step): boolean {
+  return ACTIVE_STEP_STATUSES.includes(step.status)
+}
+
+/** Worker window in ms; an unfinished step is treated as still open. */
+function workerWindow(item: StepItem): { start: number; end: number } {
+  const worker = [...item.view.workers].reverse().find((candidate) => candidate.stepId === item.step.id)
+  const start = new Date(item.step.createdAt).getTime()
+  const end = worker?.endedAt ? new Date(worker.endedAt).getTime() : Number.POSITIVE_INFINITY
+  return { start, end: Math.max(start, end) }
+}
+
+function stepsOverlap(a: StepItem, b: StepItem): boolean {
+  const left = workerWindow(a)
+  const right = workerWindow(b)
+  return left.start <= right.end && right.start <= left.end
+}
+
+/**
+ * Groups adjacent top-level workers that genuinely ran at the same time, so
+ * concurrent work never reads as a sequential chain (docs/ui.md 10). Overlap is
+ * proven by the worker time windows rather than inferred from the order alone.
+ */
+function groupSteps(items: StepItem[]): StepGroup[] {
+  const ordered = [...items].sort((left, right) => left.step.createdAt.localeCompare(right.step.createdAt))
+  const groups: StepGroup[] = []
+  for (const item of ordered) {
+    const last = groups[groups.length - 1]
+    const canJoin = last !== undefined &&
+      last.items.length < 3 &&
+      last.items.some((member) => stepsOverlap(member, item))
+    if (canJoin && last) last.items.push(item)
+    else groups.push({ key: item.step.id, items: [item] })
+  }
+  return groups
+}
+
+/** One clickable worker tab inside a group or on its own. */
 function StepNode({
   item,
-  index,
   selected,
+  active,
   t,
   registerRef,
 }: {
   item: StepItem
-  index: number
   selected: boolean
+  active: boolean
   t: Translator
   registerRef(element: HTMLButtonElement | null): void
 }) {
@@ -152,22 +196,72 @@ function StepNode({
   const runtime = snapshot?.runtimes.find((candidate) => candidate.id === profile?.runtimeId)
   const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
   const name = profile?.name ?? view.run.profileId
+  const classes = ['step-node']
+  if (selected) classes.push('selected')
+  if (active) classes.push('current')
+  classes.push(step.status)
 
   return (
-    <div className="step-link">
-      <button
-        ref={registerRef}
-        className={selected ? 'step-node selected' : `step-node ${step.status}`}
-        onClick={() => selectStep(view.run.id, step.id)}
-        title={`${t('steps.step')} ${index + 1} · ${name}`}
-      >
-        <div className="step-profile">
-          <i className={`step-glyph ${step.status}`} aria-hidden="true">{statusGlyph(step.status)}</i>
-          <ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} />
-          <strong>{name}</strong>
-        </div>
-        <em>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</em>
-      </button>
+    <button
+      ref={registerRef}
+      className={classes.join(' ')}
+      onClick={() => selectStep(view.run.id, step.id)}
+      title={`${name} · ${t(`run.status.${step.status}`)}`}
+    >
+      <span className="step-node-head">
+        <i className={`step-glyph ${step.status}`} aria-hidden="true">{statusGlyph(step.status)}</i>
+        <ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} />
+        <strong>{name}</strong>
+      </span>
+      <em>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</em>
+    </button>
+  )
+}
+
+/**
+ * A node holding 2-3 workers Codex dispatched concurrently, so parallel work is
+ * not drawn as a sequential chain (docs/ui.md 10).
+ */
+function StepGroupNode({
+  group,
+  t,
+  selectedKey,
+  activeKey,
+  registerRef,
+}: {
+  group: StepGroup
+  t: Translator
+  selectedKey: string | undefined
+  activeKey: string | undefined
+  registerRef(element: HTMLButtonElement | null): void
+}) {
+  const { snapshot, selectStep } = useAppStore()
+  const profiles = snapshot?.profiles ?? []
+  const running = group.items.filter((item) => stepIsActive(item.step)).length
+  const label = `${t('steps.parallel')} · ${
+    running
+      ? `${running} ${t('steps.running')}`
+      : `${group.items.length}`
+  }`
+
+  return (
+    <div className={`step-node step-parallel${activeKey === group.key ? ' current' : ''}`}>
+      <span className="step-parallel-head">
+        <i className="step-glyph running" aria-hidden="true">{statusGlyph('running')}</i>
+        <strong>{label}</strong>
+      </span>
+      <div className="step-parallel-members">
+        {group.items.map((item) => (
+          <StepNode
+            key={item.step.id}
+            item={item}
+            selected={selectedKey === item.step.id}
+            active={activeKey === item.step.id}
+            t={t}
+            registerRef={registerRef}
+          />
+        ))}
+      </div>
     </div>
   )
 }
@@ -175,30 +269,51 @@ function StepNode({
 function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
   const { selectedRunId, selectedStepId } = useAppStore()
   const currentRef = useRef<HTMLButtonElement>(null)
-  const ordered = useMemo(
-    () => [...items].sort((left, right) => left.step.createdAt.localeCompare(right.step.createdAt)),
-    [items],
-  )
+  const groups = useMemo(() => groupSteps(items), [items])
 
+  // Selection and current execution are different concepts. Auto-scroll follows
+  // the running worker so it stays discoverable; selecting an older node never
+  // scrolls the active worker out of view (docs/ui.md 7.4).
+  const activeStep = items.find((item) => stepIsActive(item.step))
+  const activeRunId = activeStep?.view.run.id
+  const activeStepId = activeStep?.step.id
   useEffect(() => {
-    currentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
-  }, [selectedRunId, selectedStepId])
+    currentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+  }, [activeRunId, activeStepId])
+
+  const selectedGroup = groups.find((group) =>
+    group.items.some((item) => item.view.run.id === selectedRunId && item.step.id === selectedStepId))
 
   return (
     <section className="step-strip" aria-label={t('steps.title')}>
       <div className="step-strip-label">{t('steps.title')}</div>
       <div className="step-scroll">
-        {ordered.map((item, index) => {
-          const selected = item.view.run.id === selectedRunId && item.step.id === selectedStepId
+        {groups.map((group) => {
+          const isActiveGroup = group.items.some((item) => item.step.id === activeStepId && item.view.run.id === activeRunId)
+          if (group.items.length === 1) {
+            const item = group.items[0]!
+            return (
+              <div className="step-link" key={group.key}>
+                <StepNode
+                  item={item}
+                  selected={selectedGroup === group}
+                  active={stepIsActive(item.step)}
+                  t={t}
+                  registerRef={(element) => { if (isActiveGroup) currentRef.current = element }}
+                />
+              </div>
+            )
+          }
           return (
-            <StepNode
-              key={item.step.id}
-              item={item}
-              index={index}
-              selected={selected}
-              t={t}
-              registerRef={(element) => { if (selected) currentRef.current = element }}
-            />
+            <div className="step-link" key={group.key}>
+              <StepGroupNode
+                group={group}
+                t={t}
+                selectedKey={selectedStepId}
+                activeKey={isActiveGroup ? group.key : undefined}
+                registerRef={(element) => { if (isActiveGroup) currentRef.current = element }}
+              />
+            </div>
           )
         })}
       </div>
@@ -229,7 +344,6 @@ function Console({
   const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
   const events = view.events.filter((event) => !event.stepId || event.stepId === step.id)
   const rows = useMemo(() => consoleRows(events), [events])
-  const changeCount = events.filter((event) => event.type === 'tool/edit').length
   const rawCount = events.filter((event) => event.nativeEvent !== undefined).length
   const active = step.status === 'running' || step.status === 'starting'
   const profile = snapshot?.profiles.find((item) => item.id === view.run.profileId)
@@ -242,11 +356,8 @@ function Console({
           <span>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</span>
         </div>
         <div className="console-actions">
-          {changeCount > 0 && (
-            <button onClick={() => openInspector('changes')}><FileDiff size={13} />{t('console.changes')} <b>{changeCount}</b></button>
-          )}
           <button onClick={() => openInspector('raw')}>{t('console.rawOutput')} <b>{rawCount}</b></button>
-          {/* Worker-level Stop sits beside the selected CLI (docs/ui.md 19) */}
+          {/* Stop is worker-level and sits beside the selected CLI (docs/ui.md 19) */}
           {active && worker && (
             <button
               className="stop-button"
@@ -258,8 +369,14 @@ function Console({
               <Square size={11} />{t('action.stop')}
             </button>
           )}
-          <button className={cliInfoOpen ? 'selected' : ''} onClick={toggleCliInfo}>
-            <PanelRight size={13} />{t('cliInfo.title')}
+          <button
+            className="info-toggle"
+            aria-pressed={cliInfoOpen}
+            aria-label={cliInfoOpen ? t('cliInfo.hide') : t('cliInfo.show')}
+            title={cliInfoOpen ? t('cliInfo.hide') : t('cliInfo.show')}
+            onClick={toggleCliInfo}
+          >
+            <Info size={15} />
           </button>
         </div>
       </header>
@@ -329,12 +446,12 @@ function CliInfo({ view, step, t, close, openInspector }: {
   return (
     <aside className="cli-info">
       <header>
-        <div>
+        <div className="cli-info-title">
           <span className="cli-profile">
             <ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} />
-            {profile?.name ?? view.run.profileId}
+            <strong>{profile?.name ?? view.run.profileId}</strong>
           </span>
-          <h2>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</h2>
+          <em>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</em>
         </div>
         <button className="plain-icon" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></button>
       </header>
@@ -382,12 +499,17 @@ function CliInfo({ view, step, t, close, openInspector }: {
         <div><dt>{t('cliInfo.workingDirectory')}</dt><dd title={view.run.cwd}>{view.run.cwd}</dd></div>
         <div><dt>{t('cliInfo.started')}</dt><dd>{new Date(step.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</dd></div>
         {childAgents > 0 && <div><dt>{t('cliInfo.agents')}</dt><dd>{childAgents}</dd></div>}
+        {/* Changes live here, not in the Console header (docs/ui.md 18) */}
         <div>
           <dt>{t('cliInfo.changes')}</dt>
           <dd>
             {changeCount
-              ? <button className="link-button" onClick={() => openInspector('changes')}>{changeCount} {t('console.files')}</button>
-              : 0}
+              ? (
+                <button className="link-button" onClick={() => openInspector('changes')}>
+                  {changeCount} {t('console.files')}
+                </button>
+              )
+              : t('console.noChanges')}
           </dd>
         </div>
       </dl>
@@ -466,7 +588,8 @@ function EmptyStateBody({ t, hint }: { t: Translator; hint?: boolean }) {
 function SessionWorkspace({ t }: { t: Translator }) {
   const { snapshot, selectedSessionId, selectedRunId, selectedStepId, loading, refresh, onboardingOpen } = useAppStore()
   const [inspector, setInspector] = useState<Inspector>()
-  const [cliInfoOpen, setCliInfoOpen] = useState(() => localStorage.getItem('relay.cli-info-open') !== 'false')
+  // Contextual inspector: closed until the user asks for it (docs/ui.md 15).
+  const [cliInfoOpen, setCliInfoOpen] = useState(() => localStorage.getItem('relay.cli-info-open') === 'true')
 
   if (onboardingOpen) return <Onboarding t={t} />
 
@@ -492,13 +615,15 @@ function SessionWorkspace({ t }: { t: Translator }) {
 
   return (
     <main className="workspace">
+      {/* The title names the Codex session and never changes with Step selection;
+          worker/task detail belongs to Step and Console (docs/ui.md 6). */}
       <header className="workspace-heading">
         <div>
-          <h1>{selectedView?.run.task ?? session.displayName}</h1>
+          <h1 title={session.displayName}>{session.displayName}</h1>
           <p>
             {selectedView && <StatusLabel status={selectedView.run.status} t={t} />}
             {selectedView && <span className="heading-sep">·</span>}
-            <span>{t('cliInfo.started')} {new Date(session.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            <span>{new Date(session.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
           </p>
         </div>
         <div className="heading-actions">
@@ -602,26 +727,25 @@ export function App() {
   }, [notice, setNotice])
 
   const sidebarLabel = sidebarCollapsed ? t('action.showSidebar') : t('action.hideSidebar')
+  // macOS keeps its traffic lights inside the hidden-inset titlebar, so the
+  // sidebar carries the extra top padding instead of a separate toolbar row.
   const macOS = navigator.userAgent.includes('Macintosh')
 
   return (
-    <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
-      {/* Compact sidebar toggle beside the window chrome (docs/ui.md 5) */}
-      <header className={macOS ? 'app-toolbar macos' : 'app-toolbar'}>
-        <div className="toolbar-leading">
+    <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}${macOS ? ' macos' : ''}`}>
+      <div className="app-main">
+        {/* Kept outside the sidebar so collapsing it cannot clip the control. */}
+        <div className="sidebar-rail">
           <button
-            className="plain-icon"
+            className="plain-icon sidebar-toggle"
             aria-label={sidebarLabel}
-            title={sidebarLabel}
+            title={`${sidebarLabel} (\u2318B)`}
             aria-expanded={!sidebarCollapsed}
             onClick={toggleSidebar}
           >
-            <PanelLeft size={16} />
+            <PanelLeft size={15} />
           </button>
         </div>
-        <div className="toolbar-drag" />
-      </header>
-      <div className="app-main">
         <Sidebar t={t} />
         <SessionWorkspace t={t} />
       </div>

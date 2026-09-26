@@ -21,12 +21,16 @@ Files:
 
 ## How Relay consumes these
 
-These files are the masters. `tools/build-icons.sh` (run via `pnpm icons`) reads
-`svg/relay-icon.svg` and renders every shipped asset into
-`assets/app-icon/build/`: the sized PNGs, `appicon.icns`, `appicon.ico`, and the
-in-app marks. The `png/**` exports are kept for reference and design review; the
-build does not use them, so the shipped sizes stay exact.
+This directory is the canonical Relay icon package; its geometry and appearance
+are final.
 
-In-app marks are tinted from the PNG alpha channel with a CSS mask, so
-`relay-icon-dark.svg` is a reference for the dark-surface colour rather than a
-separate raster. Only `svg/relay-icon.svg` currently drives the build.
+- In-app Relay marks (sidebar, onboarding, empty state, small branding) use
+  `svg/relay-icon.svg` directly as a CSS mask, so `currentColor` controls the
+  colour and the mark follows the UI theme. Only its shape and alpha matter, so
+  the dark variant is never used for masking.
+- Raster needs (favicon, development Dock icon, non-macOS window icon) use
+  `png/light/*` directly.
+- The PNG exports are deliverables, not build output. Do not regenerate them
+  from the SVG.
+
+There is no icon build script and no generated icon directory in this repo.

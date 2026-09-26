@@ -2,8 +2,10 @@
 
 The SVGs in this directory are vendored from the MIT-licensed
 [`@lobehub/icons-static-svg`](https://github.com/lobehub/lobe-icons) package
-(version 1.95.1) and are copied into `assets/app-icon/build/` by
-`tools/build-icons.sh` so the renderer loads every icon from one directory.
+(version 1.95.1). The renderer loads them directly from `/providers/...`.
+
+Provider branding is a separate asset domain from the Relay app icon in
+`assets/appicon`; the two are never mixed or copied into a shared directory.
 
 They remain the trademarks of their respective providers and are used solely to
 identify the runtime selected in Relay.

@@ -935,42 +935,50 @@ Visual direction:
 - neutral color treatment
 - not cyberpunk
 
-### 21.1 Icon assets and build
+### 21.1 Icon assets
 
-The icon masters live in `assets/appicon`, supplied by design and edited by hand:
+`assets/appicon` is the canonical Relay icon asset package. It is supplied by
+design, and its geometry and appearance are final:
 
 - `svg/relay-icon.svg` - the mark, dark glyph for light surfaces
 - `svg/relay-icon-dark.svg` - the mark, light glyph for dark surfaces
-- `png/light/**`, `png/dark/**` - designer exports, reference only
+- `png/light/**`, `png/dark/**` - the provided raster exports, at 16 to 1024px
 
-Run `pnpm icons` (`tools/build-icons.sh`) after changing them. It regenerates
-`assets/app-icon/build`, which holds the sized PNGs, `appicon.icns`,
-`appicon.ico`, `relay-mark.png`, and the provider marks. Never edit a generated
-PNG; the previous tiled icon is kept in `assets/app-icon/legacy` for reference.
+How each consumer uses it:
 
-Rules the build depends on:
+- **In-app Relay marks** (sidebar brand, onboarding, empty state, small Relay
+  branding) use `svg/relay-icon.svg` directly, as a CSS mask
+  (`/appicon/svg/relay-icon.svg`) so `currentColor` keeps controlling the colour
+  and the mark follows the UI theme. The dark SVG is never used for masking:
+  only the shape and alpha matter.
+- **Raster needs** - the favicon, the development Dock icon, and the non-macOS
+  window icon - use the provided PNG exports directly from
+  `assets/appicon/png/light/`.
+- **Provider marks live in `assets/providers`**, served at `/providers/...`.
+  Provider branding is a separate asset domain from the Relay app icon; the two
+  are never mixed or copied into a shared build directory.
 
+Rules:
+
+- **Do not regenerate the PNG exports from the SVG.** The PNGs are deliverables,
+  not build output. If a future packaging system needs `.icns` or `.ico`, it
+  generates them from these existing canonical PNGs as part of packaging for a
+  release, not as a second design pipeline.
+- There is no icon build script and no generated icon directory. An
+  `assets/app-icon/*` tree and a `pnpm icons` task previously existed and have
+  been removed; do not reintroduce them.
 - The mark is a bare glyph: transparent background, no card, no ring, no shadow,
   no gradient. It fills 81% of the canvas, centred, at an alpha aspect of 1.32:1.
   Do not reintroduce an outer tile without a deliberate decision: on macOS a
   tile-less icon renders in the Dock at the glyph's own size, which is smaller
   and flatter than the rounded-square icons around it.
-- One SVG serves every size. The mark's strokes are thick and its geometry is
-  simple enough to stay legible at 16px, so it needs no separate small-size
-  optical variant, and the `.icns` asserts exact pixel sizes (`icon_16x16@2x.png`
-  is 32px).
-- In-app marks are tinted from the PNG's **alpha channel** through a CSS mask
-  (`.mark-tinted`), so they follow the surface's text colour in either theme.
-  The light master is not rasterised: an `<img>` cannot inherit `currentColor`,
-  and swapping two pre-coloured files depends on a `prefers-color-scheme` /
-  `data-theme` cascade that is easy to get subtly wrong.
-- The renderer serves these files at `/app-icon/build/...`; the main process
-  reads them from disk for the Dock and window icons.
-- Provider marks are copied from `assets/providers` into the same build output so
-  the renderer loads every icon from one directory.
 - Keep provider marks legible at the size they are drawn (14-15px). A mark that
-  looks correct at 128px can be an unreadable smudge at 15px, and some rasterisers
-  fail on certain vendor paths even though they render in Chromium.
+  looks correct at 128px can be an unreadable smudge at 15px.
+- A packaged macOS build must take its application icon from the `.app` bundle
+  (`.icns` via packaging configuration). `app.dock.setIcon()` is a development
+  convenience only and is gated on `!app.isPackaged`.
+- The `light/` and `dark/` PNG sets are mark colour variants, not a UI theme
+  switch: the Dock icon is not swapped when the in-app theme changes.
 
 ---
 

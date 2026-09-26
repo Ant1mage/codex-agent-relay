@@ -20,16 +20,16 @@ export const MAX_FONT_SIZE = 20
 export type ProviderIconId = 'deepseek' | 'gemini' | 'glm' | 'grok' | 'kimi'
 
 /**
- * Provider marks, served from the icon build output so one directory holds every
- * icon the renderer loads. Each is the vendor's own logo, chosen for being
- * recognisable at the 14-15px size these are actually drawn at.
+ * Provider marks come straight from assets/providers (served at /providers).
+ * Provider branding is a separate asset domain from the Relay app icon, and each
+ * logo is chosen for being recognisable at the 14-15px size these are drawn at.
  */
 export const providerMetadata: Record<ProviderIconId, { label: string; src: string }> = {
-  deepseek: { label: 'DeepSeek', src: '/app-icon/build/provider-deepseek.svg' },
-  gemini: { label: 'Gemini', src: '/app-icon/build/provider-gemini.svg' },
-  glm: { label: 'GLM', src: '/app-icon/build/provider-glm.svg' },
-  grok: { label: 'Grok', src: '/app-icon/build/provider-grok.svg' },
-  kimi: { label: 'Kimi', src: '/app-icon/build/provider-kimi.svg' },
+  deepseek: { label: 'DeepSeek', src: '/providers/deepseek.svg' },
+  gemini: { label: 'Gemini', src: '/providers/gemini.svg' },
+  glm: { label: 'GLM', src: '/providers/glm.svg' },
+  grok: { label: 'Grok', src: '/providers/grok.svg' },
+  kimi: { label: 'Kimi', src: '/providers/kimi.svg' },
 }
 
 /** The provider order used by onboarding and Settings (docs/ui.md 17.2). */
@@ -390,44 +390,3 @@ export function useRuntimeOptions(runtimeId: string | undefined): {
   return { options, loading }
 }
 
-/** Position of a stored reasoning value within the levels the CLI reported. */
-export function reasoningIndex(levels: ReasoningLevel[], value: string | undefined): number {
-  if (!levels.length) return 0
-  const index = levels.findIndex((level) => level.value === value)
-  return index === -1 ? 0 : index
-}
-
-/**
- * Reasoning strength slider. The number of stops comes from the CLI, so a CLI
- * reporting four levels yields four stops instead of a forced three.
- */
-export function ReasoningSlider({
-  levels,
-  value,
-  onChange,
-  t,
-}: {
-  levels: ReasoningLevel[]
-  value: string | undefined
-  onChange(value: string | undefined): void
-  t: Translator
-}) {
-  if (!levels.length) return null
-  const index = reasoningIndex(levels, value)
-  const level = levels[index] ?? levels[0]
-  return (
-    <div className="reasoning-slider">
-      <input
-        type="range"
-        min={0}
-        max={levels.length - 1}
-        step={1}
-        value={index}
-        aria-label={t('agents.reasoning')}
-        aria-valuetext={level?.label}
-        onChange={(event) => onChange(levels[Number(event.target.value)]?.value)}
-      />
-      <output>{level?.label}</output>
-    </div>
-  )
-}

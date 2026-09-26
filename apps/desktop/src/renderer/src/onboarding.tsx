@@ -1,51 +1,40 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, CircleAlert, Plus } from 'lucide-react'
 import type { AgentProfile } from '@relay/protocol'
 import type { CodexIntegrationStatus } from '../../shared/api.js'
 import { useAppStore } from './store.js'
+import { ProfileFields } from './profile-editor.js'
 import {
   providerMetadata,
   providerOrder,
   runtimeForProvider,
+  useRuntimeOptions,
   type ProviderIconId,
   type Translator,
 } from './ui.js'
-import { ProfileEditor } from './profile-editor.js'
-
-type OnboardingStep = 'intro' | 'codex' | 'agents' | 'ready'
 
 /**
- * Lightweight progress line. Numbered labels with hairline rules read as
- * progress without the boxed stepper chrome that made this look like a wizard.
+ * Onboarding pages. `agent` is not a page: it is the inline configuration state
+ * that the Add action switches into, so onboarding stays on one interaction
+ * plane instead of stacking a modal (docs/ui.md 22.2).
  */
-function StepLine({ step, t }: { step: Exclude<OnboardingStep, 'intro'>; t: Translator }) {
-  const order: Exclude<OnboardingStep, 'intro'>[] = ['codex', 'agents', 'ready']
-  const labels = [t('onboarding.connect'), t('onboarding.addAgents'), t('onboarding.ready')]
-  const active = order.indexOf(step)
-  return (
-    <div className="onboarding-steps">
-      {order.map((id, index) => (
-        <span className={index === active ? 'on' : index < active ? 'ok' : 'todo'} key={id}>
-          {index < active ? `\u2713 ${labels[index]}` : `${index + 1} ${labels[index]}`}
-          {index < order.length - 1 && <i />}
-        </span>
-      ))}
-    </div>
-  )
-}
+type OnboardingPage = 'codex' | 'agents' | 'ready'
+
+const PAGES: OnboardingPage[] = ['codex', 'agents', 'ready']
 
 /**
  * First-run onboarding (docs/ui.md 22).
  *
- * The content sits directly on the window background rather than inside a
- * floating card: one column, hairline separators, no shadow. Renders inside the
- * normal shell so the sidebar stays visible.
+ * A top-oriented setup workspace inside the normal shell: the sidebar stays
+ * visible, the heading sits near the top, and each semantic group is one compact
+ * native surface. Deliberately neither a giant white card nor an unstructured
+ * landing page.
  */
 export function Onboarding({ t }: { t: Translator }) {
   const { snapshot, refresh, setNotice } = useAppStore()
-  const [step, setStep] = useState<OnboardingStep>('intro')
+  const [page, setPage] = useState<OnboardingPage>('codex')
   const [codex, setCodex] = useState<CodexIntegrationStatus>()
-  const [editing, setEditing] = useState<AgentProfile>()
+  const [draft, setDraft] = useState<AgentProfile>()
 
   const loadCodexStatus = () => {
     setCodex(undefined)
@@ -56,15 +45,22 @@ export function Onboarding({ t }: { t: Translator }) {
   const runtimes = snapshot?.runtimes ?? []
   const profiles = snapshot?.profiles ?? []
   const usableAgents = profiles.filter((profile) => profile.enabled)
+  const draftRuntime = runtimes.find((runtime) => runtime.id === draft?.runtimeId)
+  const { options: draftOptions, loading: draftLoading } = useRuntimeOptions(draft?.runtimeId)
 
-  const finish = async () => {
-    await window.relay.completeOnboarding()
+  const check = (id: CodexIntegrationCheckId) => codex?.checks.find((item) => item.id === id)
+  const pageIndex = PAGES.indexOf(page)
+
+  const saveDraft = async () => {
+    if (!draft) return
+    await window.relay.saveProfile(draft)
     await refresh()
+    setDraft(undefined)
   }
 
   const addProfile = (provider: ProviderIconId, runtimeId: string) => {
     const metadata = providerMetadata[provider]
-    setEditing({
+    setDraft({
       id: `${provider}-${Date.now()}`,
       name: metadata.label,
       runtimeId,
@@ -74,159 +70,172 @@ export function Onboarding({ t }: { t: Translator }) {
     })
   }
 
+  const finish = async () => {
+    await window.relay.completeOnboarding()
+    await refresh()
+  }
+
+  const title = useMemo(() => {
+    if (page === 'codex') return t('onboarding.connect')
+    if (page === 'agents') return t('onboarding.addAgents')
+    return t('onboarding.readyTitle')
+  }, [page, t])
+
   return (
     <main className="onboarding">
       <div className="onboarding-pane">
-        {step === 'intro' && (
+        <div className="onboarding-meta">
+          <span>{t('onboarding.setup')}</span>
+          <span>{pageIndex + 1} {t('onboarding.of')} {PAGES.length}</span>
+        </div>
+        <h1>{title}</h1>
+
+        {page === 'codex' && (
           <>
-            <span className="onboarding-mark mark-tinted" role="img" aria-label="Relay" />
-            <h1>{t('onboarding.title')}</h1>
-            <p className="onboarding-lede">{t('onboarding.intro')}</p>
+            <p className="onboarding-lede">{t('onboarding.codexLede')}</p>
+            <div className="onboarding-group" role="list">
+              {!codex && <div className="onboarding-row" role="listitem"><span className="onboarding-note">{t('common.refresh')}…</span></div>}
+              {codex && codex.checks.map((item) => (
+                <div className="onboarding-row" role="listitem" key={item.id}>
+                  <span className={item.ok ? 'tick' : 'warn'}>
+                    {item.ok ? <Check size={13} /> : <CircleAlert size={13} />}
+                  </span>
+                  <span className="onboarding-row-label">{t(`onboarding.check.${item.id}`)}</span>
+                  <em title={item.detail}>{item.detail}</em>
+                </div>
+              ))}
+            </div>
+            {codex && !codex.configured && (
+              <p className="onboarding-note">{t('onboarding.installIntegration')}</p>
+            )}
             <div className="onboarding-actions">
-              <button className="primary" onClick={() => setStep('codex')}>{t('onboarding.start')}</button>
+              <button className="link-action" onClick={loadCodexStatus}>{t('onboarding.checkRetry')}</button>
+              <button className="primary" onClick={() => setPage('agents')}>{t('onboarding.continue')}</button>
             </div>
           </>
         )}
 
-        {step !== 'intro' && (
+        {page === 'agents' && !draft && (
           <>
-            <StepLine step={step} t={t} />
-
-            {step === 'codex' && (
-              <>
-                <h1>{t('onboarding.connect')}</h1>
-                <p className="onboarding-label">{t('onboarding.detection')}</p>
-                {!codex && <p className="onboarding-note">{t('common.refresh')}…</p>}
-                {codex && (
-                  <ul className="onboarding-checks">
-                    {codex.checks.map((check) => (
-                      <li key={check.id}>
-                        <span className={check.ok ? 'tick' : 'warn'}>
-                          {check.ok ? <Check size={13} /> : <CircleAlert size={13} />}
-                        </span>
-                        <span className="onboarding-check-label">{t(`onboarding.check.${check.id}`)}</span>
-                        <em title={check.detail}>{check.detail}</em>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {codex && !codex.configured && (
-                  <p className="onboarding-note">
-                    {t('onboarding.manualHint')}{' '}
-                    <code>{codex.checks.find((check) => !check.ok)?.detail}</code>
-                  </p>
-                )}
-                <div className="onboarding-actions">
-                  <button className="link-action" onClick={loadCodexStatus}>{t('onboarding.checkRetry')}</button>
-                  <button className="primary" onClick={() => setStep('agents')}>{t('onboarding.continue')}</button>
-                </div>
-              </>
-            )}
-
-            {step === 'agents' && (
-              <>
-                <h1>{t('onboarding.addAgents')}</h1>
-                <p className="onboarding-label">{t('onboarding.detectedOnComputer')}</p>
-                <div className="provider-rows">
-                  {providerOrder.map((provider) => {
-                    const runtime = runtimeForProvider(provider, runtimes)
-                    const metadata = providerMetadata[provider]
-                    return (
-                      <div className="provider-row" key={provider}>
-                        <img className="provider-icon" src={metadata.src} alt="" />
-                        <strong>{metadata.label}</strong>
-                        <span className={`provider-row-status${runtime ? ' detected' : ''}`}>
-                          {runtime ? t('agents.detected') : t('agents.notInstalled')}
-                        </span>
-                        <button
-                          className="outline"
-                          disabled={!runtime}
-                          onClick={() => runtime && addProfile(provider, runtime.id)}
-                        >
+            <p className="onboarding-lede">{t('onboarding.agentsLede')}</p>
+            <h2 className="onboarding-section">{t('onboarding.detectedOnComputer')}</h2>
+            <div className="onboarding-group" role="list">
+              {providerOrder.map((provider) => {
+                const runtime = runtimeForProvider(provider, runtimes)
+                const metadata = providerMetadata[provider]
+                return (
+                  <div className="onboarding-row" role="listitem" key={provider}>
+                    <img className="provider-icon" src={metadata.src} alt="" />
+                    <span className="onboarding-row-label">{metadata.label}</span>
+                    <em className={runtime ? 'detected' : undefined}>
+                      {runtime ? t('agents.detected') : t('agents.notInstalled')}
+                    </em>
+                    {runtime
+                      ? (
+                        <button className="outline" onClick={() => addProfile(provider, runtime.id)}>
                           <Plus size={11} />{t('agents.add')}
                         </button>
-                      </div>
-                    )
-                  })}
-                </div>
-                <p className="onboarding-note">{t('onboarding.agentsGoal')}</p>
-                <div className="onboarding-actions">
-                  <button className="link-action" onClick={() => setStep('codex')}>{t('onboarding.back')}</button>
-                  <button className="primary" disabled={!usableAgents.length} onClick={() => setStep('ready')}>
-                    {t('onboarding.continue')}
-                  </button>
-                </div>
-              </>
-            )}
-
-            {step === 'ready' && (
+                      )
+                      : <span className="onboarding-row-spacer" />}
+                  </div>
+                )
+              })}
+            </div>
+            {usableAgents.length > 0 && (
               <>
-                <h1>{t('onboarding.ready')}</h1>
-                <p className="onboarding-lede">
-                  {t('onboarding.readyBody')} {usableAgents.length} {t('onboarding.agentsAvailable')}.
-                </p>
-                <p className="onboarding-label">{t('onboarding.selected')}</p>
-                <ul className="onboarding-agents">
+                <h2 className="onboarding-section">{t('onboarding.selected')}</h2>
+                <div className="onboarding-group" role="list">
                   {usableAgents.map((profile) => (
-                    <li key={profile.id}>
-                      <strong>{profile.name}</strong>
+                    <div className="onboarding-row" role="listitem" key={profile.id}>
+                      <span className="onboarding-row-label">{profile.name}</span>
                       <em>{[profile.model, profile.reasoning].filter(Boolean).join(' · ')}</em>
-                    </li>
+                    </div>
                   ))}
-                </ul>
-                <p className="onboarding-label">{t('onboarding.openCodex')}</p>
-                <ul className="onboarding-checks">
-                  <li>
-                    <span className={codex?.checks.find((c) => c.id === 'relay-mcp')?.ok ? 'tick' : 'warn'}>
-                      {codex?.checks.find((c) => c.id === 'relay-mcp')?.ok
-                        ? <Check size={13} />
-                        : <CircleAlert size={13} />}
-                    </span>
-                    <span className="onboarding-check-label">{t('onboarding.check.relay-mcp')}</span>
-                    <em title={codex?.checks.find((c) => c.id === 'relay-mcp')?.detail}>
-                      {codex?.checks.find((c) => c.id === 'relay-mcp')?.detail ?? ''}
-                    </em>
-                  </li>
-                  <li>
-                    <span className={codex?.checks.find((c) => c.id === 'relay-skill')?.ok ? 'tick' : 'warn'}>
-                      {codex?.checks.find((c) => c.id === 'relay-skill')?.ok
-                        ? <Check size={13} />
-                        : <CircleAlert size={13} />}
-                    </span>
-                    <span className="onboarding-check-label">{t('onboarding.check.relay-skill')}</span>
-                    <em title={codex?.checks.find((c) => c.id === 'relay-skill')?.detail}>
-                      {codex?.checks.find((c) => c.id === 'relay-skill')?.detail ?? ''}
-                    </em>
-                  </li>
-                </ul>
-                {codex && !codex.configured && (
-                  <p className="onboarding-note">{t('onboarding.installIntegration')}</p>
-                )}
-                <p className="onboarding-note">{t('onboarding.askCodex')}</p>
-                <div className="onboarding-actions">
-                  <button className="link-action" onClick={() => setStep('agents')}>{t('onboarding.back')}</button>
-                  <button
-                    className="primary"
-                    onClick={() => void finish().catch((error: unknown) =>
-                      setNotice(error instanceof Error ? error.message : String(error)))}
-                  >
-                    {t('onboarding.done')}
-                  </button>
                 </div>
               </>
             )}
+            <div className="onboarding-actions">
+              <button className="link-action" onClick={() => setPage('codex')}>{t('onboarding.back')}</button>
+              <button className="primary" disabled={!usableAgents.length} onClick={() => setPage('ready')}>
+                {t('onboarding.continue')}
+              </button>
+            </div>
           </>
         )}
 
-        {editing && (
-          <ProfileEditor
-            profile={editing}
-            runtimes={runtimes}
-            t={t}
-            close={() => setEditing(undefined)}
-          />
+        {/* Inline agent configuration: same plane, no nested modal. */}
+        {page === 'agents' && draft && (
+          <>
+            <p className="onboarding-lede">{t('onboarding.configureAgent')} · {draft.name}</p>
+            <form
+              className="onboarding-group onboarding-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void saveDraft().catch((error: unknown) =>
+                  setNotice(error instanceof Error ? error.message : String(error)))
+              }}
+            >
+              <ProfileFields
+                profile={draft}
+                runtimes={runtimes}
+                t={t}
+                onChange={setDraft}
+                layout="rows"
+                hideRuntime
+              />
+              {!draftLoading && draftOptions && !draftOptions.models.length && !draftOptions.levels.length && (
+                <p className="onboarding-note">{t('agents.noModelList')}</p>
+              )}
+              <div className="onboarding-actions">
+                <button type="button" className="link-action" onClick={() => setDraft(undefined)}>
+                  {t('action.cancel')}
+                </button>
+                <button className="primary" disabled={!draft.name.trim()}>{t('onboarding.addAgent')}</button>
+              </div>
+            </form>
+          </>
+        )}
+
+        {page === 'ready' && (
+          <>
+            <p className="onboarding-lede">{t('onboarding.readyLede')}</p>
+            <h2 className="onboarding-section">{t('onboarding.codexSection')}</h2>
+            <div className="onboarding-group">
+              <div className="onboarding-row">
+                <span className={check('relay-mcp')?.ok && check('relay-skill')?.ok ? 'tick' : 'warn'}>
+                  {check('relay-mcp')?.ok && check('relay-skill')?.ok
+                    ? <Check size={13} />
+                    : <CircleAlert size={13} />}
+                </span>
+                <span className="onboarding-row-label">{t('onboarding.connected')}</span>
+                <em>{check('relay-mcp')?.detail ?? ''}</em>
+              </div>
+            </div>
+            <h2 className="onboarding-section">{t('onboarding.agentsSection')}</h2>
+            <div className="onboarding-group">
+              {usableAgents.map((profile) => (
+                <div className="onboarding-row" key={profile.id}>
+                  <span className="onboarding-row-label">{profile.name}</span>
+                  <em>{[profile.model, profile.reasoning].filter(Boolean).join(' · ')}</em>
+                </div>
+              ))}
+            </div>
+            <p className="onboarding-note">{t('onboarding.askCodex')}</p>
+            <div className="onboarding-actions">
+              <button className="link-action" onClick={() => setPage('agents')}>{t('onboarding.back')}</button>
+              <button
+                className="primary"
+                onClick={() => void finish().catch((error: unknown) =>
+                  setNotice(error instanceof Error ? error.message : String(error)))}
+              >
+                {t('onboarding.done')}
+              </button>
+            </div>
+          </>
         )}
       </div>
     </main>
   )
 }
+
+type CodexIntegrationCheckId = 'codex-cli' | 'relay-mcp' | 'relay-skill'

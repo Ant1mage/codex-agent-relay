@@ -1,20 +1,26 @@
 import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron'
 import { DesktopDataSource } from './data-source.js'
 import type { DesktopSettings } from '../shared/api.js'
 import type { AgentProfile } from '@relay/protocol'
 
 let dataSource: DesktopDataSource | undefined
 
-// Icons are generated from the SVG masters in assets/app-icon by
-// tools/build-icons.sh. Vite copies that directory into the renderer build
-// (see publicDir in electron.vite.config.ts), so the packaged path mirrors it.
-function iconFile(name: string): string {
+/**
+ * Canonical Relay icon exports, in assets/appicon/png/light.
+ *
+ * These PNGs are the design deliverables and are used as-is; Relay never
+ * re-rasterises the SVG to produce platform rasters. Vite copies assets/ into
+ * the renderer output (see publicDir in electron.vite.config.ts), so the
+ * packaged path mirrors the source tree.
+ */
+function iconPng(size: 256 | 1024): string {
+  const relative = `appicon/png/light/relay-icon-${size}.png`
   return app.isPackaged
-    ? join(import.meta.dirname, `../renderer/app-icon/build/${name}`)
-    : join(import.meta.dirname, `../../../../assets/app-icon/build/${name}`)
+    ? join(import.meta.dirname, '../renderer', relative)
+    : join(import.meta.dirname, '../../../../assets', relative)
 }
 
 function createWindow(): void {
@@ -24,8 +30,12 @@ function createWindow(): void {
     minWidth: 980,
     minHeight: 680,
     title: 'Relay',
-    icon: iconFile('appicon-256.png'),
-    backgroundColor: '#0b0d10',
+    // Windows and Linux read the window icon. macOS does not: its application
+    // icon belongs to the .app bundle, so a BrowserWindow icon would be wrong.
+    ...(process.platform !== 'darwin' ? { icon: iconPng(256) } : {}),
+    // Relay is light-theme-first; the window paints this before the renderer
+    // loads, so a dark value would flash black on launch (docs/ui.md 20).
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1d1f' : '#f4f4f3',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -50,9 +60,13 @@ void app.whenReady().then(async () => {
   dataSource = new DesktopDataSource(databasePath, settingsPath)
   await dataSource.initialize()
 
-  if (process.platform === 'darwin') {
-    // Largest raster: the Dock renders the mark well above 256pt on Retina.
-    app.dock?.setIcon(iconFile('appicon-1024.png'))
+  // Development only. A packaged macOS build must take its icon from the .app
+  // bundle (.icns via packaging config), not from a runtime dock call; Relay has
+  // no packaging configuration yet, so this exists purely to brand `electron-vite
+  // dev` runs. The 1024px export is used because the Dock draws well above 256pt
+  // on Retina.
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    app.dock?.setIcon(iconPng(1024))
   }
 
   ipcMain.handle('relay:snapshot', () => dataSource?.snapshot())

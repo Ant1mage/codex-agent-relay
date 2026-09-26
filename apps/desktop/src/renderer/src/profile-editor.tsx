@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import type { AgentProfile, Runtime } from '@relay/protocol'
 import { useAppStore } from './store.js'
-import { ReasoningSlider, useRuntimeOptions, type Translator } from './ui.js'
+import { useRuntimeOptions, type Translator } from './ui.js'
 
 const capabilityRows = [
   ['readWorkspace', 'agents.read'],
@@ -23,12 +23,15 @@ export function ProfileFields({
   t,
   onChange,
   layout = 'stacked',
+  hideRuntime = false,
 }: {
   profile: AgentProfile
   runtimes: Runtime[]
   t: Translator
   onChange(next: AgentProfile): void
   layout?: 'stacked' | 'rows'
+  /** Onboarding picks the runtime from the provider row, so it is not re-asked. */
+  hideRuntime?: boolean
 }) {
   const update = (next: Partial<AgentProfile>) => onChange({ ...profile, ...next })
   const capabilities = profile.capabilities
@@ -73,22 +76,27 @@ export function ProfileFields({
     </label>
   )
 
+  // Reasoning is a discrete CLI-defined token, so it uses the same select as the
+  // model field rather than a slider (docs/ui.md 16.1). Options come from the CLI.
   const reasoningRow = (
-    <div className={layout === 'rows' ? 'setting-row setting-row-slider' : 'field-slider'}>
+    <label className={layout === 'rows' ? 'setting-row' : undefined}>
       <span>{t('agents.reasoning')}</span>
       {levels.length ? (
-        <ReasoningSlider
-          levels={levels}
-          value={profile.reasoning}
-          onChange={(value) => update({ reasoning: value })}
-          t={t}
-        />
+        <select
+          value={profile.reasoning ?? ''}
+          onChange={(event) => update({ reasoning: event.target.value || undefined })}
+        >
+          <option value="">{t('agents.runtimeDefault')}</option>
+          {levels.map((level) => (
+            <option value={level.value} key={level.value}>{level.label}</option>
+          ))}
+        </select>
       ) : (
         <span className="field-note">
           {loading ? t('agents.readingRuntime') : t('agents.noReasoningLevels')}
         </span>
       )}
-    </div>
+    </label>
   )
 
   const permissions = (
@@ -135,7 +143,7 @@ export function ProfileFields({
           <span>{t('agents.name')}</span>
           <input required value={profile.name} onChange={(event) => update({ name: event.target.value })} />
         </label>
-        {runtimeRow}
+        {!hideRuntime && runtimeRow}
         {modelRow}
         {reasoningRow}
         {provenance}
@@ -152,7 +160,7 @@ export function ProfileFields({
         <span>{t('agents.name')}</span>
         <input required value={profile.name} onChange={(event) => update({ name: event.target.value })} />
       </label>
-      {runtimeRow}
+      {!hideRuntime && runtimeRow}
       {modelRow}
       {reasoningRow}
       {provenance}
