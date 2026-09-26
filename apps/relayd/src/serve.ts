@@ -151,6 +151,7 @@ process.stdout.write(
     `  inspector  ${inspectorUrl(info)}`,
     `  database   ${database}`,
     `  runtimes   ${environment.runtimes.length} detected, ${environment.profiles.length} profiles`,
+    `  store      ${store.isInitialised() ? 'ready' : 'empty — waiting for the first Codex delegation'}`,
     '',
   ].join('\n'),
 )

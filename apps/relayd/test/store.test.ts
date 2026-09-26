@@ -82,6 +82,24 @@ describe('RelayStore', () => {
     expect(rows).toEqual([{ worker_session_id: 'worker-1', status: 'pending' }])
   })
 
+  it('never creates the schema itself, so the MCP migration stays valid', () => {
+    const fresh = new RelayStore(join(directory, 'brand-new.sqlite'))
+    // relay_events is created by a user_version-gated migration in packages/core;
+    // a CREATE TABLE here would break it with "table relay_events already exists".
+    expect(fresh.isInitialised()).toBe(false)
+    expect(fresh.sessionsWithRuns()).toEqual([])
+    expect(fresh.eventsFor('run-1').events).toEqual([])
+    expect(fresh.menu({ codex })).toMatchObject({ runningWorkers: 0, sessions: [] })
+    expect(fresh.cancelWorker('worker-1')).toMatchObject({ accepted: false })
+    const database = new DatabaseSync(join(directory, 'brand-new.sqlite'))
+    const tables = database
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as Array<{ name: string }>
+    database.close()
+    expect(tables.map((row) => row.name)).not.toContain('relay_events')
+    fresh.close()
+  })
+
   it('reports an empty store instead of failing', () => {
     const empty = new RelayStore(join(directory, 'empty.sqlite'))
     empty.setEnvironment({ runtimes: [], profiles: [] })

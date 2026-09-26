@@ -23,12 +23,14 @@ relay-mcp（Codex 启动的 stdio 进程，唯一的执行者）
 
 | 进程 | 拥有什么 | 不做什么 |
 |---|---|---|
-| `relay-mcp` | RunController、policy、事件写入、worker 进程 | 不渲染界面 |
-| `relayd` | 只读 projection、SSE、控制队列写入、静态托管、诊断 | 不启动/重试 worker，不解释原厂 stdout |
+| `relay-mcp` | RunController、policy、**数据库 schema**（`user_version` 迁移）、事件写入、worker 进程 | 不渲染界面 |
+| `relayd` | 只读 projection、SSE、控制队列写入、静态托管、诊断 | 不建表、不启动/重试 worker、不解释原厂 stdout |
 | `menu-bar` | 托盘菜单、打开浏览器、启动/重启 daemon | 不直接打开数据库，不推导状态 |
 | `web` | 展示日志、取消、复制诊断 | 不写入事件日志 |
 
 因为 daemon 与托盘都不持有执行状态，**它们可以随时重启**：正在跑的委派不受影响，页面重连后从事件日志补齐。
+
+**schema 归 relay-mcp 所有。** `relay_events` 由 `packages/core` 里按 `PRAGMA user_version` 分级的迁移创建，所以 daemon 绝不建表：如果它用 `CREATE TABLE IF NOT EXISTS` 抢先建了，MCP 第一次真实委派时就会 `table relay_events already exists` 直接崩掉（这个坑在真实链路里踩到过一次）。在 MCP 首次打开数据库之前，daemon 报空投影，取消操作明确返回 `accepted: false`。
 
 ## 2. 端口与地址
 

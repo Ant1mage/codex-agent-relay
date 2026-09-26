@@ -20,44 +20,15 @@ import type {
 
 /**
  * Read side of the Relay event store. The MCP process (packages/mcp) owns
- * execution and is the only writer of runs and events; the daemon only reads
- * them and appends cancellation requests to the same control queue the desktop
- * used, which is what keeps the two processes from needing a leader or a lock.
+ * execution, the schema and the writes; the daemon only reads, and appends
+ * cancellation requests to the control queue.
+ *
+ * The daemon deliberately creates nothing: relay_events is created by a
+ * user_version-gated migration in packages/core, so a "CREATE TABLE IF NOT
+ * EXISTS" here would make that migration fail with "table relay_events already
+ * exists" on the first real delegation. Until the MCP has opened the store the
+ * daemon reports an empty projection instead.
  */
-
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS relay_events (
-    id TEXT NOT NULL UNIQUE,
-    run_id TEXT NOT NULL,
-    step_id TEXT,
-    worker_session_id TEXT,
-    seq INTEGER NOT NULL CHECK (seq > 0),
-    timestamp TEXT NOT NULL,
-    type TEXT NOT NULL,
-    data_json TEXT NOT NULL,
-    native_event_json TEXT,
-    PRIMARY KEY (run_id, seq)
-  );
-  CREATE INDEX IF NOT EXISTS relay_events_timestamp_idx ON relay_events(timestamp);
-  CREATE TABLE IF NOT EXISTS host_sessions (
-    id TEXT PRIMARY KEY,
-    native_session_id TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL,
-    data_json TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS host_sessions_updated_idx ON host_sessions(updated_at DESC);
-  CREATE TABLE IF NOT EXISTS relay_control_commands (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL,
-    worker_session_id TEXT NOT NULL,
-    status TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    error TEXT
-  );
-  CREATE INDEX IF NOT EXISTS relay_control_pending_idx
-    ON relay_control_commands(status, created_at);
-`
 
 const ACTIVE = new Set(['starting', 'running'])
 
@@ -96,12 +67,22 @@ export class RelayStore {
 
   constructor(databasePath: string) {
     this.#database = new DatabaseSync(databasePath)
+    // WAL only: safe on an empty file, and required for concurrent readers.
     this.#database.exec('PRAGMA journal_mode = WAL;')
-    this.#database.exec(SCHEMA)
   }
 
   close(): void {
     this.#database.close()
+  }
+
+  /** True once the MCP process has run its migration and the store is usable. */
+  isInitialised(): boolean {
+    const row = this.#database
+      .prepare(
+        "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('relay_events', 'host_sessions', 'relay_control_commands')",
+      )
+      .get() as { n: number } | undefined
+    return (row?.n ?? 0) === 3
   }
 
   /**
@@ -109,6 +90,7 @@ export class RelayStore {
    * writes, which is exactly this topology: the MCP process appends events.
    */
   revision(): string {
+    if (!this.isInitialised()) return 'uninitialised'
     const events = this.#database
       .prepare('SELECT COALESCE(MAX(rowid), 0) AS last FROM relay_events')
       .get() as { last: number } | undefined
@@ -138,6 +120,9 @@ export class RelayStore {
   /** Every stored run, projected. Cached until the store changes. */
   #projected(): { sessions: HostSession[]; runs: RunView[]; events: Map<string, RelayEvent[]> } {
     const revision = this.revision()
+    if (!this.isInitialised()) {
+      return { sessions: [], runs: [], events: new Map() }
+    }
     if (this.#cache && this.#cache.revision === revision) return this.#cache
 
     const sessions = this.#database
@@ -268,7 +253,15 @@ export class RelayStore {
     }
   }
 
+  /**
+   * Appends to the queue the MCP process drains. Refused rather than created
+   * when the store is not initialised: with no schema there is no worker to
+   * cancel, and writing the table here would break the MCP's migration.
+   */
   cancelWorker(workerSessionId: string): { accepted: boolean; message: string } {
+    if (!this.isInitialised()) {
+      return { accepted: false, message: 'Relay event store is not initialised yet' }
+    }
     this.#database
       .prepare(`
         INSERT INTO relay_control_commands (id, type, worker_session_id, status, created_at, error)
