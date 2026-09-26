@@ -192,7 +192,12 @@ export class DesktopDataSource {
         }),
       )
       const projection = projectRun(events)
-      return { run: projection.run, workers: projection.workers, events }
+      return {
+        run: projection.run,
+        steps: projection.steps,
+        workers: projection.workers,
+        events,
+      }
     })
     return {
       sessions,

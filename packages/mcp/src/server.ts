@@ -121,6 +121,21 @@ export function createRelayMcpServer(service: RelayService): McpServer {
     },
   )
   server.registerTool(
+    'accept_agent',
+    {
+      description:
+        'Mark an awaiting Relay task complete after Codex has reviewed the worker result.',
+      inputSchema: workerSchema,
+    },
+    async ({ worker_session_id }) => {
+      try {
+        return result(await service.accept(worker_session_id))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
     'sync_session',
     {
       description: 'Synchronize the current Codex session identity and exact display name.',

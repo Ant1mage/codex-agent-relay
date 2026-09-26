@@ -15,7 +15,7 @@ afterEach(() => {
 })
 
 describe('SqliteEventStore', () => {
-  it('restores a completed run projection after reopening the database', async () => {
+  it('restores an awaiting-host run projection after reopening the database', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'relay-core-'))
     temporaryDirectories.push(directory)
     const path = join(directory, 'relay.sqlite')
@@ -59,10 +59,10 @@ describe('SqliteEventStore', () => {
     const reopenedStore = new SqliteEventStore(path)
     expect(reopenedStore.listRunIds()).toEqual([active.run.id])
     const projection = projectRun(reopenedStore.list(active.run.id))
-    expect(projection.run.status).toBe('completed')
+    expect(projection.run.status).toBe('awaiting_host')
+    expect(projection.steps).toHaveLength(1)
     expect(projection.workers).toHaveLength(1)
     expect(projection.workers[0]?.status).toBe('completed')
     reopenedStore.close()
   })
 })
-

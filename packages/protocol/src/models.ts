@@ -75,10 +75,12 @@ export const runStatusSchema = z.enum([
   'queued',
   'starting',
   'running',
+  'awaiting_host',
   'completed',
   'failed',
   'cancelled',
-  'handed_off',
+  'interrupted',
+  'orphaned',
 ])
 export const runSchema = z.object({
   id: identifierSchema,
@@ -90,9 +92,36 @@ export const runSchema = z.object({
   isolation: isolationSchema,
   status: runStatusSchema,
   createdAt: isoTimestampSchema,
+  updatedAt: isoTimestampSchema,
 })
 export type Run = z.infer<typeof runSchema>
 export type RunStatus = z.infer<typeof runStatusSchema>
+
+export const stepStatusSchema = z.enum([
+  'queued',
+  'starting',
+  'running',
+  'awaiting_host',
+  'completed',
+  'failed',
+  'cancelled',
+  'interrupted',
+  'orphaned',
+])
+export const stepSchema = z.object({
+  id: identifierSchema,
+  runId: identifierSchema,
+  profileId: identifierSchema,
+  task: z.string().trim().min(1).max(100_000),
+  accessMode: accessModeSchema,
+  isolation: isolationSchema,
+  status: stepStatusSchema,
+  iteration: z.number().int().positive(),
+  createdAt: isoTimestampSchema,
+  updatedAt: isoTimestampSchema,
+})
+export type Step = z.infer<typeof stepSchema>
+export type StepStatus = z.infer<typeof stepStatusSchema>
 
 export const workerStatusSchema = z.enum([
   'starting',
@@ -100,10 +129,14 @@ export const workerStatusSchema = z.enum([
   'completed',
   'failed',
   'cancelled',
+  'interrupted',
+  'orphaned',
 ])
 export const workerSessionSchema = z.object({
   id: identifierSchema,
   runId: identifierSchema,
+  stepId: identifierSchema,
+  iteration: z.number().int().positive(),
   runtimeId: identifierSchema,
   nativeSessionId: identifierSchema.optional(),
   parentWorkerSessionId: identifierSchema.optional(),
@@ -117,8 +150,14 @@ export type WorkerStatus = z.infer<typeof workerStatusSchema>
 
 export const relayEventTypeSchema = z.enum([
   'run/created',
+  'run/awaiting_host',
+  'run/accepted',
+  'step/created',
+  'step/iteration_started',
   'worker/started',
   'worker/message',
+  'worker/status',
+  // Kept for provider compatibility. The desktop console intentionally hides it.
   'worker/reasoning',
   'tool/read',
   'tool/search',
@@ -131,12 +170,15 @@ export const relayEventTypeSchema = z.enum([
   'worker/completed',
   'worker/failed',
   'worker/cancelled',
+  'worker/interrupted',
+  'worker/orphaned',
 ])
 export type RelayEventType = z.infer<typeof relayEventTypeSchema>
 
 export const relayEventSchema = z.object({
   id: identifierSchema,
   runId: identifierSchema,
+  stepId: identifierSchema.optional(),
   workerSessionId: identifierSchema.optional(),
   seq: z.number().int().positive(),
   timestamp: isoTimestampSchema,
