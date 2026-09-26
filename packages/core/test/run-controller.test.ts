@@ -107,6 +107,23 @@ describe('phase 0 contracts', () => {
     })
   })
 
+  it('passes configured model and reasoning to the adapter', async () => {
+    const store = new MemoryEventStore()
+    const controller = new RunController(store)
+    const adapter = new FakeAdapter()
+    controller.registerAdapter(adapter)
+    controller.registerRuntime(runtime)
+    controller.registerProfile({ ...profile, model: 'DeepSeek Pro', reasoning: 'high' })
+
+    const active = await controller.start({
+      hostSessionId: 'codex:model-settings', profileId: profile.id, task: 'Use profile defaults',
+      cwd: process.cwd(), accessMode: 'read_only', isolation: 'shared',
+    })
+    await active.completion
+
+    expect(adapter.lastStartInput).toMatchObject({ model: 'DeepSeek Pro', reasoning: 'high' })
+  })
+
   it('reuses the same Step with an incremented iteration after Codex feedback', async () => {
     const store = new MemoryEventStore()
     const controller = new RunController(store)

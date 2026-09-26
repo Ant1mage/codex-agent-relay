@@ -9,6 +9,7 @@ import type { AdapterCapabilities, StartInput } from '@relay/protocol'
 export class FakeAdapter implements AgentAdapter {
   readonly id = 'fake'
   disposed = false
+  lastStartInput: StartInput | undefined
 
   capabilities(): AdapterCapabilities {
     return {
@@ -27,6 +28,7 @@ export class FakeAdapter implements AgentAdapter {
   }
 
   async start(input: StartInput): Promise<WorkerSessionHandle> {
+    this.lastStartInput = input
     async function* events(): AsyncGenerator<AdapterEvent> {
       yield { type: 'worker/message', data: { text: `Working on: ${input.task}` } }
       yield { type: 'tool/read', data: { path: 'README.md' } }
@@ -41,4 +43,3 @@ export class FakeAdapter implements AgentAdapter {
     this.disposed = true
   }
 }
-

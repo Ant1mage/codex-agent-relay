@@ -4,6 +4,8 @@ export const isoTimestampSchema = z.iso.datetime({ offset: true })
 export const identifierSchema = z.string().trim().min(1).max(256)
 export const localeSchema = z.enum(['en', 'zh-CN'])
 export type Locale = z.infer<typeof localeSchema>
+export const reasoningEffortSchema = z.enum(['low', 'medium', 'high'])
+export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>
 
 export const capabilitySetSchema = z.object({
   readWorkspace: z.boolean(),
@@ -40,6 +42,8 @@ export const agentProfileSchema = z.object({
   runtimeId: identifierSchema,
   description: z.string().trim().min(1).max(2_000),
   instructions: z.string().trim().min(1).max(20_000).optional(),
+  model: z.string().trim().min(1).max(128).optional(),
+  reasoning: reasoningEffortSchema.optional(),
   capabilities: capabilitySetSchema,
   enabled: z.boolean(),
 })
@@ -217,6 +221,8 @@ export const startInputSchema = z.object({
   task: z.string().trim().min(1).max(100_000),
   cwd: z.string().min(1),
   accessMode: accessModeSchema,
+  model: z.string().trim().min(1).max(128).optional(),
+  reasoning: reasoningEffortSchema.optional(),
   instructions: z.string().optional(),
 })
 export type StartInput = z.infer<typeof startInputSchema>
