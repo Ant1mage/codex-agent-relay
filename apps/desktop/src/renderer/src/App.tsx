@@ -26,8 +26,34 @@ type Inspector = 'changes' | 'raw' | undefined
 type Theme = 'system' | 'light' | 'dark'
 type ConsoleKind = 'read' | 'search' | 'edit' | 'command' | 'test' | 'result' | 'error' | 'status'
 type SettingsSection = 'general' | 'agents' | 'workspace' | 'appearance'
+type ProviderIconId = 'deepseek' | 'gemini' | 'glm' | 'grok' | 'kimi'
 const DEFAULT_FONT_SIZE = 14
 const MAX_FONT_SIZE = 20
+
+const providerMetadata: Record<ProviderIconId, { label: string; src: string }> = {
+  deepseek: { label: 'DeepSeek', src: '/providers/deepseek.svg' },
+  gemini: { label: 'Gemini', src: '/providers/gemini.svg' },
+  glm: { label: 'GLM', src: '/providers/glm.svg' },
+  grok: { label: 'Grok', src: '/providers/grok.svg' },
+  kimi: { label: 'Kimi', src: '/providers/kimi.svg' },
+}
+
+function providerIconId(name: string | undefined, adapterId: string | undefined): ProviderIconId | undefined {
+  const value = `${name ?? ''} ${adapterId ?? ''}`.toLowerCase()
+  if (value.includes('deepseek')) return 'deepseek'
+  if (value.includes('gemini')) return 'gemini'
+  if (value.includes('glm') || value.includes('z.ai') || value.includes('zhipu') || value.includes('zai-cli')) return 'glm'
+  if (value.includes('grok') || value.includes('x.ai')) return 'grok'
+  if (value.includes('kimi') || value.includes('moonshot')) return 'kimi'
+  return undefined
+}
+
+function ProviderIcon({ name, adapterId }: { name: string | undefined; adapterId: string | undefined }) {
+  const id = providerIconId(name, adapterId)
+  if (!id) return null
+  const provider = providerMetadata[id]
+  return <img className="provider-icon" src={provider.src} alt={provider.label} title={provider.label} />
+}
 
 function storedFontSize(): number {
   const value = Number(localStorage.getItem('relay.font-size'))
@@ -86,7 +112,7 @@ function Sidebar({ t }: { t: Translator }) {
   const { snapshot, selectedSessionId, selectSession, setSettingsOpen } = useAppStore()
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand"><strong>Relay</strong></div>
+      <div className="sidebar-brand"><img src="/icon/relay-icon.png" alt="" /><strong>Relay</strong></div>
       <div className="sidebar-section-title">{t('sessions.title')}</div>
       <div className="session-list">
         {snapshot?.sessions.map((session) => (
@@ -115,7 +141,7 @@ function AppToolbar({ t, sidebarCollapsed, toggleSidebar }: { t: Translator; sid
 interface StepItem { view: DesktopRunView; step: Step }
 
 function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
-  const { selectedRunId, selectedStepId, selectStep } = useAppStore()
+  const { snapshot, selectedRunId, selectedStepId, selectStep } = useAppStore()
   const currentRef = useRef<HTMLButtonElement>(null)
   const ordered = useMemo(
     () => [...items].sort((left, right) => left.step.createdAt.localeCompare(right.step.createdAt)),
@@ -132,11 +158,13 @@ function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
       <div className="step-scroll">
         {ordered.map(({ view, step }, index) => {
           const selected = view.run.id === selectedRunId && step.id === selectedStepId
+          const profile = snapshot?.profiles.find((candidate) => candidate.id === view.run.profileId)
+          const runtime = snapshot?.runtimes.find((candidate) => candidate.id === profile?.runtimeId)
           return (
             <div className="step-link" key={step.id}>
               <button ref={selected ? currentRef : undefined} className={selected ? 'step-node selected' : `step-node ${step.status}`} onClick={() => selectStep(view.run.id, step.id)}>
                 <span>{t('steps.step')} {index + 1}</span>
-                <strong>{view.run.profileId}</strong>
+                <div className="step-profile"><ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} /><strong>{profile?.name ?? view.run.profileId}</strong></div>
                 <em>{t(`run.status.${step.status}`)}</em>
               </button>
             </div>
@@ -190,7 +218,7 @@ function CliInfo({ view, step, t, close }: { view: DesktopRunView; step: Step; t
   const reasoningLabel = profile?.reasoning === 'low' ? t('agents.reasoningLow') : profile?.reasoning === 'medium' ? t('agents.reasoningMedium') : profile?.reasoning === 'high' ? t('agents.reasoningHigh') : t('agents.default')
   return (
     <aside className="cli-info">
-      <header><div><span>{profile?.name ?? view.run.profileId}</span><h2>{t('cliInfo.title')}</h2></div><button className="plain-icon" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></button></header>
+      <header><div><span className="cli-profile"><ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} />{profile?.name ?? view.run.profileId}</span><h2>{t('cliInfo.title')}</h2></div><button className="plain-icon" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></button></header>
       <dl>
         <div><dt>{t('cliInfo.status')}</dt><dd><StatusLabel status={step.status} t={t} /></dd></div>
         <div><dt>{t('cliInfo.runtime')}</dt><dd>{runtime?.adapterId ?? worker?.runtimeId ?? t('common.notAvailable')}</dd></div>
@@ -310,7 +338,7 @@ function SettingsSheet({ t, theme, setTheme, fontSize, setFontSize }: { t: Trans
         <div className="settings-layout"><nav className="settings-navigation">{navigation.map(({ id, label, icon: Icon }) => <button className={section === id ? 'selected' : ''} onClick={() => setSection(id)} key={id}><Icon size={14} />{label}</button>)}</nav><div className="settings-content">
           {section === 'general' && <section><div className="setting-heading"><Languages size={16} /><div><strong>{t('settings.language')}</strong><span>English / 简体中文</span></div></div><div className="segmented"><button className={locale === 'en' ? 'selected' : ''} onClick={() => setLocale('en')}>English</button><button className={locale === 'zh-CN' ? 'selected' : ''} onClick={() => setLocale('zh-CN')}>简体中文</button></div></section>}
           {section === 'appearance' && <section><div className="setting-heading"><Sun size={16} /><strong>{t('settings.appearance')}</strong></div><div className="segmented">{(['system', 'light', 'dark'] as Theme[]).map((value) => <button className={theme === value ? 'selected' : ''} onClick={() => setTheme(value)} key={value}>{value === 'dark' && <Moon size={12} />}{t(`settings.${value}`)}</button>)}</div><label className="appearance-setting"><div><strong>{t('settings.fontSize')}</strong><span>{t('settings.fontSizeHint')}</span></div><select value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))}>{Array.from({ length: MAX_FONT_SIZE - DEFAULT_FONT_SIZE + 1 }, (_, index) => DEFAULT_FONT_SIZE + index).map((value) => <option value={value} key={value}>{value} px</option>)}</select></label></section>}
-          {section === 'agents' && <section><div className="setting-heading section-action"><div><strong>{t('settings.profiles')}</strong><span>{snapshot.runtimes.length} runtimes · {snapshot.profiles.length} profiles</span></div><button className="secondary" onClick={createProfile} disabled={!snapshot.runtimes.length}><Plus size={12} />{t('agents.create')}</button></div><div className="profile-list">{snapshot.profiles.map((profile) => { const runtime = snapshot.runtimes.find((item) => item.id === profile.runtimeId); return <button key={profile.id} onClick={() => setEditing(profile)}><div><strong>{profile.name}</strong><span>{[runtime?.adapterId, profile.model, profile.reasoning].filter(Boolean).join(' · ') || t('common.notAvailable')}</span></div><ChevronRight size={14} /></button> })}</div></section>}
+          {section === 'agents' && <section><div className="setting-heading section-action"><div><strong>{t('settings.profiles')}</strong><span>{snapshot.runtimes.length} runtimes · {snapshot.profiles.length} profiles</span></div><button className="secondary" onClick={createProfile} disabled={!snapshot.runtimes.length}><Plus size={12} />{t('agents.create')}</button></div><div className="profile-list">{snapshot.profiles.map((profile) => { const runtime = snapshot.runtimes.find((item) => item.id === profile.runtimeId); return <button key={profile.id} onClick={() => setEditing(profile)}><div className="profile-list-item"><ProviderIcon name={profile.name} adapterId={runtime?.adapterId} /><div><strong>{profile.name}</strong><span>{[runtime?.adapterId, profile.model, profile.reasoning].filter(Boolean).join(' · ') || t('common.notAvailable')}</span></div></div><ChevronRight size={14} /></button> })}</div></section>}
           {section === 'workspace' && <section><div className="setting-heading"><ShieldCheck size={16} /><div><strong>{t('settings.policy')}</strong><span>{scope === 'global' ? t('settings.global') : t('settings.workspace')}</span></div></div><label className="setting-row"><span>{t('settings.scope')}</span><select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">{t('settings.global')}</option>{workspaces.map((workspace) => <option value={workspace} key={workspace}>{workspace}</option>)}</select></label><label className="setting-row"><span>{t('settings.maxRuns')}</span><input type="number" min="1" max="16" value={policy.maxConcurrentRuns} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePolicy({ maxConcurrentRuns: value }) }} /></label><label className="setting-row"><span>{t('settings.maxWriters')}</span><input type="number" min="1" max="8" value={policy.maxConcurrentWriters} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePolicy({ maxConcurrentWriters: value }) }} /></label>{([['requireWorktreeForParallelWriters', 'settings.requireWorktree'], ['allowWrite', 'settings.allowWrite'], ['allowCommands', 'settings.allowCommands'], ['allowNetwork', 'settings.allowNetwork']] as const).map(([key, label]) => <label className="setting-row" key={key}><span>{t(label)}</span><input type="checkbox" checked={policy[key]} onChange={() => updatePolicy({ [key]: !policy[key] })} /></label>)}</section>}
         </div></div>
       </aside>

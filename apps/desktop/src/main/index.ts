@@ -9,12 +9,16 @@ import type { AgentProfile } from '@relay/protocol'
 let dataSource: DesktopDataSource | undefined
 
 function createWindow(): void {
+  const iconPath = app.isPackaged
+    ? join(import.meta.dirname, '../renderer/icon/relay-icon.png')
+    : join(import.meta.dirname, '../../../../assets/icon/relay-icon.png')
   const window = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 980,
     minHeight: 680,
     title: 'Relay',
+    icon: iconPath,
     backgroundColor: '#0b0d10',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -39,6 +43,13 @@ void app.whenReady().then(async () => {
   mkdirSync(dirname(settingsPath), { recursive: true })
   dataSource = new DesktopDataSource(databasePath, settingsPath)
   await dataSource.initialize()
+
+  if (process.platform === 'darwin') {
+    const iconPath = app.isPackaged
+      ? join(import.meta.dirname, '../renderer/icon/relay-icon.png')
+      : join(import.meta.dirname, '../../../../assets/icon/relay-icon.png')
+    app.dock?.setIcon(iconPath)
+  }
 
   ipcMain.handle('relay:snapshot', () => dataSource?.snapshot())
   ipcMain.handle('relay:settings:save', (_event, settings: DesktopSettings) =>
