@@ -51,7 +51,15 @@ export class RelayService {
   async listAgents(context: CodexInvocationContext): Promise<AgentProfile[]> {
     await this.beforeRefresh?.()
     await this.syncSession(context)
-    return this.controller.profiles.list({ enabledOnly: true })
+    const available = new Set(
+      this.controller.runtimes
+        .list()
+        .filter((runtime) => runtime.health === 'available')
+        .map((runtime) => runtime.id),
+    )
+    return this.controller.profiles
+      .list({ enabledOnly: true })
+      .filter((profile) => available.has(profile.runtimeId))
   }
 
   async runAgent(context: CodexInvocationContext, input: RunAgentInput): Promise<{
@@ -102,6 +110,7 @@ export class RelayService {
     runId: string
     workerSessionId: string
   }> {
+    await this.beforeRefresh?.()
     const active = await this.controller.resume(workerSessionId, feedback)
     return { runId: active.run.id, workerSessionId: active.worker.id }
   }

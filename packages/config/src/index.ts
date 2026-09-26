@@ -212,7 +212,18 @@ export class RelayConfigStore {
     }
   }
 
+  #assertReadable(kind: 'profiles' | 'settings' | 'runtimes'): void {
+    const warnings: string[] = []
+    if (kind === 'profiles') this.#readProfiles([], warnings)
+    else if (kind === 'settings') this.#readSettings(warnings)
+    else this.#readManualRuntimes(warnings)
+    if (warnings.length > 0) {
+      throw new Error(`拒绝覆盖损坏的 ${kind}.json；请先备份并修复或移走原文件。${warnings[0]}`)
+    }
+  }
+
   writeManualRuntimes(runtimes: ManualRuntime[]): RelayConfig {
+    this.#assertReadable('runtimes')
     atomicWrite(this.#paths.runtimes, manualRuntimeSchema.array().parse(runtimes))
     return this.read()
   }
@@ -231,6 +242,7 @@ export class RelayConfigStore {
   }
 
   writeProfiles(profiles: AgentProfile[]): RelayConfig {
+    this.#assertReadable('profiles')
     atomicWrite(this.#paths.profiles, agentProfileSchema.array().parse(profiles))
     return this.read()
   }
@@ -259,6 +271,7 @@ export class RelayConfigStore {
     policy: RelayPolicy
     workspaceOverrides: Record<string, RelayPolicyOverride>
   }): RelayConfig {
+    this.#assertReadable('settings')
     const workspaceOverrides: Record<string, RelayPolicyOverride> = {}
     for (const [workspace, override] of Object.entries(input.workspaceOverrides)) {
       workspaceOverrides[workspace] = relayPolicyOverrideSchema.parse(override)

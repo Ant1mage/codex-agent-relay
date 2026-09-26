@@ -347,8 +347,6 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
       ),
     )
   }
-
-
   items.push({ kind: 'normal', label: t('menu.refresh'), action: { type: 'refresh' } })
   items.push({ kind: 'normal', label: t('menu.diagnostics'), action: { type: 'copy-diagnostics' } })
   if (view.platform === 'darwin' || view.platform === 'win32') {
@@ -360,11 +358,15 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
     })
   }
   items.push(separator())
+  // App updates remain actionable while relayd is healthy; they are not a
+  // daemon-recovery-only feature.
+  items.push(...updateItems(t, view))
+  items.push(separator())
   items.push({ kind: 'normal', label: t('menu.quit'), accelerator: 'CmdOrCtrl+Q', action: { type: 'quit' } })
   return items
 }
 
 /** Menu bar entries are localized on the tray side; the wire stays neutral. */
 export function menuBarTooltip(view: MenuBarView): string {
-  return `Relay · ${menuBarStatusLabel(view)}`
+  return menuBarStatusLabel(view)
 }

@@ -6,7 +6,10 @@ export interface PanelNavigateRequest {
 
 declare global {
   interface Window {
-    relayPanel?: { onNavigate(listener: (request: PanelNavigateRequest) => void): () => void }
+    relayPanel?: {
+      onNavigate(listener: (request: PanelNavigateRequest) => void): () => void
+      openInspector(): Promise<void>
+    }
   }
 }
 

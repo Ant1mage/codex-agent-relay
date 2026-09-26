@@ -155,10 +155,14 @@ export function App() {
     [conn.client, guard, reload],
   )
 
+  const loadAdapters = useCallback(
+    async () => (await conn.client!.adapters()).adapters,
+    [conn.client],
+  )
+
   const openInspector = useCallback(() => {
-    if (!conn.base) return
-    window.open(conn.base, '_blank')
-  }, [conn.base])
+    void window.relayPanel?.openInspector()
+  }, [])
 
   if (conn.error || !conn.client) {
     return (
@@ -267,6 +271,7 @@ export function App() {
               onSave={saveRuntime}
               onDelete={deleteRuntime}
               onProbe={(input) => conn.client!.probeRuntime(input)}
+              onLoadAdapters={loadAdapters}
               startNew={intent === 'add-runtime'}
               onIntentHandled={() => setIntent(undefined)}
               busy={busy}

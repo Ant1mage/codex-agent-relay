@@ -19,7 +19,7 @@ pnpm build
 └── out/menu-bar/main.cjs    ← 菜单栏（Electron 主进程）
 ```
 
-版本号只有一个来源：仓库根 `package.json`。`tools/define-version.mjs` 把它注入三个 bundle（`__RELAY_VERSION__`），web/panel 由 Vite define 注入，Electron 的版本号由 electron-builder 从同一个字段写入 Info.plist。因此 `/api/health` 报的版本、面板显示的版本和 App 的版本永远一致 —— 不一致就说明有东西没重启（见 §4）。
+运行时版本号以仓库根 `package.json` 为准。`tools/define-version.mjs` 把它注入 relayd、MCP 与菜单栏 bundle（`__RELAY_VERSION__`）；electron-builder 的 App 包版本必须与之同步。CI 的 tag 校验和产物校验会阻止错版发布。因此 `/api/health`、MCP 握手与 App 版本不一致时，说明包版本漂移或旧进程尚未重启（见 §4）。
 
 ## 2. 打包（electron-builder）
 
@@ -32,20 +32,21 @@ pnpm build
 | `extendInfo.LSUIElement` | `true` | 菜单栏应用不进 Dock、不进程序切换器 |
 | `hardenedRuntime` + entitlements | `build-resources/entitlements.mac.plist` | Electron 需要 JIT / 未签名可执行内存；daemon 与 MCP 是子进程，需要 `disable-library-validation` |
 | `files` | `out/**/*`，排除 `*.map` | asar 里只放运行需要的东西 |
-| `publish` | generic，URL 来自 `RELAY_UPDATE_URL` | 单一 feed，可换成 S3/GitHub |
+| `publish` | GitHub Releases（`Ant1mage/relay`） | `latest-mac.yml`、zip 与 dmg 来自同一个真实 release |
 
 ```bash
 pnpm pack:dir     # 快速本地构建，dist/mac-arm64/Relay.app
 pnpm pack:mac     # zip + dmg，不发布
-RELAY_UPDATE_URL=https://…/mac pnpm release:mac   # 构建并发布到 feed
+pnpm verify:release # 检查 App 内资源、zip、dmg、latest-mac.yml 与 sha512
+pnpm release:mac  # 签名、公证并发布到 GitHub Releases（需要 GH_TOKEN 与 Apple 凭据）
 ```
 
 签名与公证：本地构建会用机器上的签名身份（`CSC_IDENTITY_AUTO_DISCOVERY=false` 可关闭）。正式发布需要 Developer ID + 公证凭据：
 
 ```bash
 export CSC_LINK=… CSC_KEY_PASSWORD=…
-export APPLE_ID=… APPLE_APP_SPECIFIC_PASSWORD=… APPLE_TEAM_ID=…
-# 然后把 apps/menu-bar/package.json 的 build.mac.notarize 改成 true（现在是 false）
+export APPLE_API_KEY=/path/to/AuthKey.p8 APPLE_API_KEY_ID=… APPLE_API_ISSUER=…
+# apps/menu-bar/package.json 已启用 notarize；缺少完整凭据的正式发布会被 CI 预检拒绝。
 ```
 
 electron-updater 只接受**已签名**的包，未公证的构建会被 Gatekeeper 拦下，所以这两项不是可选项。
@@ -66,15 +67,18 @@ daemon 是独立进程（它是日志与控制面的后端，不随窗口开关�
 - 托盘启动 **打包版 App 时**用 `ELECTRON_RUN_AS_NODE=1` 拉起 `Contents/Resources/relayd/serve.js`；只用 Electron 自带的 Node，不需要系统装 node/pnpm/corepack/tsx。
 - 托盘**不信任 PID**：`server.json` 里的 pid + nonce 与 `/api/health` 回显一致才算在运行（docs/menu-bar.md 5）。
 - 托盘把 `health.version` 与 `app.getVersion()` 比对，不一致就在菜单顶部提示「日志服务版本 X（App Y）— 建议重启」，避免新版托盘驱动旧版 daemon。
-- 只有**托盘自己拉起的** daemon 会在退出/安装更新时被停止；用户自己启动的 daemon 不受影响。
+- 普通退出只停止**托盘自己拉起的** daemon；明确点击“重启并安装”时会停止任何通过 nonce 验证的 relayd，保证新 App 重启后不会继续连接旧 daemon。
+- MCP 配置指向 App bundle 内的固定入口，因此新 Codex 会话会启动更新后的 MCP；更新前已经存活的 stdio MCP 进程不能被 App 安全替换，需要重启对应 Codex 会话。
+- Codex plugin/skill/hooks 仍是独立生命周期。App 更新后状态检查会把旧副本标成 `outdated`，用户从面板执行“更新”完成闭环，不在 App updater 中暗改 Codex 配置。
 
 ## 5. 本地验证更新链路
 
 ```bash
-# 1) 起一个支持 PUT 的本地 feed（electron-builder 发布会 PUT 上来）
-python3 /tmp/relay-feed-server.py         # http://127.0.0.1:8099
-# 2) 构建并发布
-RELAY_UPDATE_URL=http://127.0.0.1:8099/ pnpm release:mac
-# 3) feed 上会有 latest-mac.yml + zip；App 内会有 app-update.yml
-# 4) 把 latest-mac.yml 的 version 改大（并指向同一个 zip）→ 应用菜单显示“发现新版本”
+# 未打包开发态仍可用 RELAY_UPDATE_FEED 指向本地只读 feed 联调状态机。
+# 正式链路由 tag vX.Y.Z 触发 .github/workflows/release.yml：
+# 1) 校验 tag 与根 package.json 版本一致
+# 2) test + typecheck
+# 3) Developer ID 签名 + Apple notarization
+# 4) 发布 zip + dmg + latest-mac.yml 到 GitHub Release
+# 5) verify:release 校验 bundle 资源与更新 sha512 元数据
 ```

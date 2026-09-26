@@ -269,6 +269,8 @@ export const startInputSchema = z.object({
   task: z.string().trim().min(1).max(100_000),
   cwd: z.string().min(1),
   accessMode: accessModeSchema,
+  /** Exact executable selected by RuntimeRegistry, including manual entries. */
+  executablePath: z.string().min(1).optional(),
   model: z.string().trim().min(1).max(128).optional(),
   reasoning: reasoningEffortSchema.optional(),
   instructions: z.string().optional(),

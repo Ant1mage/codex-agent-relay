@@ -22,6 +22,7 @@ beforeEach(() => {
   store = new RelayConfigStore({
     profiles: join(directory, 'profiles.json'),
     settings: join(directory, 'settings.json'),
+    runtimes: join(directory, 'runtimes.json'),
   })
 })
 
@@ -71,5 +72,31 @@ describe('RelayConfigStore', () => {
     expect(store.read().profiles).toEqual([])
     writeFileSync(store.paths.profiles, JSON.stringify([{ id: 'broken' }]), 'utf8')
     expect(store.read().profiles).toEqual([])
+  })
+
+  it('shows fallback warnings and refuses to overwrite damaged files', () => {
+    const damaged = '{ not json'
+    writeFileSync(store.paths.profiles, damaged, 'utf8')
+    const fallback = store.read()
+    expect(fallback.profiles).toEqual([])
+    expect(fallback.warnings[0]).toMatch(/profiles\.json 无法解析/)
+
+    expect(() => store.upsertProfile(profile)).toThrow(/拒绝覆盖损坏的 profiles\.json/)
+    expect(() => store.removeProfile('missing')).toThrow(/拒绝覆盖损坏的 profiles\.json/)
+    expect(readFileSync(store.paths.profiles, 'utf8')).toBe(damaged)
+  })
+
+  it('preserves damaged settings and runtimes on attempted saves', () => {
+    writeFileSync(store.paths.settings, '{ bad settings', 'utf8')
+    writeFileSync(store.paths.runtimes, '{ bad runtimes', 'utf8')
+
+    expect(() =>
+      store.writeSettings({ policy: store.read().policy, workspaceOverrides: {} }),
+    ).toThrow(/拒绝覆盖损坏的 settings\.json/)
+    expect(() =>
+      store.upsertManualRuntime({ id: 'manual', adapterId: 'test', executablePath: '/tmp/test' }),
+    ).toThrow(/拒绝覆盖损坏的 runtimes\.json/)
+    expect(readFileSync(store.paths.settings, 'utf8')).toBe('{ bad settings')
+    expect(readFileSync(store.paths.runtimes, 'utf8')).toBe('{ bad runtimes')
   })
 })

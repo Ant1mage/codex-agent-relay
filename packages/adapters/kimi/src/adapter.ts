@@ -120,7 +120,7 @@ export class KimiAdapter implements AgentAdapter {
 
   async #launch(input: StartInput): Promise<WorkerSessionHandle> {
     if (this.#disposed) throw new Error('Kimi adapter is disposed')
-    const executablePath = this.#executable()
+    const executablePath = input.executablePath ?? this.#executable()
     if (!executablePath) throw new Error('Kimi Code executable `kimi` was not found')
     // Probe the CLI once per launch so model/reasoning flags are only sent
     // when the CLI actually advertises them.

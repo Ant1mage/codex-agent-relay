@@ -45,7 +45,7 @@ describe('menuBarStatusLabel', () => {
 
   it('follows the locale and feeds the tray tooltip', () => {
     expect(menuBarStatusLabel(view({ locale: 'zh-CN', menu: menu({ runningWorkers: 3 }) }))).toBe('Relay · 3 个运行中')
-    expect(menuBarTooltip(view())).toBe('Relay · Relay · Ready')
+    expect(menuBarTooltip(view())).toBe('Relay · Ready')
   })
 })
 
@@ -191,5 +191,38 @@ describe('buildMenuBarItems', () => {
     const zh = buildMenuBarItems(view({ locale: 'zh-CN', platform: 'linux' }))
     expect(zh[1]?.label).toBe('打开检查器')
     expect(zh.at(-1)?.label).toBe('退出 Relay')
+  })
+
+  it('shows every updater state while the daemon is running', () => {
+    const cases: Array<{
+      update: NonNullable<MenuBarView['update']>
+      labels: string[]
+      action?: string
+    }> = [
+      { update: { status: 'checking' }, labels: ['Checking for updates…'] },
+      {
+        update: { status: 'available', version: '0.2.0' },
+        labels: ['Update 0.2.0 available', 'Download update'],
+        action: 'download-update',
+      },
+      { update: { status: 'downloading', percent: 42 }, labels: ['Download update 42%'] },
+      {
+        update: { status: 'downloaded', version: '0.2.0' },
+        labels: ['Update 0.2.0 available', 'Restart and install'],
+        action: 'install-update',
+      },
+      { update: { status: 'none' }, labels: ['Relay is up to date'] },
+      { update: { status: 'error', message: 'feed unavailable' }, labels: ['⚠︎ feed unavailable'] },
+    ]
+
+    for (const entry of cases) {
+      const items = buildMenuBarItems(view({ update: entry.update }))
+      const labels = items.map((item) => item.label)
+      for (const label of entry.labels) expect(labels).toContain(label)
+      expect(labels).toContain('Check for updates…')
+      if (entry.action) {
+        expect(items.some((item) => item.action?.type === entry.action)).toBe(true)
+      }
+    }
   })
 })

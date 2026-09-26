@@ -91,6 +91,13 @@ describe('RelayService', () => {
     expect(projected.run.hostSessionId).toBe('codex:thread-1')
     expect(projected.run.cwd).toBe('/codex/workspace')
     expect(sessions.get('codex:thread-1')?.displayName).toBe('Name shown by Codex')
+
+    expect((await service.listAgents({ threadId: 'thread-1' })).map((item) => item.id)).toEqual([
+      profile.id,
+    ])
+    controller.runtimes.sync([{ ...runtime, health: 'authentication_required' }])
+    expect(await service.listAgents({ threadId: 'thread-1' })).toEqual([])
+    controller.runtimes.sync([])
+    expect(await service.listAgents({ threadId: 'thread-1' })).toEqual([])
   })
 })
-

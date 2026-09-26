@@ -16,6 +16,7 @@ class ResumableFakeAdapter extends FakeAdapter {
       task: input.task,
       cwd: input.cwd,
       accessMode: input.accessMode,
+      ...(input.executablePath ? { executablePath: input.executablePath } : {}),
       ...(input.instructions ? { instructions: input.instructions } : {}),
     })
   }
@@ -121,7 +122,11 @@ describe('phase 0 contracts', () => {
     })
     await active.completion
 
-    expect(adapter.lastStartInput).toMatchObject({ model: 'DeepSeek Pro', reasoning: 'high' })
+    expect(adapter.lastStartInput).toMatchObject({
+      model: 'DeepSeek Pro',
+      reasoning: 'high',
+      executablePath: '/usr/bin/true',
+    })
   })
 
   it('reuses the same Step with an incremented iteration after Codex feedback', async () => {

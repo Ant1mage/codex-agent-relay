@@ -10,7 +10,14 @@ import { GeminiAdapter } from '@relay/adapter-gemini'
 import { KimiAdapter } from '@relay/adapter-kimi'
 import { ZaiAdapter } from '@relay/adapter-zai'
 import type { AgentAdapter } from '@relay/adapter-sdk'
-import { RelayConfigStore, relayHome, relayVersion, runsOnElectron, type ManualRuntime } from '@relay/config'
+import {
+  RelayConfigStore,
+  relayHome,
+  relayVersion,
+  resourcesDir,
+  runsOnElectron,
+  type ManualRuntime,
+} from '@relay/config'
 import type { AgentProfile, Runtime } from '@relay/protocol'
 import type { CodexAction, CodexCheck, CodexStatus, InstallResult } from '@relay/relay-api'
 
@@ -173,6 +180,8 @@ export function relaySources(): RelaySources | undefined {
   const bases: string[] = []
   const override = process.env.RELAY_INSTALL_ROOT
   if (override) bases.push(join(override, 'integrations', 'codex'), override)
+  const packaged = resourcesDir()
+  if (packaged) bases.push(join(packaged, 'codex'))
   bases.push(join(import.meta.dirname, 'codex'))
   let directory = import.meta.dirname
   for (let depth = 0; depth < 6; depth += 1) {
@@ -314,7 +323,7 @@ export function relayPluginVersion(): string {
   const hash = createHash('sha256')
   hash.update(readFileSync(sources.skill, 'utf8'))
   hash.update(readFileSync(sources.hooks, 'utf8'))
-  return `0.0.0+${hash.digest('hex').slice(0, 8)}`
+  return `${relayVersion()}+${hash.digest('hex').slice(0, 8)}`
 }
 
 /** Parses `codex plugin list` output for our own plugin. */

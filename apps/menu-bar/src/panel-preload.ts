@@ -17,4 +17,7 @@ contextBridge.exposeInMainWorld('relayPanel', {
     ipcRenderer.on('relay:panel', handler)
     return () => ipcRenderer.removeListener('relay:panel', handler)
   },
+  openInspector(): Promise<void> {
+    return ipcRenderer.invoke('relay:open-inspector') as Promise<void>
+  },
 })

@@ -3,7 +3,12 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app, shell } from 'electron'
 import { RelayClient, type MenuView } from '@relay/relay-api'
-import { inspectorUrl, readServerInfo, type ServerInfo } from '@relay/relay-api/server-info'
+import {
+  inspectorUrl,
+  isProcessAlive,
+  readServerInfo,
+  type ServerInfo,
+} from '@relay/relay-api/server-info'
 
 /**
  * Everything the tray knows about the daemon. The tray is a client: it reads
@@ -205,6 +210,23 @@ export function stopDaemon(info: ServerInfo | undefined): void {
     process.kill(info.pid, 'SIGTERM')
   } catch {
     // Already gone; the next probe clears the record.
+  }
+}
+
+/**
+ * Waits for a verified daemon to actually exit. relayd allows up to 1.5s for
+ * SSE clients to drain, so fixed restart delays can otherwise launch too soon:
+ * the replacement sees the old nonce, exits, and then leaves no daemon behind.
+ */
+export async function stopDaemonAndWait(
+  info: ServerInfo | undefined,
+  timeoutMs = 3_000,
+): Promise<void> {
+  if (!info) return
+  stopDaemon(info)
+  const deadline = Date.now() + timeoutMs
+  while (isProcessAlive(info.pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
   }
 }
 

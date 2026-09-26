@@ -36,6 +36,7 @@ export interface ResumeInput {
   task: string
   cwd: string
   accessMode: StartInput['accessMode']
+  executablePath?: string
   instructions?: string
 }
 

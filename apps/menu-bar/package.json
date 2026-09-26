@@ -1,6 +1,8 @@
 {
   "name": "@relay/menu-bar",
   "version": "0.1.0",
+  "description": "Local menu bar control plane for Relay coding-agent runtimes.",
+  "author": "Ant1mage",
   "private": true,
   "type": "module",
   "main": "out/main.cjs",
@@ -53,19 +55,23 @@
     "extraResources": [
       {
         "from": "../../out/relayd",
-        "to": "relayd"
+        "to": "relayd",
+        "filter": ["**/*", "!**/*.map"]
       },
       {
         "from": "../../out/mcp",
-        "to": "mcp"
+        "to": "mcp",
+        "filter": ["**/*", "!**/*.map"]
       },
       {
         "from": "../../integrations/codex",
-        "to": "codex"
+        "to": "codex",
+        "filter": ["plugin.json", "hooks/**/*", "skills/**/*"]
       },
       {
         "from": "../../assets/appicon",
-        "to": "appicon"
+        "to": "appicon",
+        "filter": ["png/**/*"]
       }
     ],
     "mac": {
@@ -84,6 +90,7 @@
         }
       ],
       "category": "public.app-category.developer-tools",
+      "icon": "../../build-resources/icon.icns",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "../../build-resources/entitlements.mac.plist",
@@ -91,15 +98,16 @@
       "extendInfo": {
         "LSUIElement": true
       },
-      "notarize": false
+      "notarize": true
     },
     "dmg": {
       "title": "Relay ${version}"
     },
     "publish": [
       {
-        "provider": "generic",
-        "url": "${env.RELAY_UPDATE_URL}"
+        "provider": "github",
+        "owner": "Ant1mage",
+        "repo": "relay"
       }
     ]
   }

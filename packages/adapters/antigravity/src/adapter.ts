@@ -119,7 +119,7 @@ export class AntigravityAdapter implements AgentAdapter {
 
   async #launch(input: StartInput | ResumeInput, conversationId?: string): Promise<WorkerSessionHandle> {
     if (this.#disposed) throw new Error('Antigravity adapter is disposed')
-    const executablePath = this.#executable()
+    const executablePath = input.executablePath ?? this.#executable()
     if (!executablePath) throw new Error('Antigravity CLI executable `agy` was not found')
     // Probe the CLI once per launch so model/reasoning flags are only sent
     // when the CLI actually advertises them.

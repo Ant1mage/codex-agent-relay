@@ -198,7 +198,7 @@ export class DeepSeekAdapter implements AgentAdapter {
 
   async #launch(input: StartInput | ResumeInput, resumeSessionId?: string): Promise<WorkerSessionHandle> {
     if (this.#disposed) throw new Error('DeepSeek adapter is disposed')
-    const executablePath = this.#configuredExecutable ?? discoverExecutable('dsh')
+    const executablePath = input.executablePath ?? this.#configuredExecutable ?? discoverExecutable('dsh')
     if (!executablePath) throw new Error('DeepSeek Harness executable `dsh` was not found')
     this.#features = this.#probeFeatures(executablePath)
     // Probe the CLI once per launch so model/reasoning flags are only sent when

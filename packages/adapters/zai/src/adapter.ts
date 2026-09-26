@@ -82,7 +82,7 @@ export class ZaiAdapter implements AgentAdapter {
 
   async start(input: StartInput): Promise<WorkerSessionHandle> {
     if (this.#disposed) throw new Error('GLM / Z.ai adapter is disposed')
-    const executablePath = this.#executable()
+    const executablePath = input.executablePath ?? this.#executable()
     if (!executablePath) throw new Error('GLM / Z.ai CLI executable `zai-cli` was not found')
     // Probe the CLI once per launch so model/reasoning flags are only sent
     // when the CLI actually advertises them.

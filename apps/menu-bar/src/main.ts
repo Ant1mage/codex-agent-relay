@@ -1,4 +1,4 @@
-import { app, clipboard, Menu, nativeImage, shell, Tray, type MenuItemConstructorOptions } from 'electron'
+import { app, clipboard, ipcMain, Menu, nativeImage, shell, Tray, type MenuItemConstructorOptions } from 'electron'
 import { createTranslator, resolveLocale } from '@relay/i18n'
 import { RelayClient } from '@relay/relay-api'
 import type { ServerInfo } from '@relay/relay-api/server-info'
@@ -10,6 +10,7 @@ import {
   probeDaemon,
   startDaemon,
   stopDaemon,
+  stopDaemonAndWait,
   trayStartedDaemon,
   type DaemonProbe,
 } from './daemon.js'
@@ -142,6 +143,14 @@ function openInspector(hostSessionId?: string, runId?: string): void {
   openInBrowser(inspectorUrl(info, hostSessionId, runId))
 }
 
+/** Panel requests re-probe relayd so a restart cannot leak an old token here. */
+async function openInspectorFromPanel(): Promise<void> {
+  const current = await probeDaemon()
+  if (!current.verified || !current.info) throw new Error('daemon 未运行，无法打开检查器')
+  probe = current
+  openInBrowser(inspectorUrl(current.info))
+}
+
 function openControlPanel(
   tab: 'agents' | 'policy' | 'codex' | 'runtime',
   intent?: 'new-agent' | 'edit-agent' | 'add-runtime' | 'codex-actions',
@@ -213,12 +222,13 @@ function dispatch(action: MenuBarAction): void {
     }
     case 'restart-daemon': {
       startingSince = Date.now()
-      // Only a daemon whose identity was verified is ever signalled.
-      if (probe.verified) stopDaemon(probe.info)
-      setTimeout(() => {
+      // Only a daemon whose identity was verified is ever signalled. Wait for
+      // its PID to leave before starting, because relayd may drain SSE clients.
+      void (async () => {
+        if (probe.verified) await stopDaemonAndWait(probe.info)
         lastError = startDaemon()
-        void refresh(true)
-      }, 600)
+        await refresh(true)
+      })()
       void refresh(true)
       return
     }
@@ -250,9 +260,14 @@ function dispatch(action: MenuBarAction): void {
       return
     case 'install-update': {
       // The updater replaces the bundle on quit; the daemon we started must go
-      // first, or the new app would keep talking to the old daemon.
-      if (probe.verified && trayStartedDaemon()) stopDaemon(probe.info)
-      installUpdate()
+      // first, or the new app would keep talking to the old daemon. This action
+      // is an explicit restart, so even a manually-started verified daemon is
+      // stopped here; ordinary App quit still preserves user-owned daemons.
+      if (probe.verified) {
+        void stopDaemonAndWait(probe.info).finally(() => installUpdate())
+      } else {
+        installUpdate()
+      }
       return
     }
     case 'toggle-launch-at-login':
@@ -295,6 +310,8 @@ function previewIfRequested(): void {
 void app.whenReady().then(async () => {
   // No window means no Dock tile and no app menu: the menu bar is the app.
   if (process.platform === 'darwin') app.setActivationPolicy('accessory')
+  ipcMain.removeHandler('relay:open-inspector')
+  ipcMain.handle('relay:open-inspector', () => openInspectorFromPanel())
   const icon = trayIcon()
   if (icon.isEmpty()) {
     console.warn('[relay] menu bar icon is missing; Relay cannot show a menu bar item')

@@ -1,5 +1,14 @@
 import { join } from 'node:path'
 import { BrowserWindow, screen, type Tray } from 'electron'
+import {
+  panelConnectionChanged,
+  panelUrl,
+  type PanelIntent,
+  type PanelTab,
+  type PanelTarget,
+} from './panel-target.js'
+
+export { panelUrl, type PanelIntent, type PanelTab, type PanelTarget } from './panel-target.js'
 
 /**
  * Relay's control panel: a frameless window anchored under the menu bar icon.
@@ -12,32 +21,7 @@ import { BrowserWindow, screen, type Tray } from 'electron'
  */
 
 let panel: BrowserWindow | undefined
-
-export type PanelTab = 'agents' | 'policy' | 'codex' | 'runtime'
-export type PanelIntent = 'new-agent' | 'edit-agent' | 'add-runtime' | 'codex-actions'
-
-export interface PanelTarget {
-  /** Daemon base URL, e.g. http://127.0.0.1:7352 */
-  base: string
-  token: string
-  lang: string
-  tab?: PanelTab
-  intent?: PanelIntent
-  profileId?: string
-}
-
-export function panelUrl(target: PanelTarget): string {
-  const dev = process.env.RELAY_PANEL_DEV_URL
-  const url = new URL(dev ?? `${target.base}/panel/`)
-  if (dev) url.searchParams.set('base', target.base)
-  url.searchParams.set('lang', target.lang)
-  if (target.tab) url.searchParams.set('tab', target.tab)
-  if (target.intent) url.searchParams.set('intent', target.intent)
-  if (target.profileId) url.searchParams.set('profileId', target.profileId)
-  // The token rides the fragment: it never reaches the server or a referrer.
-  url.hash = `t=${target.token}`
-  return url.toString()
-}
+let panelTarget: PanelTarget | undefined
 
 function placeUnder(tray: Tray, window: BrowserWindow): void {
   const bounds = tray.getBounds()
@@ -53,6 +37,25 @@ function placeUnder(tray: Tray, window: BrowserWindow): void {
 
 export function openPanel(tray: Tray, target: PanelTarget): void {
   if (panel && !panel.isDestroyed()) {
+    const connectionChanged = panelConnectionChanged(panelTarget, target)
+    panelTarget = target
+    if (connectionChanged) {
+      // relayd rotates its token on every restart. A hidden BrowserWindow keeps
+      // its renderer alive, so reload it with the new fragment before showing.
+      panel.hide()
+      void panel
+        .loadURL(panelUrl(target))
+        .then(() => {
+          if (!panel || panel.isDestroyed()) return
+          placeUnder(tray, panel)
+          panel.show()
+          panel.focus()
+        })
+        .catch((error: unknown) => {
+          console.error('[relay] failed to reload panel after daemon restart', error)
+        })
+      return
+    }
     // An open panel navigates in place: same window, same state, no reload.
     panel.webContents.send('relay:panel', {
       tab: target.tab,
@@ -65,6 +68,7 @@ export function openPanel(tray: Tray, target: PanelTarget): void {
     return
   }
   const url = panelUrl(target)
+  panelTarget = target
   panel = new BrowserWindow({
     width: 420,
     height: 640,
@@ -85,10 +89,14 @@ export function openPanel(tray: Tray, target: PanelTarget): void {
     },
   })
   panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  // The panel never owns browser tabs. External navigation is dispatched by
+  // the main process so it cannot accidentally create another BrowserWindow.
+  panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   // The panel behaves like a popover: clicking anywhere else dismisses it.
   panel.on('blur', () => panel?.hide())
   panel.on('closed', () => {
     panel = undefined
+    panelTarget = undefined
   })
   placeUnder(tray, panel)
   panel.once('ready-to-show', () => {
@@ -103,6 +111,7 @@ export function openPanel(tray: Tray, target: PanelTarget): void {
 export function closePanel(): void {
   panel?.destroy()
   panel = undefined
+  panelTarget = undefined
 }
 
 export function panelIsOpen(): boolean {

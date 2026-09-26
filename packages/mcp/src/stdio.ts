@@ -17,37 +17,11 @@ import {
 import { CodexAppServerThreadResolver } from '@relay/integration-codex'
 import { createRelayMcpServer } from './server.js'
 import { RelayService } from './service.js'
+import { RuntimeConfigReloader } from './config-reloader.js'
 
 interface RelayRuntime {
   service: RelayService
   commands: SqliteControlQueue
-}
-
-/**
- * Reloads Agent Profiles and policy from disk. Called at startup and again
- * before every listing or run, because the daemon (the menu bar's control
- * plane) writes those files while this process keeps running: configuration
- * edits must take effect without restarting Codex (docs/inspector.md 9).
- */
-function applyConfig(
-  controller: RunController,
-  config: RelayConfigStore,
-  workspace?: string,
-): void {
-  try {
-    const loaded = config.read({ runtimes: controller.runtimes.list() })
-    controller.profiles.sync(loaded.profiles)
-    controller.policies.setGlobal(loaded.policy)
-    if (workspace) {
-      controller.policies.clearWorkspace(workspace)
-      const override = loaded.workspaceOverrides[workspace]
-      if (override) controller.policies.setWorkspace(workspace, override)
-    }
-  } catch (error) {
-    process.stderr.write(
-      `[relay] Ignoring invalid configuration: ${error instanceof Error ? error.message : String(error)}\n`,
-    )
-  }
 }
 
 async function createRuntime(): Promise<RelayRuntime> {
@@ -59,38 +33,20 @@ async function createRuntime(): Promise<RelayRuntime> {
     new DeepSeekAdapter(), new AntigravityAdapter(), new KimiAdapter(), new GeminiAdapter(), new ZaiAdapter(),
   ]
   for (const adapter of adapters) controller.registerAdapter(adapter)
-  const detections = await Promise.all(adapters.map((adapter) => adapter.detect()))
-  for (const detection of detections) for (const diagnostic of detection.diagnostics) process.stderr.write(`[relay] ${diagnostic}\n`)
-  const runtimes = detections.flatMap((detection) => detection.runtimes)
-  // Hand-registered runtimes are additive: detection still owns its own results.
-  for (const entry of config.read({ runtimes }).manualRuntimes) {
-    if (runtimes.some((runtime) => runtime.id === entry.id)) continue
-    const adapter = adapters.find((candidate) => candidate.id === entry.adapterId)
-    runtimes.push({
-      id: entry.id,
-      adapterId: entry.adapterId,
-      executablePath: entry.executablePath,
-      health: 'available',
-      capabilities: adapter?.capabilities() ?? {
-        nonInteractive: true,
-        structuredEvents: false,
-        cwd: true,
-        resume: false,
-        send: false,
-        cancel: false,
-        childSessions: false,
-      },
-    })
-  }
-  for (const runtime of runtimes) controller.registerRuntime(runtime)
-  applyConfig(controller, config)
+  const reloader = new RuntimeConfigReloader(
+    controller,
+    config,
+    adapters,
+    (message) => process.stderr.write(`[relay] ${message}\n`),
+  )
+  await reloader.refresh()
   return {
     service: new RelayService(
       controller,
       new SqliteHostSessionStore(databasePath),
       new CodexAppServerThreadResolver(),
-      (workspace) => applyConfig(controller, config, workspace),
-      () => applyConfig(controller, config),
+      (workspace) => reloader.applyWorkspace(workspace),
+      () => reloader.refresh(),
     ),
     commands: new SqliteControlQueue(databasePath),
   }

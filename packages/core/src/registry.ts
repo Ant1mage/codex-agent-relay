@@ -60,6 +60,31 @@ export class RuntimeRegistry {
   list(): Runtime[] {
     return [...this.#items.values()]
   }
+
+  /**
+   * Replaces the detected runtime set without disturbing active workers. A
+   * worker keeps the adapter/handle it started with; only future starts and
+   * resumes observe additions, removals and health changes.
+   */
+  sync(inputs: Runtime[]): { added: string[]; updated: string[]; removed: string[] } {
+    const parsed = inputs.map((input) => runtimeSchema.parse(input))
+    const next = new Map(parsed.map((runtime) => [runtime.id, runtime]))
+    const added: string[] = []
+    const updated: string[] = []
+    const removed: string[] = []
+    for (const [id, runtime] of next) {
+      const current = this.#items.get(id)
+      if (!current) added.push(id)
+      else if (JSON.stringify(current) !== JSON.stringify(runtime)) updated.push(id)
+      this.#items.set(id, runtime)
+    }
+    for (const id of [...this.#items.keys()]) {
+      if (next.has(id)) continue
+      this.#items.delete(id)
+      removed.push(id)
+    }
+    return { added, updated, removed }
+  }
 }
 
 export class ProfileRegistry {

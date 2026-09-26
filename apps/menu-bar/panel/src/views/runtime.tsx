@@ -29,6 +29,7 @@ export function RuntimeView({
   onSave,
   onDelete,
   onProbe,
+  onLoadAdapters,
   startNew,
   onIntentHandled,
   busy,
@@ -44,6 +45,7 @@ export function RuntimeView({
     adapterId: string
     executablePath: string
   }): Promise<{ ok: boolean; version?: string | undefined; error?: string | undefined }>
+  onLoadAdapters(): Promise<string[]>
   startNew: boolean
   onIntentHandled(): void
   busy: boolean
@@ -64,16 +66,14 @@ export function RuntimeView({
 
   useEffect(() => {
     if (!adding || adapters.length > 0) return
-    // The catalogue comes from the daemon, so a new adapter shows up by itself.
-    void fetch('/api/adapters')
-      .then((response) => response.json())
-      .then((value: { adapters?: string[] }) => {
-        const list = value.adapters ?? []
+    // Use RelayClient so the daemon token is present like every other /api call.
+    void onLoadAdapters()
+      .then((list) => {
         setAdapters(list)
         setAdapterId((current) => current || list[0] || '')
       })
       .catch(() => setAdapters([]))
-  }, [adding, adapters.length])
+  }, [adding, adapters.length, onLoadAdapters])
 
   const check = async () => {
     setChecking(true)

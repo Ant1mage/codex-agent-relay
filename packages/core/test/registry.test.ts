@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentProfile } from '@relay/protocol'
-import { AdapterRegistry, ProfileRegistry } from '../src/index.js'
+import type { AgentProfile, Runtime } from '@relay/protocol'
+import { AdapterRegistry, ProfileRegistry, RuntimeRegistry } from '../src/index.js'
 import { FakeAdapter } from './fake-adapter.js'
 
 describe('AdapterRegistry', () => {
@@ -47,5 +47,42 @@ describe('ProfileRegistry.sync', () => {
     const registry = new ProfileRegistry()
     registry.register(profile('a', 'A'))
     expect(registry.sync([profile('a', 'A')])).toEqual({ added: [], updated: [], removed: [] })
+  })
+})
+
+describe('RuntimeRegistry.sync', () => {
+  const runtime = (
+    id: string,
+    health: Runtime['health'] = 'available',
+  ): Runtime => ({
+    id,
+    adapterId: 'test-adapter',
+    executablePath: `/tmp/${id}`,
+    health,
+    capabilities: {
+      nonInteractive: true,
+      structuredEvents: false,
+      cwd: true,
+      resume: false,
+      send: false,
+      cancel: false,
+      childSessions: false,
+    },
+  })
+
+  it('adds, updates and removes runtimes in one pass', () => {
+    const registry = new RuntimeRegistry()
+    registry.register(runtime('a'))
+    registry.register(runtime('b'))
+
+    expect(registry.sync([runtime('a', 'authentication_required'), runtime('c')])).toEqual({
+      added: ['c'],
+      updated: ['a'],
+      removed: ['b'],
+    })
+    expect(registry.list().map((item) => [item.id, item.health])).toEqual([
+      ['a', 'authentication_required'],
+      ['c', 'available'],
+    ])
   })
 })

@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
+import { relayVersion } from '@relay/config'
 import { codexInvocationContext } from './context.js'
 import type { RelayService } from './service.js'
 
@@ -24,7 +25,7 @@ function failure(error: unknown) {
 
 export function createRelayMcpServer(service: RelayService): McpServer {
   const server = new McpServer(
-    { name: 'relay', version: '0.0.0' },
+    { name: 'relay', version: relayVersion() },
     {
       instructions:
         'List agents before delegation. Give run_agent a bounded task. Use wait_agent before reviewing the result, then accept_agent or resume_agent after Codex review.',
