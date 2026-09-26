@@ -9,11 +9,14 @@ import {
 } from 'lucide-react'
 import { Button } from './components/ui/button.js'
 import { SettingsFrame } from './components/settings-frame.js'
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card.js'
-import { Field, FieldGroup, FieldLabel, FieldSeparator } from './components/ui/field.js'
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './components/ui/card.js'
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSeparator } from './components/ui/field.js'
+import { Empty, EmptyHeader, EmptyTitle } from './components/ui/empty.js'
 import {
   Item,
+  ItemActions,
   ItemContent,
+  ItemDescription,
   ItemGroup,
   ItemMedia,
   ItemTitle,
@@ -26,6 +29,7 @@ import type { AgentProfile, Locale, RelayPolicy } from '@relay/protocol'
 import type { DesktopSettings } from '../../shared/api.js'
 import { useAppStore } from './store.js'
 import { ProfileFields } from './profile-editor.js'
+import { cn } from './lib/utils.js'
 import {
   ProviderIcon,
   providerMetadata,
@@ -72,10 +76,6 @@ function PolicyNumberInput({ value, min, max, onCommit }: {
   )
 }
 
-/**
- * Centered Settings card (docs/ui.md 17.1): never a full-screen page, with a
- * left option list and the selected item's controls on the right of the same card.
- */
 export function SettingsSheet({
   t,
   theme,
@@ -162,17 +162,12 @@ export function SettingsSheet({
     ? (selection.slice('agent:'.length) as ProviderIconId)
     : undefined
 
-  /*
-   * A flat option list. There are only four top-level destinations, so grouping
-   * headers added a layer that repeated the item labels ("General > General")
-   * without telling the reader anything.
-   */
   const navButton = (id: Selection, label: string, icon: ReactElement) => (
     <Item
       asChild
       key={id}
       size="sm"
-      className={`rounded-md ${selection === id ? 'bg-accent-soft text-text' : 'text-muted'}`}
+      className={cn('rounded-md', selection === id ? 'bg-accent text-accent-foreground' : 'text-muted-foreground')}
     >
       <button
         type="button"
@@ -181,7 +176,7 @@ export function SettingsSheet({
       >
         <ItemMedia>{icon}</ItemMedia>
         <ItemContent>
-          <ItemTitle className="text-[11px] font-normal">{label}</ItemTitle>
+          <ItemTitle>{label}</ItemTitle>
         </ItemContent>
       </button>
     </Item>
@@ -198,7 +193,6 @@ export function SettingsSheet({
         <ItemGroup className="gap-0.5">
             {navButton('general', t('settings.general'), <Settings2 size={14} />)}
             {navButton('agents', t('settings.providerAgents'), <Bot size={14} />)}
-            {/* Provider sub-items (docs/ui.md 17.2): indented under Agents */}
             {providerOrder.map((provider) => {
               const runtime = runtimeForProvider(provider, snapshot.runtimes)
               const count = snapshot.profiles.filter((profile) => profile.runtimeId === runtime?.id).length
@@ -207,7 +201,7 @@ export function SettingsSheet({
                 <Item
                   asChild
                   key={provider}
-                  className={`ml-6 rounded-md ${active ? 'bg-accent-soft text-text' : 'text-muted'}`}
+                  className={cn('ml-6 rounded-md', active ? 'bg-accent text-accent-foreground' : 'text-muted-foreground')}
                 >
                   <button
                     type="button"
@@ -218,9 +212,9 @@ export function SettingsSheet({
                       <img className="size-3.5" src={providerMetadata[provider].src} alt="" />
                     </ItemMedia>
                     <ItemContent>
-                      <ItemTitle className="text-[10px] font-normal">{providerMetadata[provider].label}</ItemTitle>
+                      <ItemTitle>{providerMetadata[provider].label}</ItemTitle>
                     </ItemContent>
-                    {count > 0 && <span className="text-[9px] text-faint">{count}</span>}
+                    {count > 0 && <span className="text-xs text-muted-foreground">{count}</span>}
                   </button>
                 </Item>
               )
@@ -232,11 +226,6 @@ export function SettingsSheet({
       )}
     >
       <div className="p-5">
-            {/*
-              General holds every non-core preference: language, theme and text
-              size. None of them is worth a top-level row of its own, and they
-              are all "set once" choices rather than part of the delegation path.
-            */}
             {selection === 'general' && (
               <div className="flex flex-col gap-4">
                 <Card>
@@ -246,17 +235,18 @@ export function SettingsSheet({
                   <CardContent>
                     <FieldGroup className="gap-4">
                       <Field orientation="horizontal">
-                        <FieldLabel>{t('settings.language')}</FieldLabel>
-                    <ToggleGroup
-                      type="single"
-                      value={locale}
-                      onValueChange={(next) => { if (next) setLocale(next as Locale) }}
-                      variant="outline"
-                      size="sm"
-                    >
-                      <ToggleGroupItem value="en">English</ToggleGroupItem>
-                      <ToggleGroupItem value="zh-CN">简体中文</ToggleGroupItem>
-                    </ToggleGroup>
+                        <FieldLabel className="sr-only">{t('settings.language')}</FieldLabel>
+                        <ToggleGroup
+                          type="single"
+                          value={locale}
+                          onValueChange={(next) => { if (next) setLocale(next as Locale) }}
+                          variant="outline"
+                          size="sm"
+                          aria-label={t('settings.language')}
+                        >
+                          <ToggleGroupItem value="en">English</ToggleGroupItem>
+                          <ToggleGroupItem value="zh-CN">简体中文</ToggleGroupItem>
+                        </ToggleGroup>
                       </Field>
                     </FieldGroup>
                   </CardContent>
@@ -269,18 +259,19 @@ export function SettingsSheet({
                   <CardContent>
                     <FieldGroup className="gap-4">
                       <Field orientation="horizontal">
-                        <FieldLabel>{t('settings.appearance')}</FieldLabel>
-                    <ToggleGroup
-                      type="single"
-                      value={theme}
-                      onValueChange={(next) => { if (next) setTheme(next as Theme) }}
-                      variant="outline"
-                      size="sm"
-                    >
-                      {(['system', 'light', 'dark'] as Theme[]).map((value) => (
-                        <ToggleGroupItem value={value} key={value}>{t(`settings.${value}`)}</ToggleGroupItem>
-                      ))}
-                    </ToggleGroup>
+                        <FieldLabel className="sr-only">{t('settings.appearance')}</FieldLabel>
+                        <ToggleGroup
+                          type="single"
+                          value={theme}
+                          onValueChange={(next) => { if (next) setTheme(next as Theme) }}
+                          variant="outline"
+                          size="sm"
+                          aria-label={t('settings.appearance')}
+                        >
+                          {(['system', 'light', 'dark'] as Theme[]).map((value) => (
+                            <ToggleGroupItem value={value} key={value}>{t(`settings.${value}`)}</ToggleGroupItem>
+                          ))}
+                        </ToggleGroup>
                       </Field>
                       <FieldSeparator />
                       <Field orientation="horizontal">
@@ -300,23 +291,19 @@ export function SettingsSheet({
               </div>
             )}
 
-            {/*
-              The provider list is navigation: pick a provider to work on its
-              profiles. Creating is an action, so it lives once in the selected
-              provider's panel rather than on every row.
-            */}
             {selection === 'agents' && (
-              <section className="flex flex-col gap-4">
-                <div className="setting-heading">
-                  <div><strong>{t('settings.providerAgents')}</strong><span>{t('agents.subtitle')}</span></div>
-                </div>
-                {/* A selectable list of providers, so each row is an Item. */}
-                <ItemGroup className="border-t border-line">
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t('settings.providerAgents')}</CardTitle>
+                  <CardDescription>{t('agents.subtitle')}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ItemGroup>
                   {providerOrder.map((provider) => {
                     const runtime = runtimeForProvider(provider, snapshot.runtimes)
                     const count = snapshot.profiles.filter((profile) => profile.runtimeId === runtime?.id).length
                     return (
-                      <Item asChild key={provider} className="rounded-none border-b border-line px-0">
+                      <Item asChild key={provider} variant="outline" size="sm">
                         <button
                           type="button"
                           className="w-full text-left"
@@ -327,20 +314,19 @@ export function SettingsSheet({
                           </ItemMedia>
                           <ItemContent>
                             <ItemTitle>{providerMetadata[provider].label}</ItemTitle>
+                            <ItemDescription>{runtime ? t('agents.detected') : t('agents.notInstalled')}</ItemDescription>
                           </ItemContent>
-                          <span className={runtime ? 'text-[11px] text-ok' : 'text-[11px] text-faint'}>
-                            {runtime ? t('agents.detected') : t('agents.notInstalled')}
-                          </span>
-                          <span className="text-[10px] text-faint">
-                            {count > 0 ? `${count} ${t('settings.profilesSuffix')}` : ''}
-                          </span>
-                          <ChevronRight size={14} className="text-faint" aria-hidden="true" />
+                          <ItemActions>
+                            {count > 0 && <span className="text-xs text-muted-foreground">{count} {t('settings.profilesSuffix')}</span>}
+                            <ChevronRight aria-hidden="true" />
+                          </ItemActions>
                         </button>
                       </Item>
                     )
                   })}
-                </ItemGroup>
-              </section>
+                  </ItemGroup>
+                </CardContent>
+              </Card>
             )}
 
             {selectedProvider && (() => {
@@ -348,117 +334,139 @@ export function SettingsSheet({
               const profiles = snapshot.profiles.filter((profile) => profile.runtimeId === runtime?.id)
               const metadata = providerMetadata[selectedProvider]
               return (
-                <section className="flex flex-col gap-4">
-                  <div className="setting-heading">
-                    <img className="provider-icon provider-icon-lg" src={metadata.src} alt="" />
-                    <div><strong>{metadata.label}</strong>
-                      <span>{runtime ? `${runtime.adapterId}${runtime.version ? ` · ${runtime.version}` : ''}` : t('agents.notInstalled')}</span>
-                    </div>
-                  </div>
-
-                  {/*
-                    One place to create, one place to edit. The profiles list is
-                    the section's content, so the add action sits in its header
-                    next to the thing it adds to.
-                  */}
-                  <div className="setting-heading section-action">
-                    <div><strong>{t('settings.profilesHeading')}</strong></div>
-                    {runtime && (
-                      <Button type="button" variant="outline" size="sm" onClick={() => setDraft(newProfileFor(selectedProvider, runtime.id))}>
-                        <Plus size={12} />{t('agents.create')}
-                      </Button>
-                    )}
-                  </div>
-
-                  {!runtime && <p className="settings-note">{t('agents.notInstalled')}</p>}
-                  {runtime && !profiles.length && <p className="settings-note">{t('settings.noProfiles')}</p>}
-                  {runtime && profiles.length > 0 && (
-                    <div className="agent-list">
-                      {profiles.map((profile) => (
-                        <div className="agent-card" key={profile.id}>
-                          <div className="agent-card-head">
-                            <div><strong>{profile.name}</strong>
-                              <span>{[profile.model, profile.reasoning].filter(Boolean).join(' · ') || t('agents.default')}</span>
-                            </div>
-                            <Button type="button" variant="outline" size="sm" onClick={() => setDraft(profile)}>{t('agents.edit')}</Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <div className="flex flex-col gap-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <img className="size-5" src={metadata.src} alt="" />
+                        {metadata.label}
+                      </CardTitle>
+                      <CardDescription>{runtime ? `${runtime.adapterId}${runtime.version ? ` · ${runtime.version}` : ''}` : t('agents.notInstalled')}</CardDescription>
+                      {runtime && (
+                        <CardAction>
+                          <Button type="button" variant="outline" size="sm" onClick={() => setDraft(newProfileFor(selectedProvider, runtime.id))}>
+                            <Plus data-icon="inline-start" />{t('agents.create')}
+                          </Button>
+                        </CardAction>
+                      )}
+                    </CardHeader>
+                    <CardContent>
+                      <FieldGroup className="gap-4">
+                        <Field>
+                          <FieldLabel>{t('settings.profilesHeading')}</FieldLabel>
+                          {!runtime && <FieldDescription>{t('agents.notInstalled')}</FieldDescription>}
+                          {runtime && !profiles.length && <FieldDescription>{t('settings.noProfiles')}</FieldDescription>}
+                          {runtime && profiles.length > 0 && (
+                            <ItemGroup>
+                              {profiles.map((profile) => (
+                                <Item key={profile.id} variant="outline" size="sm">
+                                  <ItemContent>
+                                    <ItemTitle>{profile.name}</ItemTitle>
+                                    <ItemDescription>{[profile.model, profile.reasoning].filter(Boolean).join(' · ') || t('agents.default')}</ItemDescription>
+                                  </ItemContent>
+                                  <ItemActions>
+                                    <Button type="button" variant="outline" size="sm" onClick={() => setDraft(profile)}>{t('agents.edit')}</Button>
+                                  </ItemActions>
+                                </Item>
+                              ))}
+                            </ItemGroup>
+                          )}
+                        </Field>
+                      </FieldGroup>
+                    </CardContent>
+                  </Card>
 
                   {draft && (
-                    <form
-                      className="agent-detail"
-                      onSubmit={(event) => { event.preventDefault(); saveDraft() }}
-                    >
-                      <ProfileFields profile={draft} runtimes={snapshot.runtimes} t={t} onChange={setDraft} />
-                      <div className="agent-detail-actions">
-                        <Button type="button" variant="outline" size="sm" onClick={() => setDraft(undefined)}>{t('action.close')}</Button>
-                        <Button size="sm">{t('action.save')}</Button>
-                      </div>
-                    </form>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>{draft.name || t('agents.create')}</CardTitle>
+                      </CardHeader>
+                      <form onSubmit={(event) => { event.preventDefault(); saveDraft() }}>
+                        <CardContent>
+                          <ProfileFields profile={draft} runtimes={snapshot.runtimes} t={t} onChange={setDraft} />
+                        </CardContent>
+                        <CardFooter className="justify-end gap-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => setDraft(undefined)}>{t('action.close')}</Button>
+                          <Button size="sm">{t('action.save')}</Button>
+                        </CardFooter>
+                      </form>
+                    </Card>
                   )}
-                </section>
+                </div>
               )
             })()}
 
             {selection === 'workspace' && (
-              <section>
-                <div className="setting-heading">
-                  <ShieldCheck size={16} />
-                  <div><strong>{t('settings.policy')}</strong>
-                    <span>{scope === 'global' ? t('settings.global') : t('settings.workspace')}</span>
-                  </div>
-                </div>
-                <label className="setting-row">
-                  <span>{t('settings.scope')}</span>
-                  <Select value={scope} onValueChange={setScope}>
-                    <SelectTrigger className="max-w-[290px]"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="global">{t('settings.global')}</SelectItem>
-                      {workspaces.map((workspace) => (
-                        <SelectItem value={workspace} key={workspace}>{workspace}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </label>
-                <div className="setting-row">
-                  <span>{t('settings.maxRuns')}</span>
-                  <PolicyNumberInput value={policy.maxConcurrentRuns} min={1} max={16}
-                    onCommit={(value) => updatePolicy({ maxConcurrentRuns: value })} />
-                </div>
-                <div className="setting-row">
-                  <span>{t('settings.maxWriters')}</span>
-                  <PolicyNumberInput value={policy.maxConcurrentWriters} min={1} max={8}
-                    onCommit={(value) => updatePolicy({ maxConcurrentWriters: value })} />
-                </div>
-                {([
-                  ['requireWorktreeForParallelWriters', 'settings.requireWorktree'],
-                  ['allowWrite', 'settings.allowWrite'],
-                  ['allowCommands', 'settings.allowCommands'],
-                  ['allowNetwork', 'settings.allowNetwork'],
-                ] as const).map(([key, label]) => (
-                  <div className="setting-row" key={key}>
-  <span>{t(label)}</span>
-  <Switch checked={policy[key]} onCheckedChange={(next) => updatePolicy({ [key]: next })} />
-</div>
-                ))}
-              </section>
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t('settings.policy')}</CardTitle>
+                  <CardDescription>{scope === 'global' ? t('settings.global') : t('settings.workspace')}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <FieldGroup>
+                    <Field orientation="horizontal">
+                      <FieldLabel htmlFor="relay-policy-scope">{t('settings.scope')}</FieldLabel>
+                      <Select value={scope} onValueChange={setScope}>
+                        <SelectTrigger id="relay-policy-scope" className="max-w-[290px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="global">{t('settings.global')}</SelectItem>
+                          {workspaces.map((workspace) => (
+                            <SelectItem value={workspace} key={workspace}>{workspace}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    <FieldSeparator />
+                    <Field orientation="horizontal">
+                      <FieldLabel htmlFor="relay-max-runs">{t('settings.maxRuns')}</FieldLabel>
+                      <PolicyNumberInput value={policy.maxConcurrentRuns} min={1} max={16}
+                        onCommit={(value) => updatePolicy({ maxConcurrentRuns: value })} />
+                    </Field>
+                    <Field orientation="horizontal">
+                      <FieldLabel htmlFor="relay-max-writers">{t('settings.maxWriters')}</FieldLabel>
+                      <PolicyNumberInput value={policy.maxConcurrentWriters} min={1} max={8}
+                        onCommit={(value) => updatePolicy({ maxConcurrentWriters: value })} />
+                    </Field>
+                    {([
+                      ['requireWorktreeForParallelWriters', 'settings.requireWorktree'],
+                      ['allowWrite', 'settings.allowWrite'],
+                      ['allowCommands', 'settings.allowCommands'],
+                      ['allowNetwork', 'settings.allowNetwork'],
+                    ] as const).map(([key, label]) => (
+                      <Field orientation="horizontal" key={key}>
+                        <FieldLabel>{t(label)}</FieldLabel>
+                        <Switch checked={policy[key]} onCheckedChange={(next) => updatePolicy({ [key]: next })} />
+                      </Field>
+                    ))}
+                  </FieldGroup>
+                </CardContent>
+              </Card>
             )}
 
             {selection === 'advanced' && (
-              <section>
-                <div className="setting-heading">
-                  <div><strong>{t('settings.advanced')}</strong><span>{t('settings.advancedHint')}</span></div>
-                </div>
-                {!snapshot.diagnostics.length && <p className="settings-note">{t('settings.diagnosticsEmpty')}</p>}
-                {snapshot.diagnostics.length > 0 && (
-                  <ul className="diagnostics-list">
-                    {snapshot.diagnostics.map((diagnostic, index) => <li key={index}>{diagnostic}</li>)}
-                  </ul>
-                )}
-              </section>
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t('settings.advanced')}</CardTitle>
+                  <CardDescription>{t('settings.advancedHint')}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {!snapshot.diagnostics.length ? (
+                    <Empty className="border-0 p-0">
+                      <EmptyHeader>
+                        <EmptyTitle>{t('settings.diagnosticsEmpty')}</EmptyTitle>
+                      </EmptyHeader>
+                    </Empty>
+                  ) : (
+                    <ItemGroup>
+                      {snapshot.diagnostics.map((diagnostic, index) => (
+                        <Item key={index} variant="muted" size="sm">
+                          <ItemContent><ItemDescription>{diagnostic}</ItemDescription></ItemContent>
+                        </Item>
+                      ))}
+                    </ItemGroup>
+                  )}
+                </CardContent>
+              </Card>
             )}
       </div>
     </SettingsFrame>
