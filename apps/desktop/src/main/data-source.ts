@@ -31,6 +31,7 @@ import type {
   CodexIntegrationCheck,
   CodexIntegrationInstallResult,
   CodexIntegrationStatus,
+  DesktopMenuBarPrefs,
   DesktopRunView,
   DesktopSettings,
   DesktopSnapshot,
@@ -199,6 +200,8 @@ export class DesktopDataSource {
   #runtimes: Runtime[] = []
   #profiles: AgentProfile[] = []
   #diagnostics: string[] = []
+  #snapshotCache: { at: number; value: DesktopSnapshot } | undefined
+  #codexCache: { at: number; value: CodexIntegrationStatus } | undefined
 
   constructor(databasePath: string, settingsPath: string) {
     this.#database = new DatabaseSync(databasePath)
@@ -274,12 +277,23 @@ export class DesktopDataSource {
     }
   }
 
+  /**
+   * Menu bar switches are booleans the user set through the tray. Anything else
+   * in the file is ignored rather than trusted, so a hand-edited settings file
+   * cannot put the app into a state the UI has no way to show.
+   */
+  #menuBarPrefs(value: unknown): DesktopMenuBarPrefs {
+    const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+    return { hideDockIcon: record.hideDockIcon === true }
+  }
+
   settings(): DesktopSettings {
     if (existsSync(this.#settingsPath)) {
       try {
         const parsed = JSON.parse(readFileSync(this.#settingsPath, 'utf8')) as {
           policy?: unknown
           workspaceOverrides?: Record<string, unknown>
+          menuBar?: unknown
           onboardingCompletedAt?: unknown
         }
         const workspaceOverrides: Record<string, RelayPolicyOverride> = {}
@@ -289,6 +303,7 @@ export class DesktopDataSource {
         return {
           policy: relayPolicySchema.parse(parsed.policy),
           workspaceOverrides,
+          menuBar: this.#menuBarPrefs(parsed.menuBar),
           ...(typeof parsed.onboardingCompletedAt === 'string'
             ? { onboardingCompletedAt: parsed.onboardingCompletedAt }
             : {}),
@@ -297,7 +312,12 @@ export class DesktopDataSource {
         // Invalid user settings fall back to conservative defaults.
       }
     }
-    return { policy: defaultPolicy, workspaceOverrides: {} }
+    return { policy: defaultPolicy, workspaceOverrides: {}, menuBar: { hideDockIcon: false } }
+  }
+
+  /** Called by the menu bar; the window picks the change up on its next poll. */
+  saveMenuBarPrefs(prefs: DesktopMenuBarPrefs): DesktopSettings {
+    return this.saveSettings({ ...this.settings(), menuBar: prefs })
   }
 
   saveSettings(input: DesktopSettings): DesktopSettings {
@@ -308,6 +328,7 @@ export class DesktopDataSource {
     const settings: DesktopSettings = {
       policy: relayPolicySchema.parse(input.policy),
       workspaceOverrides,
+      menuBar: this.#menuBarPrefs(input.menuBar),
       ...(input.onboardingCompletedAt ? { onboardingCompletedAt: input.onboardingCompletedAt } : {}),
     }
     writeFileSync(this.#settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
@@ -414,9 +435,20 @@ export class DesktopDataSource {
     return value
   }
 
-  async codexIntegration(): Promise<CodexIntegrationStatus> {
+  /**
+   * Probing spawns the Codex CLI, so the menu bar reuses a recent result. The
+   * window and the explicit "re-check"/install paths pass 0 and always probe.
+   */
+  async codexIntegration(maxAgeMs = 0): Promise<CodexIntegrationStatus> {
+    const now = Date.now()
+    if (this.#codexCache && now - this.#codexCache.at <= maxAgeMs) return this.#codexCache.value
     const checks = [await probeCodexCli(), probeRelayMcp(), probeRelaySkill()]
-    return { checks, configured: checks.every((check) => check.ok) }
+    const value: CodexIntegrationStatus = {
+      checks,
+      configured: checks.every((check) => check.ok),
+    }
+    this.#codexCache = { at: now, value }
+    return value
   }
 
   /**
@@ -526,7 +558,23 @@ export class DesktopDataSource {
     })
   }
 
-  snapshot(): DesktopSnapshot {
+  /**
+   * The window polls every two seconds and the menu bar refreshes on its own
+   * cadence. A short shared cache keeps both readers from re-projecting every
+   * stored event independently; callers that need a guaranteed-fresh projection
+   * pass 0.
+   */
+  snapshot(maxAgeMs = 0): DesktopSnapshot {
+    const now = Date.now()
+    if (this.#snapshotCache && now - this.#snapshotCache.at <= maxAgeMs) {
+      return this.#snapshotCache.value
+    }
+    const value = this.#projectSnapshot()
+    this.#snapshotCache = { at: now, value }
+    return value
+  }
+
+  #projectSnapshot(): DesktopSnapshot {
     const sessions = this.#database
       .prepare('SELECT data_json FROM host_sessions ORDER BY updated_at DESC')
       .all()

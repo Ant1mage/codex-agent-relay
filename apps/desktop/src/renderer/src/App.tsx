@@ -819,7 +819,16 @@ function SessionWorkspace({
 }
 
 export function App() {
-  const { locale, refresh, error, notice, setNotice } = useAppStore()
+  const {
+    locale,
+    refresh,
+    error,
+    notice,
+    setNotice,
+    selectSession,
+    selectRun,
+    openSettings,
+  } = useAppStore()
   const [theme, setThemeState] = useState<Theme>(() => (localStorage.getItem('relay.theme') as Theme | null) ?? 'system')
   const [fontSize, setFontSizeState] = useState(storedFontSize)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('relay.sidebar-collapsed') === 'true')
@@ -866,6 +875,23 @@ export function App() {
     const timer = window.setTimeout(() => setNotice(undefined), 3_500)
     return () => window.clearTimeout(timer)
   }, [notice, setNotice])
+  /*
+   * The menu bar can only ask the window to select something; selection stays
+   * here because the renderer owns which projection a session shows
+   * (docs/architecture.md 1.1). Menu labels follow the same language, so the
+   * choice is reported back for the native menu to re-render.
+   */
+  useEffect(() => {
+    window.relay.setLocale(locale)
+  }, [locale])
+  useEffect(() => {
+    return window.relay.onNavigate((request) => {
+      if (request.hostSessionId) selectSession(request.hostSessionId)
+      if (request.runId) selectRun(request.runId)
+      if (request.settingsSection) openSettings(request.settingsSection)
+      if (request.notice) setNotice(request.notice)
+    })
+  }, [openSettings, selectRun, selectSession, setNotice])
 
   const macOS = navigator.userAgent.includes('Macintosh')
 

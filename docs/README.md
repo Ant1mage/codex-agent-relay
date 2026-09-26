@@ -60,6 +60,7 @@ Relay 不画复杂 Agent 拓扑图，也不把自己包装成另一个 AI 工作
 - [architecture.md](architecture.md)：概念模型、进程架构、数据模型、日志、Routing 与安全边界。
 - [integrations-and-adapters.md](integrations-and-adapters.md)：Codex 集成、Adapter 设计、DeepSeek Harness 借鉴与 backend 优先级。
 - [codex-integration.md](codex-integration.md)：Codex session 对齐、名称同步与 stdio MCP 工具面。
+- [menu-bar.md](menu-bar.md)：macOS 菜单栏的定位、Clash 式信息架构、行为规则与实现边界。
 - [mvp-roadmap.md](mvp-roadmap.md)：MVP 范围、技术栈和开发顺序。
 
 ## 一句话架构

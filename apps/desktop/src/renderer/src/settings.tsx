@@ -89,7 +89,8 @@ export function SettingsSheet({
   fontSize: number
   setFontSize(fontSize: number): void
 }) {
-  const { snapshot, settingsOpen, setSettingsOpen, locale, setLocale, setNotice, refresh } = useAppStore()
+  const { snapshot, settingsOpen, settingsSection, setSettingsOpen, locale, setLocale, setNotice, refresh } =
+    useAppStore()
   const [settings, setSettings] = useState<DesktopSettings | undefined>(snapshot?.settings)
   const [scope, setScope] = useState('global')
   const [selection, setSelection] = useState<Selection>('general')
@@ -103,6 +104,12 @@ export function SettingsSheet({
     latest.current = snapshot?.settings
     if (!dirty) setSettings(snapshot?.settings)
   }, [snapshot?.settings, dirty])
+
+  // The menu bar names a page, never a control: Settings still owns its layout
+  // and the user keeps navigating inside it from there.
+  useEffect(() => {
+    if (settingsOpen && settingsSection) setSelection(settingsSection)
+  }, [settingsOpen, settingsSection])
 
   // Keep the detail pane pointing at a real profile as the snapshot changes.
   useEffect(() => {
