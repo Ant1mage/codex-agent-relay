@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Check,
   CircleAlert,
@@ -33,6 +33,12 @@ import {
 } from './components/ui/sheet.js'
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs.js'
 import { Button } from './components/ui/button.js'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from './components/ui/dropdown-menu.js'
 import { createTranslator } from '@relay/i18n'
 import { Onboarding } from './onboarding.js'
 import { SettingsSheet } from './settings.js'
@@ -148,53 +154,35 @@ function Sidebar({ t }: { t: Translator }) {
  */
 function SessionMenu({ session, view, t }: { session: HostSession; view: DesktopRunView | undefined; t: Translator }) {
   const { setNotice, refresh } = useAppStore()
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const close = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false)
-    }
-    window.addEventListener('mousedown', close)
-    return () => window.removeEventListener('mousedown', close)
-  }, [open])
 
   const stopAll = async () => {
-    setOpen(false)
     const result = await window.relay.cancelSessionWorkers(session.id)
     setNotice(result.count ? t('session.stopped').replace('{count}', String(result.count)) : t('session.stoppedNone'))
     await refresh()
   }
   const openWorkspace = async () => {
-    setOpen(false)
     const result = await window.relay.openWorkspace(session.cwd)
     if (!result.ok) setNotice(result.message ?? t('error.generic'))
   }
   const copyId = async () => {
-    setOpen(false)
     await navigator.clipboard.writeText(session.nativeSessionId)
     setNotice(t('session.idCopied'))
   }
 
   return (
-    <div className="session-menu" ref={ref}>
-      <button
-        className="plain-icon"
-        aria-label={t('session.menu')}
-        aria-expanded={open}
-        title={t('session.menu')}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <MoreHorizontal size={16} />
-      </button>
-      {open && (
-        <div className="menu-popover" role="menu">
-          <button onClick={() => void stopAll()}>{t('session.stopAll')}</button>
-          <button onClick={() => void openWorkspace()}>{t('session.openWorkspace')}</button>
-          <button onClick={() => void copyId()}>{t('session.copyId')}</button>
-        </div>
-      )}
+    <div className="session-menu">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon-xs" aria-label={t('session.menu')} title={t('session.menu')}>
+            <MoreHorizontal size={16} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => void stopAll()}>{t('session.stopAll')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void openWorkspace()}>{t('session.openWorkspace')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void copyId()}>{t('session.copyId')}</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {view && <span className="session-run-status"><StatusLabel status={view.run.status} t={t} /></span>}
     </div>
   )
@@ -457,28 +445,31 @@ function Console({
           <span>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</span>
         </div>
         <div className="console-actions">
-          <button onClick={() => openInspector('raw')}>{t('console.rawOutput')} <b>{rawCount}</b></button>
+          <Button variant="outline" size="xs" onClick={() => openInspector('raw')}>{t('console.rawOutput')} <span className="text-muted">{rawCount}</span></Button>
           {/* Stop is worker-level and sits beside the selected CLI (docs/ui.md 19) */}
           {active && worker && (
-            <button
-              className="stop-button"
+            <Button
+              variant="outline"
+              size="xs"
+              className="text-danger"
               onClick={async () => {
                 const response = await window.relay.cancelWorker(worker.id)
                 setNotice(response.accepted ? t('runs.cancelQueued') : response.message)
               }}
             >
               <Square size={11} />{t('action.stop')}
-            </button>
+            </Button>
           )}
-          <button
-            className="info-toggle"
+          <Button
+            variant={cliInfoOpen ? 'secondary' : 'ghost'}
+            size="icon-xs"
             aria-pressed={cliInfoOpen}
             aria-label={cliInfoOpen ? t('cliInfo.hide') : t('cliInfo.show')}
             title={cliInfoOpen ? t('cliInfo.hide') : t('cliInfo.show')}
             onClick={toggleCliInfo}
           >
             <Info size={15} />
-          </button>
+          </Button>
         </div>
       </header>
       <ScrollArea className="console-body min-h-0 h-full">
@@ -494,6 +485,7 @@ function Console({
 /* ------------------------------------------------------------------ */
 
 type Override = { model?: string; reasoning?: string }
+const PROFILE_SELECTION = '__relay_profile_selection__'
 
 function overrideKey(runId: string): string {
   return `relay.override.${runId}`
@@ -554,7 +546,7 @@ function CliInfo({ view, step, t, close, openInspector }: {
           </span>
           <em>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</em>
         </div>
-        <button className="plain-icon" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></button>
+        <Button variant="ghost" size="icon-xs" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></Button>
       </header>
       <dl>
         <div><dt>{t('cliInfo.runtime')}</dt><dd>{runtime?.adapterId ?? worker?.runtimeId ?? t('common.notAvailable')}</dd></div>
@@ -563,10 +555,13 @@ function CliInfo({ view, step, t, close, openInspector }: {
           <dd>
             {/* Session-level override; applies to the next run (docs/ui.md 16.2) */}
             {options?.models.length ? (
-              <Select value={override.model ?? ''} onValueChange={(next) => applyOverride('model', next)}>
+              <Select
+                value={override.model ?? PROFILE_SELECTION}
+                onValueChange={(next) => applyOverride('model', next === PROFILE_SELECTION ? '' : next)}
+              >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">{profile?.model ?? t('agents.runtimeDefault')}</SelectItem>
+                  <SelectItem value={PROFILE_SELECTION}>{profile?.model ?? t('agents.notSelected')}</SelectItem>
                   {options.models.map((model) => (
                     <SelectItem value={model.value} key={model.value}>{model.label ?? model.value}</SelectItem>
                   ))}
@@ -582,12 +577,12 @@ function CliInfo({ view, step, t, close, openInspector }: {
           <dd>
             {options?.levels.length ? (
               <Select
-                value={override.reasoning ?? profile?.reasoning ?? ''}
-                onValueChange={(next) => applyOverride('reasoning', next)}
+                value={override.reasoning ?? PROFILE_SELECTION}
+                onValueChange={(next) => applyOverride('reasoning', next === PROFILE_SELECTION ? '' : next)}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">{reasoningLabel(profile?.reasoning)}</SelectItem>
+                  <SelectItem value={PROFILE_SELECTION}>{reasoningLabel(profile?.reasoning)}</SelectItem>
                   {options.levels.map((level) => (
                     <SelectItem value={level.value} key={level.value}>{level.label}</SelectItem>
                   ))}
@@ -607,9 +602,9 @@ function CliInfo({ view, step, t, close, openInspector }: {
           <dd>
             {changeCount
               ? (
-                <button className="link-button" onClick={() => openInspector('changes')}>
+                <Button variant="link" size="xs" onClick={() => openInspector('changes')}>
                   {changeCount} {t('console.files')}
-                </button>
+                </Button>
               )
               : t('console.noChanges')}
           </dd>
@@ -734,9 +729,9 @@ function SessionWorkspace({ t }: { t: Translator }) {
           </p>
         </div>
         <div className="heading-actions">
-          <button className="plain-icon" title={t('common.refresh')} onClick={() => void refresh()}>
+          <Button variant="ghost" size="icon-xs" title={t('common.refresh')} onClick={() => void refresh()}>
             <RefreshCw className={loading ? 'spin' : ''} size={15} />
-          </button>
+          </Button>
           <SessionMenu session={session} view={selectedView} t={t} />
         </div>
       </header>
@@ -811,6 +806,9 @@ export function App() {
   }, [theme])
   useEffect(() => {
     document.documentElement.style.setProperty('--relay-font-scale', String(fontSize / 14))
+    // Tailwind/shadcn use rem, so changing the root size keeps framework
+    // components and Relay-owned layout in the same typography system.
+    document.documentElement.style.fontSize = `${fontSize}px`
   }, [fontSize])
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

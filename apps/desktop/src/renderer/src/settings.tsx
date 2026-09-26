@@ -53,6 +53,36 @@ const MIN_FONT_SIZE = 14
 type Selection = 'general' | 'agents' | 'workspace' | 'advanced' | `agent:${ProviderIconId}`
 
 /**
+ * Number inputs keep their in-progress text locally. A controlled integer value
+ * must not snap back while the user temporarily clears it to type a new value.
+ */
+function PolicyNumberInput({ value, min, max, onCommit }: {
+  value: number
+  min: number
+  max: number
+  onCommit(value: number): void
+}) {
+  const [draft, setDraft] = useState(String(value))
+  useEffect(() => setDraft(String(value)), [value])
+  const commit = () => {
+    const next = Number(draft)
+    if (Number.isInteger(next) && next >= min && next <= max) onCommit(next)
+    else setDraft(String(value))
+  }
+  return (
+    <Input
+      type="number"
+      min={min}
+      max={max}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+    />
+  )
+}
+
+/**
  * Centered Settings card (docs/ui.md 17.1): never a full-screen page, with a
  * left option list and the selected item's controls on the right of the same card.
  */
@@ -173,7 +203,7 @@ export function SettingsSheet({
         <DialogHeader className="flex-row items-center justify-between gap-2 border-b border-line px-5 py-3">
           <DialogTitle className="text-base">{t('settings.title')}</DialogTitle>
           <DialogDescription className="sr-only">{t('settings.subtitle')}</DialogDescription>
-          <button className="plain-icon" aria-label={t('action.close')} onClick={() => setSettingsOpen(false)}><X size={16} /></button>
+          <Button variant="ghost" size="icon-xs" aria-label={t('action.close')} onClick={() => setSettingsOpen(false)}><X size={16} /></Button>
         </DialogHeader>
         <div className="settings-layout">
           <nav className="settings-navigation">
@@ -336,9 +366,9 @@ export function SettingsSheet({
                   <div className="setting-heading section-action">
                     <div><strong>{t('settings.profilesHeading')}</strong></div>
                     {runtime && (
-                      <button className="secondary" onClick={() => setDraft(newProfileFor(selectedProvider, runtime.id))}>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setDraft(newProfileFor(selectedProvider, runtime.id))}>
                         <Plus size={12} />{t('agents.create')}
-                      </button>
+                      </Button>
                     )}
                   </div>
 
@@ -352,7 +382,7 @@ export function SettingsSheet({
                             <div><strong>{profile.name}</strong>
                               <span>{[profile.model, profile.reasoning].filter(Boolean).join(' · ') || t('agents.default')}</span>
                             </div>
-                            <button className="secondary" onClick={() => setDraft(profile)}>{t('agents.edit')}</button>
+                            <Button type="button" variant="outline" size="sm" onClick={() => setDraft(profile)}>{t('agents.edit')}</Button>
                           </div>
                         </div>
                       ))}
@@ -366,8 +396,8 @@ export function SettingsSheet({
                     >
                       <ProfileFields profile={draft} runtimes={snapshot.runtimes} t={t} onChange={setDraft} />
                       <div className="agent-detail-actions">
-                        <button type="button" className="secondary" onClick={() => setDraft(undefined)}>{t('action.close')}</button>
-                        <button className="primary">{t('action.save')}</button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => setDraft(undefined)}>{t('action.close')}</Button>
+                        <Button size="sm">{t('action.save')}</Button>
                       </div>
                     </form>
                   )}
@@ -395,16 +425,16 @@ export function SettingsSheet({
                     </SelectContent>
                   </Select>
                 </label>
-                <label className="setting-row">
+                <div className="setting-row">
                   <span>{t('settings.maxRuns')}</span>
-                  <Input type="number" min="1" max="16" value={policy.maxConcurrentRuns}
-                    onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePolicy({ maxConcurrentRuns: value }) }} />
-                </label>
-                <label className="setting-row">
+                  <PolicyNumberInput value={policy.maxConcurrentRuns} min={1} max={16}
+                    onCommit={(value) => updatePolicy({ maxConcurrentRuns: value })} />
+                </div>
+                <div className="setting-row">
                   <span>{t('settings.maxWriters')}</span>
-                  <Input type="number" min="1" max="8" value={policy.maxConcurrentWriters}
-                    onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePolicy({ maxConcurrentWriters: value }) }} />
-                </label>
+                  <PolicyNumberInput value={policy.maxConcurrentWriters} min={1} max={8}
+                    onCommit={(value) => updatePolicy({ maxConcurrentWriters: value })} />
+                </div>
                 {([
                   ['requireWorktreeForParallelWriters', 'settings.requireWorktree'],
                   ['allowWrite', 'settings.allowWrite'],
