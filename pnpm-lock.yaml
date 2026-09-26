@@ -99,9 +99,6 @@ importers:
       '@relay/adapter-deepseek':
         specifier: workspace:*
         version: link:../../packages/adapters/deepseek
-      '@relay/adapter-gemini':
-        specifier: workspace:*
-        version: link:../../packages/adapters/gemini
       '@relay/adapter-kimi':
         specifier: workspace:*
         version: link:../../packages/adapters/kimi
@@ -219,15 +216,6 @@ importers:
         specifier: workspace:*
         version: link:../../protocol
 
-  packages/adapters/gemini:
-    dependencies:
-      '@relay/adapter-sdk':
-        specifier: workspace:*
-        version: link:../../adapter-sdk
-      '@relay/protocol':
-        specifier: workspace:*
-        version: link:../../protocol
-
   packages/adapters/kimi:
     dependencies:
       '@relay/adapter-sdk':
@@ -284,9 +272,6 @@ importers:
       '@relay/adapter-deepseek':
         specifier: workspace:*
         version: link:../adapters/deepseek
-      '@relay/adapter-gemini':
-        specifier: workspace:*
-        version: link:../adapters/gemini
       '@relay/adapter-kimi':
         specifier: workspace:*
         version: link:../adapters/kimi

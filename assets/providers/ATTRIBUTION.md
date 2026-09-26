@@ -13,7 +13,6 @@ identify the runtime selected in Relay.
 | File | Mark | Notes |
 | --- | --- | --- |
 | `deepseek.svg` | DeepSeek whale | |
-| `gemini.svg` | Gemini sparkle | Chosen over `geminicli.svg`, whose terminal-prompt glyph is far less recognisable |
 | `glm.svg` | Zhipu Z mark | The `glmv.svg` chameleon is illegible at the 14px size Relay draws these |
 | `grok.svg` | Grok circle-and-slash | Replaced an older xAI corporate mark, which was not the Grok logo |
 | `kimi.svg` | Kimi wordmark | |

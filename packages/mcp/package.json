@@ -8,7 +8,6 @@
     "@modelcontextprotocol/server": "^2.1.0",
     "@relay/adapter-antigravity": "workspace:*",
     "@relay/adapter-deepseek": "workspace:*",
-    "@relay/adapter-gemini": "workspace:*",
     "@relay/adapter-kimi": "workspace:*",
     "@relay/adapter-sdk": "workspace:*",
     "@relay/adapter-zai": "workspace:*",

@@ -3,7 +3,6 @@ import { dirname } from 'node:path'
 import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { DeepSeekAdapter } from '@relay/adapter-deepseek'
 import { AntigravityAdapter } from '@relay/adapter-antigravity'
-import { GeminiAdapter } from '@relay/adapter-gemini'
 import { KimiAdapter } from '@relay/adapter-kimi'
 import { ZaiAdapter } from '@relay/adapter-zai'
 import type { AgentAdapter } from '@relay/adapter-sdk'
@@ -30,7 +29,7 @@ async function createRuntime(): Promise<RelayRuntime> {
   const controller = new RunController(new SqliteEventStore(databasePath))
   const config = new RelayConfigStore()
   const adapters: AgentAdapter[] = [
-    new DeepSeekAdapter(), new AntigravityAdapter(), new KimiAdapter(), new GeminiAdapter(), new ZaiAdapter(),
+    new DeepSeekAdapter(), new AntigravityAdapter(), new KimiAdapter(), new ZaiAdapter(),
   ]
   for (const adapter of adapters) controller.registerAdapter(adapter)
   const reloader = new RuntimeConfigReloader(
