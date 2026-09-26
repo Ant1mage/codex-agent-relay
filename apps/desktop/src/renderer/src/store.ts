@@ -19,8 +19,8 @@ interface AppState {
   selectedStepId: string | undefined
   settingsOpen: boolean
   onboardingOpen: boolean
-  /** First settings value seen; `undefined` until the first snapshot lands. */
-  knownOnboardingCompletedAt: string | undefined
+  /** Prevents polling from treating an unfinished setup value as a first load forever. */
+  hasLoadedInitialSnapshot: boolean
   loading: boolean
   error: string | undefined
   notice: string | undefined
@@ -49,7 +49,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedStepId: undefined,
   settingsOpen: false,
   onboardingOpen: false,
-  knownOnboardingCompletedAt: undefined,
+  hasLoadedInitialSnapshot: false,
   loading: true,
   error: undefined,
   notice: undefined,
@@ -104,14 +104,14 @@ export const useAppStore = create<AppState>((set, get) => ({
        * toolbar (docs/ui.md 22.3/22.4).
        */
       const completedAt = snapshot.settings.onboardingCompletedAt
-      const firstSnapshot = get().knownOnboardingCompletedAt === undefined
+      const firstSnapshot = !get().hasLoadedInitialSnapshot
       set({
         snapshot,
         selectedSessionId: sessionId,
         selectedRunId: runId,
         selectedStepId: stepId,
         loading: false,
-        knownOnboardingCompletedAt: completedAt,
+        hasLoadedInitialSnapshot: true,
         ...(firstSnapshot ? { onboardingOpen: !completedAt } : {}),
       })
     } catch (error) {

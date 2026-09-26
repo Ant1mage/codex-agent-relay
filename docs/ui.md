@@ -631,8 +631,9 @@ CLI, not a list Relay defines:
   advertises a model flag, so the UI can tell "this CLI has no models" apart
   from "selection is unsupported here"
 - Relay never invents a model name, a reasoning label, or a fallback list. When
-  a CLI publishes neither, the profile stores nothing for that field and the
-  runtime's own default applies
+  the CLI does not publish a usable list, Relay asks the provider HTTP catalogue
+  below; if that is unavailable too, the profile stores nothing for that field
+  and the runtime's own default applies
 - the number of reasoning stops follows the CLI: a CLI with four levels gets
   four stops, not a forced three
 - a stored reasoning value is an opaque CLI token, so it is not restricted to
@@ -957,7 +958,8 @@ are standard desktop structures, so they use standard components:
 | Settings surface, agent editor | `Dialog` + `Card` |
 | Theme, language | `ToggleGroup` |
 | Enable, policy booleans | `Switch`, `Checkbox` |
-| Model, reasoning, font size, scope | `Select` |
+| Model, font size, scope | `Select` |
+| Reasoning strength | discrete `Slider` using runtime-provided stops |
 | Name, description, numeric | `Input`, `Textarea` |
 | Agent fields | `Field` / `FieldSet` / `FieldLegend` |
 | Toolbar, actions | `Button`, `Badge` |

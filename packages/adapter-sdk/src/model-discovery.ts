@@ -190,9 +190,10 @@ export async function listModelsOverHttp(
 }
 
 /**
- * Merges CLI-reported options with the official API. The CLI wins whenever it
- * reports anything; the API is consulted only when the CLI is silent, which is
- * the case for runtimes whose CLI exposes no model flag at all.
+ * Merges CLI-reported options with the official API. The CLI wins for each
+ * individual list it can actually enumerate; the API fills only a missing list.
+ * A CLI flag without advertised values is not a usable catalogue and must not
+ * suppress the provider's verified HTTP response.
  */
 export async function withModelFallback(
   cli: RuntimeOptions,

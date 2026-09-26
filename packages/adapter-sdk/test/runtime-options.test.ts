@@ -91,11 +91,11 @@ describe('parseReasoning', () => {
     expect(result.levels.at(-1)?.value).toBe('maximum')
   })
 
-  it('falls back to a numeric scale when levels are unnamed, and says so', () => {
+  it('never invents a numeric scale when levels are unnamed', () => {
     const result = parseReasoning(evidence('  --reasoning <n>   Set effort'))
-    expect(result.levels.map((level) => level.strength)).toEqual([1, 2, 3, 4, 5])
-    expect(result.levels.map((level) => level.value)).toEqual(['1', '2', '3', '4', '5'])
-    expect(result.diagnostics[0]).toContain('without listing levels')
+    expect(result.flag).toBe('--reasoning')
+    expect(result.levels).toEqual([])
+    expect(result.diagnostics[0]).toContain('does not list reasoning levels')
   })
 
   it('reports nothing for a CLI whose real help has no model or reasoning flag', () => {

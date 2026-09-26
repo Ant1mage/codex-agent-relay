@@ -37,12 +37,26 @@ export function Onboarding({ t }: { t: Translator }) {
   const [page, setPage] = useState<OnboardingPage>('codex')
   const [codex, setCodex] = useState<CodexIntegrationStatus>()
   const [draft, setDraft] = useState<AgentProfile>()
+  const [installing, setInstalling] = useState(false)
 
   const loadCodexStatus = () => {
     setCodex(undefined)
     void window.relay.codexStatus().then(setCodex)
   }
   useEffect(() => { loadCodexStatus() }, [])
+
+  const installCodexIntegration = async () => {
+    setInstalling(true)
+    try {
+      const result = await window.relay.installCodexIntegration()
+      setCodex(result.status)
+      setNotice(result.messages.join(' · '))
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setInstalling(false)
+    }
+  }
 
   const runtimes = snapshot?.runtimes ?? []
   const profiles = snapshot?.profiles ?? []
@@ -113,7 +127,12 @@ export function Onboarding({ t }: { t: Translator }) {
             )}
             <div className="onboarding-actions">
               <Button variant="link" size="sm" onClick={loadCodexStatus}>{t('onboarding.checkRetry')}</Button>
-              <Button onClick={() => setPage('agents')}>{t('onboarding.continue')}</Button>
+              {!codex?.configured && (
+                <Button variant="outline" disabled={installing || !codex} onClick={() => void installCodexIntegration()}>
+                  {installing ? t('onboarding.installing') : t('onboarding.install')}
+                </Button>
+              )}
+              <Button disabled={!codex?.configured} onClick={() => setPage('agents')}>{t('onboarding.continue')}</Button>
             </div>
           </>
         )}
@@ -227,6 +246,7 @@ export function Onboarding({ t }: { t: Translator }) {
             <div className="onboarding-actions">
               <Button variant="link" size="sm" onClick={() => setPage('agents')}>{t('onboarding.back')}</Button>
               <Button
+                disabled={!codex?.configured || usableAgents.length === 0}
                 onClick={() => void finish().catch((error: unknown) =>
                   setNotice(error instanceof Error ? error.message : String(error)))}
               >

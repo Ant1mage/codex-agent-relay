@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -29,6 +29,7 @@ import { defaultPolicy, defaultProfiles, projectRun } from '@relay/core'
 import { httpModelQueries } from '@relay/adapter-sdk'
 import type {
   CodexIntegrationCheck,
+  CodexIntegrationInstallResult,
   CodexIntegrationStatus,
   DesktopRunView,
   DesktopSettings,
@@ -92,30 +93,56 @@ function codexCandidates(): string[] {
   return candidates
 }
 
-async function probeCodexCli(): Promise<CodexIntegrationCheck> {
-  const tried: string[] = ['PATH']
+interface CodexExecutable {
+  path: string
+  version: string
+}
+
+async function findCodexCli(): Promise<CodexExecutable | undefined> {
   const attempts = ['codex', ...codexCandidates()]
   for (const candidate of attempts) {
     try {
       const { stdout } = await execFileAsync(candidate, ['--version'], {
         timeout: CODEX_PROBE_TIMEOUT_MS,
       })
-      const version = stdout.trim() || 'unknown version'
-      return {
-        id: 'codex-cli',
-        ok: true,
-        // Distinguish a PATH install from a bundled one so the reason is visible.
-        detail: candidate === 'codex' ? `codex · ${version}` : `${candidate} · ${version}`,
-      }
+      return { path: candidate, version: stdout.trim() || 'unknown version' }
     } catch {
-      if (candidate !== 'codex') tried.push(candidate)
+      // Try the next known location.
+    }
+  }
+  return undefined
+}
+
+async function probeCodexCli(): Promise<CodexIntegrationCheck> {
+  const executable = await findCodexCli()
+  if (executable) {
+    return {
+      id: 'codex-cli',
+      ok: true,
+      detail: executable.path === 'codex' ? `codex · ${executable.version}` : `${executable.path} · ${executable.version}`,
     }
   }
   return {
     id: 'codex-cli',
     ok: false,
-    detail: `codex not found on PATH or in a VS Code extension; checked ${tried.length} locations`,
+    detail: `codex not found on PATH or in a known Codex location`,
   }
+}
+
+/** Finds the source skill and workspace command used by the local developer app. */
+function relayInstallation(): { workspaceRoot: string; skillSource: string } | undefined {
+  const roots = [
+    process.cwd(),
+    // electron-vite dev emits main code under apps/desktop/out/main.
+    join(import.meta.dirname, '../../../../'),
+  ]
+  for (const workspaceRoot of roots) {
+    const skillSource = join(workspaceRoot, 'integrations', 'codex', 'skills', 'relay', 'SKILL.md')
+    if (existsSync(skillSource) && existsSync(join(workspaceRoot, 'package.json'))) {
+      return { workspaceRoot, skillSource }
+    }
+  }
+  return undefined
 }
 
 function probeRelayMcp(): CodexIntegrationCheck {
@@ -390,6 +417,66 @@ export class DesktopDataSource {
   async codexIntegration(): Promise<CodexIntegrationStatus> {
     const checks = [await probeCodexCli(), probeRelayMcp(), probeRelaySkill()]
     return { checks, configured: checks.every((check) => check.ok) }
+  }
+
+  /**
+   * Installs the two parts Codex needs to discover Relay: the stdio MCP server
+   * through Codex's own CLI and the shipped Relay skill in CODEX_HOME. Both
+   * operations are idempotent: an existing user configuration is left intact.
+   */
+  async installCodexIntegration(): Promise<CodexIntegrationInstallResult> {
+    const messages: string[] = []
+    const installation = relayInstallation()
+    const executable = await findCodexCli()
+
+    if (!installation) {
+      return {
+        status: await this.codexIntegration(),
+        messages: ['Relay installation files are not available in this build'],
+      }
+    }
+    if (!executable) {
+      return {
+        status: await this.codexIntegration(),
+        messages: ['Codex executable was not found, so Relay cannot configure its MCP server'],
+      }
+    }
+
+    const skillTarget = join(codexHome(), 'skills', 'relay', 'SKILL.md')
+    if (!existsSync(skillTarget)) {
+      try {
+        mkdirSync(dirname(skillTarget), { recursive: true })
+        copyFileSync(installation.skillSource, skillTarget)
+        messages.push('Installed the Relay skill for Codex')
+      } catch (error) {
+        messages.push(`Could not install the Relay skill: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    } else {
+      messages.push('Relay skill is already installed')
+    }
+
+    if (!probeRelayMcp().ok) {
+      try {
+        await execFileAsync(executable.path, [
+          'mcp',
+          'add',
+          'relay',
+          '--',
+          'corepack',
+          'pnpm',
+          '--dir',
+          installation.workspaceRoot,
+          'mcp:dev',
+        ], { timeout: CODEX_PROBE_TIMEOUT_MS })
+        messages.push('Configured the Relay MCP server for Codex')
+      } catch (error) {
+        messages.push(`Could not configure Relay MCP: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    } else {
+      messages.push('Relay MCP is already configured')
+    }
+
+    return { status: await this.codexIntegration(), messages }
   }
 
   saveProfile(input: AgentProfile): AgentProfile {

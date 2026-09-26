@@ -19,6 +19,7 @@ import {
 } from './components/ui/select.js'
 import { Switch } from './components/ui/switch.js'
 import { Textarea } from './components/ui/textarea.js'
+import { Slider } from './components/ui/slider.js'
 import { X } from 'lucide-react'
 import type { AgentProfile, Runtime } from '@relay/protocol'
 import { useAppStore } from './store.js'
@@ -67,7 +68,7 @@ export function ProfileFields({
 }) {
   const update = (next: Partial<AgentProfile>) => onChange({ ...profile, ...next })
   const capabilities = profile.capabilities
-  // Model list and reasoning levels come from the CLI, never from Relay.
+  // Options come from the runtime discovery chain, never from Relay defaults.
   const { options, loading } = useRuntimeOptions(profile.runtimeId)
   const models = options?.models ?? []
   const levels = options?.levels ?? []
@@ -95,13 +96,11 @@ export function ProfileFields({
     <Row label={t('agents.model')}>
       {models.length ? (
         <Select
-          value={profile.model ?? ''}
-          onValueChange={(next) => update({ model: next || undefined })}
+          {...(profile.model ? { value: profile.model } : {})}
+          onValueChange={(next) => update({ model: next })}
         >
-          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full"><SelectValue placeholder={t('agents.notSelected')} /></SelectTrigger>
           <SelectContent>
-            {/* Empty means "whatever the CLI defaults to", not a Relay choice. */}
-            <SelectItem value="">{t('agents.runtimeDefault')}</SelectItem>
             {models.map((model) => (
               <SelectItem value={model.value} key={model.value}>{model.label ?? model.value}</SelectItem>
             ))}
@@ -115,23 +114,34 @@ export function ProfileFields({
     </Row>
   )
 
-  // Reasoning is a discrete CLI-defined token, so it uses the same select as the
-  // model field rather than a slider (docs/ui.md 16.1). Options come from the CLI.
+  // Each discrete slider stop is a runtime-provided opaque token. Relay creates
+  // neither a label nor an additional strength level.
   const reasoningRow = (
     <Row label={t('agents.reasoning')}>
       {levels.length ? (
-        <Select
-          value={profile.reasoning ?? ''}
-          onValueChange={(next) => update({ reasoning: next || undefined })}
-        >
-          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="">{t('agents.runtimeDefault')}</SelectItem>
-            {levels.map((level) => (
-              <SelectItem value={level.value} key={level.value}>{level.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <span className="font-medium">{levels.find((level) => level.value === profile.reasoning)?.label ?? t('agents.notSelected')}</span>
+            <span className="text-muted">{levels.length} {t('agents.levels')}</span>
+          </div>
+          <Slider
+            min={0}
+            max={levels.length - 1}
+            step={1}
+            value={[Math.max(0, levels.findIndex((level) => level.value === profile.reasoning))]}
+            aria-label={t('agents.reasoning')}
+            aria-valuetext={levels.find((level) => level.value === profile.reasoning)?.label ?? t('agents.notSelected')}
+            onValueChange={(values) => {
+              const index = values[0]
+              if (index === undefined) return
+              const level = levels[index]
+              if (level) update({ reasoning: level.value })
+            }}
+          />
+          <div className="flex justify-between gap-1 text-[10px] text-muted" aria-hidden="true">
+            {levels.map((level) => <span key={level.value}>{level.label}</span>)}
+          </div>
+        </div>
       ) : (
         <span className="field-note">
           {loading ? t('agents.readingRuntime') : t('agents.noReasoningLevels')}
@@ -182,10 +192,10 @@ export function ProfileFields({
       {reasoningRow}
       {provenance}
       {unsupported && diagnostics}
+      {permissions}
       <Row label={t('agents.description')}>
         <Textarea value={profile.description} onChange={(event) => update({ description: event.target.value })} />
       </Row>
-      {permissions}
     </div>
   )
 }

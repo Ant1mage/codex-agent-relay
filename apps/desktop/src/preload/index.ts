@@ -11,6 +11,7 @@ const api: RelayDesktopApi = {
   cancelSessionWorkers: (hostSessionId: string) =>
     ipcRenderer.invoke('relay:session:cancel', hostSessionId),
   codexStatus: () => ipcRenderer.invoke('relay:codex:status'),
+  installCodexIntegration: () => ipcRenderer.invoke('relay:codex:install'),
   runtimeOptions: (runtimeId: string) => ipcRenderer.invoke('relay:runtime:options', runtimeId),
   completeOnboarding: () => ipcRenderer.invoke('relay:onboarding:complete'),
   openWorkspace: (path: string) => ipcRenderer.invoke('relay:workspace:open', path),
