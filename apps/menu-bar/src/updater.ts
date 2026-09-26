@@ -15,9 +15,17 @@ import type { AppUpdater, ProgressInfo, UpdateInfo } from 'electron-updater'
  * own (docs/codex-integration.md 2).
  */
 
-// electron-updater is CJS without a default export; the namespace import is
-// what survives the bundle in both formats.
-const { autoUpdater } = electronUpdater as unknown as { autoUpdater: AppUpdater }
+/**
+ * electron-updater is CJS without a default export, and touching autoUpdater
+ * constructs an updater that reads app.getVersion() immediately. Resolve it
+ * lazily, after the app is ready, so importing this module can never crash a
+ * process that is not (yet) a full Electron main process.
+ */
+let resolved: AppUpdater | undefined
+function autoUpdaterInstance(): AppUpdater {
+  resolved ??= (electronUpdater as unknown as { autoUpdater: AppUpdater }).autoUpdater
+  return resolved
+}
 
 export type UpdateStatus =
   | 'unsupported'
@@ -75,11 +83,12 @@ export function updatesSupported(): boolean {
 function wire(): void {
   if (wired) return
   wired = true
+  const autoUpdater = autoUpdaterInstance()
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.logger = null as never
   if (process.env.RELAY_UPDATE_FEED) {
-    autoUpdater.setFeedURL({ provider: 'generic', url: process.env.RELAY_UPDATE_FEED })
+    autoUpdaterInstance().setFeedURL({ provider: 'generic', url: process.env.RELAY_UPDATE_FEED })
   }
   autoUpdater.on('checking-for-update', () => publish({ status: 'checking' }))
   autoUpdater.on('update-available', (info: UpdateInfo) => publish({ status: 'available', version: info.version }))
@@ -100,7 +109,7 @@ export async function checkForUpdates(): Promise<UpdateState> {
   }
   wire()
   try {
-    await autoUpdater.checkForUpdates()
+    await autoUpdaterInstance().checkForUpdates()
   } catch (error) {
     publish({ status: 'error', message: (error instanceof Error ? error.message : String(error)).slice(0, 200) })
   }
@@ -112,7 +121,7 @@ export async function downloadUpdate(): Promise<UpdateState> {
   wire()
   publish({ status: 'downloading', percent: 0 })
   try {
-    await autoUpdater.downloadUpdate()
+    await autoUpdaterInstance().downloadUpdate()
   } catch (error) {
     publish({ status: 'error', message: (error instanceof Error ? error.message : String(error)).slice(0, 200) })
   }
@@ -122,5 +131,5 @@ export async function downloadUpdate(): Promise<UpdateState> {
 /** Quits, lets the updater replace the bundle, and relaunches. */
 export function installUpdate(): void {
   if (state.status !== 'downloaded') return
-  autoUpdater.quitAndInstall()
+  autoUpdaterInstance().quitAndInstall()
 }
