@@ -12,5 +12,7 @@ describe('i18n', () => {
   it('translates shared interface vocabulary', () => {
     expect(createTranslator('en')('nav.sessions')).toBe('Sessions')
     expect(createTranslator('zh-CN')('nav.sessions')).toBe('会话')
+    expect(createTranslator('en')('settings.fontSize')).toBe('Font size')
+    expect(createTranslator('zh-CN')('settings.fontSize')).toBe('字号')
   })
 })
