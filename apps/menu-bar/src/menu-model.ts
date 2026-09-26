@@ -1,4 +1,4 @@
-import { createTranslator, type TranslationKey } from '@relay/i18n'
+import { createTranslator, type TranslationKey, type Translator } from '@relay/i18n'
 import type { Locale } from '@relay/protocol'
 import type { MenuView } from '@relay/relay-api'
 
@@ -12,10 +12,12 @@ export type MenuBarPlatform = 'darwin' | 'win32' | 'linux'
 export type DaemonStatus = 'running' | 'stopped' | 'starting'
 
 export type PanelTab = 'agents' | 'policy' | 'codex' | 'runtime'
+/** Menu picks that open the panel straight into a form, never a second window. */
+export type PanelIntent = 'new-agent' | 'edit-agent' | 'add-runtime' | 'codex-actions'
 
 export type MenuBarAction =
   | { type: 'open-inspector'; hostSessionId?: string; runId?: string }
-  | { type: 'open-panel'; tab: PanelTab }
+  | { type: 'open-panel'; tab: PanelTab; intent?: PanelIntent; profileId?: string }
   | { type: 'rescan' }
   | { type: 'repair-codex' }
   | { type: 'start-daemon' }
@@ -27,6 +29,9 @@ export type MenuBarAction =
   | { type: 'copy-diagnostics' }
   | { type: 'install-codex' }
   | { type: 'refresh' }
+  | { type: 'check-updates' }
+  | { type: 'download-update' }
+  | { type: 'install-update' }
   | { type: 'toggle-launch-at-login' }
   | { type: 'quit' }
 
@@ -48,6 +53,9 @@ export interface MenuBarView {
   menu?: MenuView
   /** Why the daemon is not reachable, shown as the disabled status line. */
   error?: string
+  /** Tray↔daemon version skew, which an app update can create. */
+  daemonVersionMismatch?: { running: string; app: string }
+  update?: { status: string; version?: string; percent?: number; message?: string }
   launchAtLogin: boolean
   /** Browser the inspector opens in, for the menu's own labelling. */
   browser: string
@@ -92,6 +100,39 @@ function withCount(label: string, count: number): string {
  * snapshot or an OS-level switch; the tray never decides which agent should run
  * (docs/menu-bar.md 6).
  */
+/**
+ * The App update section. It is deliberately independent of the daemon: a new
+ * Relay can be available while the log service is down, and the Codex
+ * integration has its own lifecycle (docs/updates.md).
+ */
+function updateItems(t: Translator, view: MenuBarView): MenuBarItem[] {
+  const items: MenuBarItem[] = []
+  const update = view.update
+  if (update?.status === 'available' || update?.status === 'downloaded') {
+    items.push({ kind: 'normal', label: t('menu.updateAvailable', { version: update.version ?? '' }), enabled: false })
+    items.push({
+      kind: 'normal',
+      label: update.status === 'available' ? t('menu.downloadUpdate') : t('menu.installUpdate'),
+      action: { type: update.status === 'available' ? 'download-update' : 'install-update' },
+    })
+  } else if (update?.status === 'downloading') {
+    items.push(header(t('menu.downloadUpdate') + ' ' + (update.percent ?? 0) + '%'))
+  } else if (update?.status === 'checking') {
+    items.push(header(t('menu.updateChecking')))
+  } else if (update?.status === 'none') {
+    items.push(header(t('menu.updateNone')))
+  } else if (update?.status === 'error') {
+    items.push(header('⚠︎ ' + (update.message ?? 'update error')))
+  }
+  items.push({
+    kind: 'normal',
+    label: t('menu.checkUpdates'),
+    enabled: update?.status !== 'checking',
+    action: { type: 'check-updates' },
+  })
+  return items
+}
+
 export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
   const t = createTranslator(view.locale)
   const maxSessions = view.maxSessions ?? DEFAULT_MAX_MENU_SESSIONS
@@ -114,6 +155,9 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
     })
     items.push(separator())
     items.push({ kind: 'normal', label: t('menu.diagnostics'), action: { type: 'copy-diagnostics' } })
+    items.push(separator())
+    // App updates do not depend on the log service being up.
+    items.push(...updateItems(t, view))
     items.push(separator())
     items.push({ kind: 'normal', label: t('menu.quit'), accelerator: 'CmdOrCtrl+Q', action: { type: 'quit' } })
     return items
@@ -215,8 +259,10 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
   items.push({
     kind: 'normal',
     label: t('menu.agents'),
-    submenu:
-      menu.agents.length === 0
+    submenu: [
+      { kind: 'normal', label: t('panel.addAgent'), action: { type: 'open-panel', tab: 'agents', intent: 'new-agent' } },
+      separator(),
+      ...(menu.agents.length === 0
         ? [header(t('menu.noAgents'))]
         : menu.agents.map((agent) => {
             const reason =
@@ -232,9 +278,15 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
               // A name is a shortcut into the editor; the switches live in the
               // panel because a menu cannot carry a form.
               label: reason ? `${agent.name} · ${reason}` : agent.name,
-              action: { type: 'open-panel' as const, tab: 'agents' as const },
+              action: {
+                type: 'open-panel' as const,
+                tab: 'agents' as const,
+                intent: 'edit-agent' as const,
+                profileId: agent.id,
+              },
             }
-          }),
+          })),
+    ],
   })
 
   items.push({
@@ -249,6 +301,7 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
             ),
           )),
       separator(),
+      { kind: 'normal', label: t('panel.addRuntimeMenu'), action: { type: 'open-panel', tab: 'runtime', intent: 'add-runtime' } },
       { kind: 'normal', label: t('panel.rescan'), action: { type: 'rescan' } },
       { kind: 'normal', label: t('menu.openPanel'), action: { type: 'open-panel', tab: 'runtime' } },
     ],
@@ -273,7 +326,7 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
         return header(`${check.ok ? '✓' : '✗'} ${label}${check.ok ? '' : ` — ${check.status}`}`)
       }),
       separator(),
-      { kind: 'normal', label: t('menu.codexSettings'), action: { type: 'open-panel', tab: 'codex' } },
+      { kind: 'normal', label: t('menu.codexSettings'), action: { type: 'open-panel', tab: 'codex', intent: 'codex-actions' } },
       {
         kind: 'normal',
         label: brokenChecks.length > 0 ? t('menu.repairCodex') : t('menu.installCodex'),
@@ -284,6 +337,18 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
 
   items.push(separator())
   if (view.error) items.push(header(`⚠︎ ${view.error.slice(0, 80)}`))
+  if (view.daemon === 'running' && view.daemonVersionMismatch) {
+    items.push(
+      header(
+        t('menu.daemonStale', {
+          running: view.daemonVersionMismatch.running,
+          app: view.daemonVersionMismatch.app,
+        }),
+      ),
+    )
+  }
+
+
   items.push({ kind: 'normal', label: t('menu.refresh'), action: { type: 'refresh' } })
   items.push({ kind: 'normal', label: t('menu.diagnostics'), action: { type: 'copy-diagnostics' } })
   if (view.platform === 'darwin' || view.platform === 'win32') {

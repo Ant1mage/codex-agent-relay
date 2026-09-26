@@ -1,30 +1,34 @@
 {
   "name": "@relay/menu-bar",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "out/main.js",
+  "main": "out/main.cjs",
   "scripts": {
-    "build": "pnpm build:panel && esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --external:electron --outfile=out/main.js --sourcemap",
+    "build": "pnpm build:panel && pnpm build:preload && pnpm build:main",
     "dev": "pnpm build && electron .",
     "start": "electron .",
-    "build:panel": "vite build --config vite.panel.config.ts"
+    "build:panel": "vite build --config vite.panel.config.mts",
+    "build:main": "esbuild src/main.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=out/main.cjs --sourcemap --define:import.meta.dirname=__dirname --define:$(node ../../tools/define-version.mjs)",
+    "build:preload": "esbuild src/panel-preload.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=out/panel-preload.cjs --define:$(node ../../tools/define-version.mjs)"
   },
   "dependencies": {
     "@relay/i18n": "workspace:*",
     "@relay/protocol": "workspace:*",
-    "@relay/relay-api": "workspace:*"
+    "@relay/relay-api": "workspace:*",
+    "electron-updater": "^6.6.2"
   },
   "devDependencies": {
-    "electron": "^44.4.5",
-    "esbuild": "^0.25.0",
     "@tailwindcss/vite": "^4.3.3",
-    "@vitejs/plugin-react": "^5.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cn": "^0.4.0",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.0",
     "lucide-react": "^0.544.0",
     "radix-ui": "^1.6.7",
     "react": "^19.3.0",
@@ -32,5 +36,71 @@
     "tailwind-merge": "^3.7.0",
     "tailwindcss": "^4.3.3",
     "vite": "^7.0.0"
+  },
+  "build": {
+    "appId": "dev.relay.menubar",
+    "productName": "Relay",
+    "artifactName": "Relay-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "../../dist",
+      "buildResources": "../../build-resources"
+    },
+    "files": [
+      "out/**/*",
+      "!**/*.map",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../out/relayd",
+        "to": "relayd"
+      },
+      {
+        "from": "../../out/mcp",
+        "to": "mcp"
+      },
+      {
+        "from": "../../integrations/codex",
+        "to": "codex"
+      },
+      {
+        "from": "../../assets/appicon",
+        "to": "appicon"
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "../../build-resources/entitlements.mac.plist",
+      "entitlementsInherit": "../../build-resources/entitlements.mac.plist",
+      "extendInfo": {
+        "LSUIElement": true
+      },
+      "notarize": false
+    },
+    "dmg": {
+      "title": "Relay ${version}"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "${env.RELAY_UPDATE_URL}"
+      }
+    ]
   }
 }

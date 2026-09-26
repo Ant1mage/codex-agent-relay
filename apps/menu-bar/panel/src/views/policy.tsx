@@ -86,12 +86,12 @@ export function PolicyView({
     setOverrides((current) => ({ ...current, [workspace]: { ...current[workspace], ...change } }))
 
   return (
-    <div className="flex flex-col gap-3">
-      <Card>
+    <div className="flex min-w-0 flex-col gap-3">
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-sm">{t('settings.global')}</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-3">
+        <CardContent className="flex min-w-0 flex-col gap-3">
           <FieldGroup className="gap-3">
             <NumberField
               id="max-runs"
@@ -110,9 +110,10 @@ export function PolicyView({
               onCommit={(value) => setPolicy({ ...policy, maxConcurrentWriters: value })}
             />
             {SWITCHES.map((item) => (
-              <div key={item.key} className="flex items-center justify-between">
-                <Label className="text-xs font-normal">{t(item.label)}</Label>
+              <div key={item.key} className="flex min-w-0 items-center justify-between gap-3">
+                <Label className="min-w-0 truncate text-xs font-normal">{t(item.label)}</Label>
                 <Switch
+                  className="shrink-0"
                   checked={policy[item.key]}
                   onCheckedChange={(checked: boolean) => setPolicy({ ...policy, [item.key]: checked })}
                 />
@@ -122,13 +123,13 @@ export function PolicyView({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-sm">{t('settings.workspaceSection')}</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-3">
+        <CardContent className="flex min-w-0 flex-col gap-3">
           <Select value={workspace} onValueChange={setWorkspace}>
-            <SelectTrigger>
+            <SelectTrigger className="w-full min-w-0">
               <SelectValue placeholder={t('settings.workspace')} />
             </SelectTrigger>
             <SelectContent>
@@ -142,9 +143,10 @@ export function PolicyView({
           {workspace ? (
             <>
               {SWITCHES.map((item) => (
-                <div key={item.key} className="flex items-center justify-between">
-                  <Label className="text-xs font-normal">{t(item.label)}</Label>
+                <div key={item.key} className="flex min-w-0 items-center justify-between gap-3">
+                  <Label className="min-w-0 truncate text-xs font-normal">{t(item.label)}</Label>
                   <Switch
+                    className="shrink-0"
                     checked={override[item.key] ?? policy[item.key]}
                     onCheckedChange={(checked: boolean) => patchOverride({ [item.key]: checked })}
                   />
@@ -172,7 +174,7 @@ export function PolicyView({
         </CardContent>
       </Card>
 
-      <Button size="sm" onClick={() => onSave(policy, overrides)}>
+      <Button size="sm" className="w-full" onClick={() => onSave(policy, overrides)}>
         {t('action.save')}
       </Button>
     </div>

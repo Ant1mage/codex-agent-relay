@@ -2,28 +2,40 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createTranslator } from '@relay/i18n'
 import type { AgentProfile, RelayPolicy, RelayPolicyOverride } from '@relay/protocol'
 import type { CodexStatus, InspectorSnapshot, RelayConfigView } from '@relay/relay-api'
-import { ExternalLink, RefreshCw, ScrollText, X } from 'lucide-react'
+import { AlertTriangle, ExternalLink, RefreshCw, ScrollText, X } from 'lucide-react'
 import { Badge } from './components/ui/badge.js'
 import { Button } from './components/ui/button.js'
 import { ScrollArea } from './components/ui/scroll-area.js'
 import { cn } from './lib/utils.js'
-import { connection, initialTab, locale } from './lib/api.js'
+import {
+  connection,
+  initialIntent,
+  initialProfileId,
+  initialTab,
+  locale,
+  type PanelIntent,
+  type PanelTab,
+} from './lib/api.js'
 import { AgentsView } from './views/agents.js'
 import { CodexView } from './views/codex.js'
 import { PolicyView } from './views/policy.js'
 import { RuntimeView } from './views/runtime.js'
 
-type Tab = 'agents' | 'policy' | 'codex' | 'runtime'
-
 /**
  * Relay's control panel: everything that configures Relay itself lives here, in
  * the menu bar's own window. The web inspector stays a viewer
  * (docs/menu-bar.md 1).
+ *
+ * Layout rules that keep it readable in a 420px popover: one column, every text
+ * node either truncates or wraps, and no element may set its own width from
+ * content (that is what overflowed the Codex tab before).
  */
 export function App() {
   const conn = useMemo(() => connection(), [])
   const t = useMemo(() => createTranslator(locale()), [])
-  const [tab, setTab] = useState<Tab>(() => initialTab())
+  const [tab, setTab] = useState<PanelTab>(() => initialTab())
+  const [intent, setIntent] = useState<PanelIntent | undefined>(() => initialIntent())
+  const [intentProfileId, setIntentProfileId] = useState<string | undefined>(() => initialProfileId())
   const [config, setConfig] = useState<RelayConfigView>()
   const [snapshot, setSnapshot] = useState<InspectorSnapshot>()
   const [codex, setCodex] = useState<CodexStatus>()
@@ -48,6 +60,16 @@ export function App() {
     void reload()
   }, [reload])
 
+  // The tray navigates the open panel through the preload instead of reloading it.
+  useEffect(() => {
+    return window.relayPanel?.onNavigate((request) => {
+      if (request.tab) setTab(request.tab)
+      if (request.intent) setIntent(request.intent)
+      setIntentProfileId(request.profileId)
+      void reload()
+    })
+  }, [reload])
+
   const guard = useCallback(
     async (action: () => Promise<void>) => {
       setBusy(true)
@@ -66,6 +88,7 @@ export function App() {
     (profile: AgentProfile) =>
       guard(async () => {
         setConfig(await conn.client!.saveProfile(profile))
+        setIntent(undefined)
         setNotice(t('panel.saved'))
       }),
     [conn.client, guard, t],
@@ -75,6 +98,7 @@ export function App() {
     (profileId: string) =>
       guard(async () => {
         setConfig(await conn.client!.deleteProfile(profileId))
+        setIntent(undefined)
         setNotice(t('panel.saved'))
       }),
     [conn.client, guard, t],
@@ -89,6 +113,27 @@ export function App() {
     [conn.client, guard, t],
   )
 
+  const saveRuntime = useCallback(
+    (entry: { id: string; adapterId: string; executablePath: string; label?: string }) =>
+      guard(async () => {
+        const result = await conn.client!.saveRuntime(entry)
+        setConfig(result.config)
+        await reload()
+        setNotice(result.probe.ok ? `${t('panel.saved')} · ${result.probe.version ?? ''}` : result.probe.error)
+      }).then(() => undefined),
+    [conn.client, guard, reload, t],
+  )
+
+  const deleteRuntime = useCallback(
+    (runtimeId: string) =>
+      guard(async () => {
+        setConfig(await conn.client!.deleteRuntime(runtimeId))
+        await reload()
+        setNotice(t('panel.saved'))
+      }),
+    [conn.client, guard, reload, t],
+  )
+
   const runCodex = useCallback(
     (action: 'install' | 'repair' | 'update' | 'remove') =>
       guard(async () => {
@@ -97,7 +142,7 @@ export function App() {
         setNotice(result.messages.join(' · '))
         await reload()
       }),
-    [conn.client, guard, reload, t],
+    [conn.client, guard, reload],
   )
 
   const rescan = useCallback(
@@ -112,8 +157,7 @@ export function App() {
 
   const openInspector = useCallback(() => {
     if (!conn.base) return
-    const url = new URL(conn.base)
-    window.open(url.toString(), '_blank')
+    window.open(conn.base, '_blank')
   }, [conn.base])
 
   if (conn.error || !conn.client) {
@@ -124,7 +168,7 @@ export function App() {
     )
   }
 
-  const tabs: Array<{ id: Tab; label: string }> = [
+  const tabs: Array<{ id: PanelTab; label: string }> = [
     { id: 'agents', label: t('nav.agents') },
     { id: 'policy', label: t('panel.policy') },
     { id: 'codex', label: t('menu.codex') },
@@ -133,15 +177,15 @@ export function App() {
 
   return (
     <div className="panel-shell">
-      <header className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <span className="mark-tinted size-3.5 text-foreground" role="img" aria-label="Relay" />
-        <span className="text-xs font-semibold">Relay</span>
+      <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <span className="mark-tinted size-3.5 shrink-0 text-foreground" role="img" aria-label="Relay" />
+        <span className="shrink-0 text-xs font-semibold">Relay</span>
         {snapshot && (
-          <Badge variant={snapshot.codex.configured ? 'secondary' : 'destructive'} className="text-[10px]">
+          <Badge variant={snapshot.codex.configured ? 'secondary' : 'destructive'} className="shrink-0 text-[10px]">
             {snapshot.codex.configured ? t('menu.codexConnected') : t('menu.codexMissing')}
           </Badge>
         )}
-        <span className="ml-auto flex items-center gap-1">
+        <span className="ml-auto flex shrink-0 items-center gap-1">
           <Button variant="ghost" size="icon-xs" title={t('panel.openInspector')} onClick={openInspector}>
             <ExternalLink />
           </Button>
@@ -154,14 +198,17 @@ export function App() {
         </span>
       </header>
 
-      <nav className="flex gap-1 border-b border-border px-2 py-1.5">
+      <nav className="flex shrink-0 gap-1 border-b border-border px-2 py-1.5">
         {tabs.map((item) => (
           <button
             key={item.id}
             type="button"
-            onClick={() => setTab(item.id)}
+            onClick={() => {
+              setTab(item.id)
+              setIntent(undefined)
+            }}
             className={cn(
-              'rounded-md px-2.5 py-1 text-xs transition-colors',
+              'min-w-0 flex-1 truncate rounded-md px-2 py-1 text-xs transition-colors',
               tab === item.id ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent/60',
             )}
           >
@@ -170,15 +217,32 @@ export function App() {
         ))}
       </nav>
 
+      {config && config.warnings.length > 0 && (
+        <div className="shrink-0 space-y-1 border-b border-destructive/40 bg-destructive/10 px-3 py-2">
+          {config.warnings.map((warning) => (
+            <p key={warning} className="flex gap-1.5 text-[11px] leading-snug text-destructive">
+              <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+              <span className="min-w-0 break-words">{warning}</span>
+            </p>
+          ))}
+        </div>
+      )}
+
       <ScrollArea className="min-h-0 flex-1">
-        <div className="p-3">
-          {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
+        <div className="min-w-0 p-3">
+          {error && <p className="mb-2 break-words text-xs text-destructive">{error}</p>}
           {tab === 'agents' && config && (
             <AgentsView
               t={t}
               client={conn.client}
               config={config}
               runtimes={snapshot?.runtimes ?? []}
+              startNew={intent === 'new-agent'}
+              editProfileId={intent === 'edit-agent' ? intentProfileId : undefined}
+              onIntentHandled={() => {
+                setIntent(undefined)
+                setIntentProfileId(undefined)
+              }}
               onSave={saveProfile}
               onDelete={deleteProfile}
             />
@@ -192,18 +256,30 @@ export function App() {
             />
           )}
           {tab === 'codex' && codex && (
-            <CodexView t={t} status={codex} onAction={runCodex} busy={busy} />
+            <CodexView t={t} status={codex} onAction={runCodex} busy={busy} highlightActions={intent === 'codex-actions'} />
           )}
-          {tab === 'runtime' && snapshot && (
-            <RuntimeView t={t} snapshot={snapshot} onRescan={rescan} busy={busy} onOpenInspector={openInspector} />
+          {tab === 'runtime' && snapshot && config && (
+            <RuntimeView
+              t={t}
+              snapshot={snapshot}
+              manualRuntimes={config.manualRuntimes}
+              onRescan={rescan}
+              onSave={saveRuntime}
+              onDelete={deleteRuntime}
+              onProbe={(input) => conn.client!.probeRuntime(input)}
+              startNew={intent === 'add-runtime'}
+              onIntentHandled={() => setIntent(undefined)}
+              busy={busy}
+              onOpenInspector={openInspector}
+            />
           )}
         </div>
       </ScrollArea>
 
       {notice && (
-        <footer className="flex items-center gap-2 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
-          <ScrollText className="size-3" />
-          <span className="line-clamp-2">{notice}</span>
+        <footer className="flex shrink-0 items-start gap-2 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
+          <ScrollText className="mt-0.5 size-3 shrink-0" />
+          <span className="min-w-0 line-clamp-2 break-words">{notice}</span>
         </footer>
       )}
     </div>

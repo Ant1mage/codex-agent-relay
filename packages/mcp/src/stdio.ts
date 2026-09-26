@@ -62,6 +62,26 @@ async function createRuntime(): Promise<RelayRuntime> {
   const detections = await Promise.all(adapters.map((adapter) => adapter.detect()))
   for (const detection of detections) for (const diagnostic of detection.diagnostics) process.stderr.write(`[relay] ${diagnostic}\n`)
   const runtimes = detections.flatMap((detection) => detection.runtimes)
+  // Hand-registered runtimes are additive: detection still owns its own results.
+  for (const entry of config.read({ runtimes }).manualRuntimes) {
+    if (runtimes.some((runtime) => runtime.id === entry.id)) continue
+    const adapter = adapters.find((candidate) => candidate.id === entry.adapterId)
+    runtimes.push({
+      id: entry.id,
+      adapterId: entry.adapterId,
+      executablePath: entry.executablePath,
+      health: 'available',
+      capabilities: adapter?.capabilities() ?? {
+        nonInteractive: true,
+        structuredEvents: false,
+        cwd: true,
+        resume: false,
+        send: false,
+        cancel: false,
+        childSessions: false,
+      },
+    })
+  }
   for (const runtime of runtimes) controller.registerRuntime(runtime)
   applyConfig(controller, config)
   return {

@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3'
 import {
   hostSessionSchema,
   hostSessionUpsertSchema,
@@ -6,13 +5,13 @@ import {
   type HostSessionUpsert,
 } from '@relay/protocol'
 import type { HostSessionStore } from './host-sessions.js'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite.js'
 
 export class SqliteHostSessionStore implements HostSessionStore {
-  readonly #database: Database.Database
+  readonly #database: SqliteDatabase
 
   constructor(path: string) {
-    this.#database = new Database(path)
-    this.#database.pragma('journal_mode = WAL')
+    this.#database = openSqliteDatabase(path)
     this.#database.exec(`
       CREATE TABLE IF NOT EXISTS host_sessions (
         id TEXT PRIMARY KEY,

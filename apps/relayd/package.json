@@ -1,6 +1,6 @@
 {
   "name": "@relay/relayd",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "tsx src/serve.ts",
     "dev": "tsx src/serve.ts",
-    "build": "esbuild src/serve.ts --bundle --platform=node --format=esm --target=node22 --outfile=../../out/relayd/serve.js --sourcemap"
+    "build": "esbuild src/serve.ts --bundle --platform=node --format=esm --target=node22 --outfile=../../out/relayd/serve.js --sourcemap --define:$(node ../../tools/define-version.mjs)"
   },
   "dependencies": {
     "@relay/adapter-antigravity": "workspace:*",

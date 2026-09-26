@@ -10,9 +10,18 @@ import {
   probeDaemon,
   startDaemon,
   stopDaemon,
+  trayStartedDaemon,
   type DaemonProbe,
 } from './daemon.js'
 import { openPanel } from './panel.js'
+import {
+  checkForUpdates,
+  downloadUpdate,
+  installUpdate,
+  onUpdateState,
+  updatesSupported,
+  updateState,
+} from './updater.js'
 import {
   buildMenuBarItems,
   menuBarStatusLabel,
@@ -93,6 +102,11 @@ function view(): MenuBarView {
     daemon: status,
     ...(status === 'running' && probe.menu ? { menu: probe.menu } : {}),
     ...(lastError ?? probe.error ? { error: lastError ?? probe.error } : {}),
+    // An app update replaces the bundle but not the running daemon: say so.
+    ...(probe.versionMismatch && probe.runningVersion && probe.appVersion
+      ? { daemonVersionMismatch: { running: probe.runningVersion, app: probe.appVersion } }
+      : {}),
+    update: updateState(),
     launchAtLogin: app.getLoginItemSettings().openAtLogin,
     browser: browserName(),
   }
@@ -128,7 +142,11 @@ function openInspector(hostSessionId?: string, runId?: string): void {
   openInBrowser(inspectorUrl(info, hostSessionId, runId))
 }
 
-function openControlPanel(tab: 'agents' | 'policy' | 'codex' | 'runtime'): void {
+function openControlPanel(
+  tab: 'agents' | 'policy' | 'codex' | 'runtime',
+  intent?: 'new-agent' | 'edit-agent' | 'add-runtime' | 'codex-actions',
+  profileId?: string,
+): void {
   const info: ServerInfo | undefined = probe.info
   if (!info || !tray) {
     lastError = 'daemon 未运行，无法打开配置面板'
@@ -141,6 +159,8 @@ function openControlPanel(tab: 'agents' | 'policy' | 'codex' | 'runtime'): void 
       token: info.token,
       lang: resolveLocale(app.getLocale()),
       tab,
+      ...(intent ? { intent } : {}),
+      ...(profileId ? { profileId } : {}),
     })
   } catch (error) {
     lastError = error instanceof Error ? error.message : String(error)
@@ -177,7 +197,7 @@ function dispatch(action: MenuBarAction): void {
       openInspector(action.hostSessionId, action.runId)
       return
     case 'open-panel':
-      openControlPanel(action.tab)
+      openControlPanel(action.tab, action.intent, action.profileId)
       return
     case 'rescan':
       runClientAction((relay) => relay.refresh(), 'rescan')
@@ -222,6 +242,19 @@ function dispatch(action: MenuBarAction): void {
     case 'refresh':
       void refresh(true)
       return
+    case 'check-updates':
+      void checkForUpdates().then(() => refresh(true))
+      return
+    case 'download-update':
+      void downloadUpdate().then(() => refresh(true))
+      return
+    case 'install-update': {
+      // The updater replaces the bundle on quit; the daemon we started must go
+      // first, or the new app would keep talking to the old daemon.
+      if (probe.verified && trayStartedDaemon()) stopDaemon(probe.info)
+      installUpdate()
+      return
+    }
     case 'toggle-launch-at-login':
       app.setLoginItemSettings({ openAtLogin: !app.getLoginItemSettings().openAtLogin })
       void refresh(true)
@@ -237,7 +270,11 @@ function dispatch(action: MenuBarAction): void {
  * (docs/menu-bar.md 8). A packaged build never opens a menu on its own.
  */
 function previewIfRequested(): void {
-  if (app.isPackaged) return
+  // Opt-in only, and usable in a packaged build too: this is how a support
+  // request or a release check gets a picture of the real menu.
+  const wanted =
+    process.env.RELAY_MENU_BAR_PREVIEW === '1' || process.env.RELAY_PANEL_PREVIEW === '1'
+  if (!wanted) return
   const delay = Number(process.env.RELAY_MENU_BAR_PREVIEW_DELAY_MS ?? 1_500)
   if (process.env.RELAY_MENU_BAR_PREVIEW === '1') {
     setTimeout(() => tray?.popUpContextMenu(), Number.isFinite(delay) ? delay : 1_500)
@@ -245,7 +282,11 @@ function previewIfRequested(): void {
   if (process.env.RELAY_PANEL_PREVIEW === '1') {
     const panelDelay = Number(process.env.RELAY_PANEL_PREVIEW_DELAY_MS ?? 1_200)
     setTimeout(
-      () => openControlPanel((process.env.RELAY_PANEL_PREVIEW_TAB as 'agents') ?? 'agents'),
+      () =>
+        openControlPanel(
+          (process.env.RELAY_PANEL_PREVIEW_TAB as 'agents') ?? 'agents',
+          process.env.RELAY_PANEL_PREVIEW_INTENT as 'new-agent' | undefined,
+        ),
       Number.isFinite(panelDelay) ? panelDelay : 1_200,
     )
   }
@@ -262,7 +303,17 @@ void app.whenReady().then(async () => {
   }
   tray = new Tray(icon)
   tray.on('double-click', () => openInspector(probe.menu?.sessions[0]?.id))
+  // The updater reports progress into the menu, so any change repaints it.
+  onUpdateState(() => void refresh(true))
   await refresh(true)
+  // Check once at launch, like any other Mac app; the menu shows the result.
+  if (updatesSupported()) void checkForUpdates().then(() => refresh(true))
+  // relayd is this app's own backend, not a service the user has to remember to
+  // start: bring it up once at launch unless something is already answering.
+  if (probe.status !== 'running' && process.env.RELAY_NO_AUTOSTART !== '1') {
+    lastError = startDaemon()
+    await refresh(true)
+  }
   timer = setInterval(() => void refresh(), POLL_MS)
   timer.unref?.()
   previewIfRequested()
@@ -272,6 +323,9 @@ app.on('before-quit', () => {
   if (timer) clearInterval(timer)
   tray?.destroy()
   tray = undefined
+  // Only the daemon this app started is stopped: one the user launched keeps
+  // running (and keeps the event log being written).
+  if (probe.verified && trayStartedDaemon()) stopDaemon(probe.info)
 })
 
 // The tray owns the process lifetime; there are no windows to close it.

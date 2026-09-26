@@ -10,7 +10,7 @@ import { GeminiAdapter } from '@relay/adapter-gemini'
 import { KimiAdapter } from '@relay/adapter-kimi'
 import { ZaiAdapter } from '@relay/adapter-zai'
 import type { AgentAdapter } from '@relay/adapter-sdk'
-import { RelayConfigStore, relayHome } from '@relay/config'
+import { RelayConfigStore, relayHome, relayVersion, runsOnElectron, type ManualRuntime } from '@relay/config'
 import type { AgentProfile, Runtime } from '@relay/protocol'
 import type { CodexAction, CodexCheck, CodexStatus, InstallResult } from '@relay/relay-api'
 
@@ -35,6 +35,11 @@ export interface Environment {
   diagnostics: string[]
 }
 
+/** The adapter ids the panel may offer when registering a runtime by hand. */
+export function adapterIds(): string[] {
+  return adapters().map((adapter) => adapter.id)
+}
+
 function adapters(): AgentAdapter[] {
   return [
     new DeepSeekAdapter(),
@@ -45,14 +50,71 @@ function adapters(): AgentAdapter[] {
   ]
 }
 
+/**
+ * Runs the CLI once to learn its version. Used for hand-registered runtimes so
+ * the panel can tell "registered but broken" from "registered and working"
+ * before anything is saved.
+ */
+export async function probeExecutable(executablePath: string): Promise<{ ok: boolean; version?: string; error?: string }> {
+  try {
+    const { stdout } = await execFileAsync(executablePath, ['--version'], { timeout: PROBE_TIMEOUT_MS })
+    const version = stdout.trim().split('\n')[0] ?? ''
+    return { ok: true, ...(version ? { version } : {}) }
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & { stderr?: string }
+    const message =
+      failure.code === 'ENOENT'
+        ? `找不到可执行文件: ${executablePath}`
+        : (failure.stderr?.trim() || failure.message || String(error)).slice(0, 200)
+    return { ok: false, error: message }
+  }
+}
+
+/** Builds a Runtime from a hand-registered entry, using its adapter's declared capabilities. */
+export function runtimeFromManual(entry: ManualRuntime, probe: { version?: string }): Runtime {
+  const adapter = adapters().find((candidate) => candidate.id === entry.adapterId)
+  return {
+    id: entry.id,
+    adapterId: entry.adapterId,
+    executablePath: entry.executablePath,
+    ...(probe.version ? { version: probe.version } : {}),
+    health: 'available',
+    capabilities: adapter?.capabilities() ?? {
+      nonInteractive: true,
+      structuredEvents: false,
+      cwd: true,
+      resume: false,
+      send: false,
+      cancel: false,
+      childSessions: false,
+    },
+  }
+}
+
+/**
+ * Runtimes on this machine: what the adapters found, plus anything the user
+ * registered by hand. Manual entries are additive — detection stays the source
+ * of truth for the CLIs it knows how to find.
+ */
 export async function detectEnvironment(
   config: RelayConfigStore = new RelayConfigStore(),
 ): Promise<Environment> {
   const detected = await Promise.all(adapters().map((adapter) => adapter.detect()))
   const runtimes = detected.flatMap((result) => result.runtimes)
   const diagnostics = detected.flatMap((result) => result.diagnostics)
-  const profiles = config.read({ runtimes }).profiles
-  return { runtimes, profiles, diagnostics }
+  const loaded = config.read({ runtimes })
+
+  for (const entry of loaded.manualRuntimes) {
+    if (runtimes.some((runtime) => runtime.id === entry.id)) continue
+    const probe = await probeExecutable(entry.executablePath)
+    if (!probe.ok) {
+      diagnostics.push(`手动运行时 ${entry.id} 不可用：${probe.error ?? 'unknown'}`)
+      continue
+    }
+    runtimes.push(runtimeFromManual(entry, probe))
+  }
+
+  return { runtimes, profiles: loaded.profiles, diagnostics }
 }
 
 /** Model and reasoning values a runtime's CLI advertises, for the profile editor. */
@@ -192,16 +254,33 @@ async function codex(executable: CodexExecutable, args: string[]): Promise<{ ok:
  * release install never depends on corepack, pnpm or tsx. A source checkout runs
  * the workspace command instead, which keeps edits live during development.
  */
-export function desiredMcpCommand(): { command: string; args: string[] } {
-  const bundled = process.env.RELAY_MCP_ENTRY ?? join(import.meta.dirname, '..', 'mcp', 'stdio.js')
+export interface McpCommand {
+  command: string
+  args: string[]
+  /**
+   * Extra environment for the MCP process. A packaged Relay runs the MCP with
+   * Electron's binary, which only behaves as Node when ELECTRON_RUN_AS_NODE=1;
+   * a source checkout runs it under node/tsx and needs nothing.
+   */
+  env?: Record<string, string>
+}
+
+export function desiredMcpCommand(): McpCommand {
+  const packagedRoot = process.env.RELAY_RESOURCES_DIR
+  const bundled =
+    process.env.RELAY_MCP_ENTRY ??
+    (packagedRoot ? join(packagedRoot, 'mcp', 'stdio.js') : join(import.meta.dirname, '..', 'mcp', 'stdio.js'))
   const fromSource = import.meta.dirname.endsWith('/src')
-  if ((!fromSource || process.env.RELAY_MCP_ENTRY) && existsSync(bundled)) {
-    return { command: process.execPath, args: [bundled] }
+  if ((!fromSource || process.env.RELAY_MCP_ENTRY || packagedRoot) && existsSync(bundled)) {
+    return runsOnElectron()
+      ? { command: process.execPath, args: [bundled], env: { ELECTRON_RUN_AS_NODE: '1' } }
+      : { command: process.execPath, args: [bundled] }
   }
   const sources = relaySources()
   return { command: 'corepack', args: ['pnpm', '--dir', sources?.root ?? process.cwd(), 'mcp:dev'] }
 }
 
+/** The interpreter and file an MCP entry must match to count as configured. */
 function mcpEntryFile(): string | undefined {
   const { command, args } = desiredMcpCommand()
   return command === process.execPath && args[0] ? args[0] : undefined
@@ -522,7 +601,16 @@ export async function installCodex(): Promise<InstallResult> {
     entry?.args.length === desired.args.length && entry.args.every((arg, index) => arg === desired.args[index])
   if (!entry || entry.command !== desired.command || !sameArgs) {
     if (entry) await codex(executable, ['mcp', 'remove', PLUGIN_NAME])
-    const mcpAdded = await codex(executable, ['mcp', 'add', PLUGIN_NAME, '--', desired.command, ...desired.args])
+    const envArgs = Object.entries(desired.env ?? {}).flatMap(([key, value]) => ['--env', key + '=' + value])
+    const mcpAdded = await codex(executable, [
+      'mcp',
+      'add',
+      PLUGIN_NAME,
+      ...envArgs,
+      '--',
+      desired.command,
+      ...desired.args,
+    ])
     messages.push(mcpAdded.ok ? '已配置 relay MCP server' : `MCP 配置失败: ${mcpAdded.out.slice(0, 200)}`)
   } else {
     messages.push('relay MCP server 已是当前配置')

@@ -32,6 +32,13 @@ export interface RelayServerOptions {
   /** Codex integration lifecycle. */
   runCodex(action: CodexAction): Promise<InstallResult>
   runtimeOptions(runtimeId: string): Promise<RuntimeOptionsView>
+  adapters(): string[]
+  probeRuntime(input: { adapterId: string; executablePath: string }): Promise<{ ok: boolean; version?: string; error?: string }>
+  saveRuntime(entry: { id: string; adapterId: string; executablePath: string; label?: string }): Promise<{
+    config: RelayConfigView
+    probe: { ok: boolean; version?: string; error?: string }
+  }>
+  deleteRuntime(runtimeId: string): RelayConfigView
   saveProfile(profile: AgentProfile): RelayConfigView
   deleteProfile(profileId: string): RelayConfigView
   savePolicy(input: { policy: RelayPolicy; workspaceOverrides: Record<string, RelayPolicyOverride> }): RelayConfigView
@@ -236,6 +243,11 @@ export function createRelayServer(options: RelayServerOptions): Server {
       return true
     }
 
+    if (path === '/api/adapters') {
+      json(response, 200, { adapters: options.adapters() })
+      return true
+    }
+
     const profile = /^\/api\/config\/profiles\/([^/]+)$/.exec(path)
     if (profile) {
       const id = decodeURIComponent(profile[1] ?? '')
@@ -264,6 +276,38 @@ export function createRelayServer(options: RelayServerOptions): Server {
     if (runtimeOptions) {
       json(response, 200, await options.runtimeOptions(decodeURIComponent(runtimeOptions[1] ?? '')))
       return true
+    }
+
+    if (path === '/api/runtimes/probe' && request.method === 'POST') {
+      const body = (await readJson(request)) as { adapterId?: string; executablePath?: string } | undefined
+      if (!body?.executablePath) throw new Error('Missing executablePath')
+      json(response, 200, await options.probeRuntime({
+        adapterId: body.adapterId ?? '',
+        executablePath: body.executablePath,
+      }))
+      return true
+    }
+
+    const runtime = /^\/api\/config\/runtimes\/([^/]+)$/.exec(path)
+    if (runtime) {
+      const id = decodeURIComponent(runtime[1] ?? '')
+      if (request.method === 'PUT') {
+        const body = (await readJson(request)) as
+          | { adapterId?: string; executablePath?: string; label?: string }
+          | undefined
+        if (!body?.adapterId || !body.executablePath) throw new Error('Missing runtime body')
+        json(response, 200, await options.saveRuntime({
+          id,
+          adapterId: body.adapterId,
+          executablePath: body.executablePath,
+          ...(body.label ? { label: body.label } : {}),
+        }))
+        return true
+      }
+      if (request.method === 'DELETE') {
+        json(response, 200, options.deleteRuntime(id))
+        return true
+      }
     }
 
     if (path === '/api/diagnostics') {

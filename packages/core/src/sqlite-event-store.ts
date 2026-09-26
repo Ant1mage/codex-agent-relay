@@ -1,6 +1,6 @@
-import Database from 'better-sqlite3'
 import { RelayError, relayEventSchema, type RelayEvent } from '@relay/protocol'
 import type { EventStore } from './memory-event-store.js'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite.js'
 
 interface EventRow {
   id: string
@@ -15,17 +15,16 @@ interface EventRow {
 }
 
 export class SqliteEventStore implements EventStore {
-  readonly #database: Database.Database
+  readonly #database: SqliteDatabase
 
   constructor(path: string) {
-    this.#database = new Database(path)
-    this.#database.pragma('journal_mode = WAL')
-    this.#database.pragma('foreign_keys = ON')
+    this.#database = openSqliteDatabase(path)
+    this.#database.exec('PRAGMA foreign_keys = ON')
     this.#migrate()
   }
 
   #migrate(): void {
-    const version = this.#database.pragma('user_version', { simple: true }) as number
+    const version = this.#database.pragmaValue('user_version')
     if (version > 2) throw new Error(`Unsupported Relay database version ${version}`)
     if (version === 0) {
       this.#database.exec(`
@@ -58,8 +57,8 @@ export class SqliteEventStore implements EventStore {
     const transaction = this.#database.transaction(() => {
       const last = this.#database
         .prepare('SELECT MAX(seq) AS seq FROM relay_events WHERE run_id = ?')
-        .get(event.runId) as { seq: number | null }
-      const expected = (last.seq ?? 0) + 1
+        .get(event.runId) as { seq: number | null } | undefined
+      const expected = ((last?.seq ?? 0) as number) + 1
       if (event.seq !== expected) {
         throw new RelayError(
           'EVENT_SEQUENCE_CONFLICT',
@@ -90,7 +89,7 @@ export class SqliteEventStore implements EventStore {
   list(runId: string): RelayEvent[] {
     const rows = this.#database
       .prepare('SELECT * FROM relay_events WHERE run_id = ? ORDER BY seq ASC')
-      .all(runId) as EventRow[]
+      .all(runId) as unknown as EventRow[]
     return rows.map((row) =>
       relayEventSchema.parse({
         id: row.id,
@@ -111,14 +110,14 @@ export class SqliteEventStore implements EventStore {
   listRunIds(): string[] {
     const rows = this.#database
       .prepare('SELECT DISTINCT run_id FROM relay_events ORDER BY timestamp ASC')
-      .all() as Array<{ run_id: string }>
+      .all() as unknown as Array<{ run_id: string }>
     return rows.map((row) => row.run_id)
   }
 
   findRunIdByWorker(workerSessionId: string): string | undefined {
     const row = this.#database
       .prepare('SELECT run_id FROM relay_events WHERE worker_session_id = ? LIMIT 1')
-      .get(workerSessionId) as { run_id: string } | undefined
+      .get(workerSessionId) as unknown as { run_id: string } | undefined
     return row?.run_id
   }
 

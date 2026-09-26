@@ -103,15 +103,48 @@ export const menuViewSchema = z.object({
 })
 export type MenuView = z.infer<typeof menuViewSchema>
 
+/** A runtimes.json entry: a CLI the user registered by hand. */
+export const manualRuntimeSchema = z.object({
+  id: z.string().min(1),
+  adapterId: z.string().min(1),
+  executablePath: z.string().min(1),
+  label: z.string().min(1).optional(),
+})
+export type ManualRuntimeView = z.infer<typeof manualRuntimeSchema>
+
 /** Relay's own configuration as it exists on disk right now. */
 export const relayConfigSchema = z.object({
   profiles: agentProfileSchema.array(),
   policy: relayPolicySchema,
   workspaceOverrides: z.record(z.string(), relayPolicyOverrideSchema),
-  /** Changes whenever either file changes; clients reload when it differs. */
+  /** Hand-registered runtimes, merged with what the scanner finds. */
+  manualRuntimes: manualRuntimeSchema.array(),
+  /**
+   * Unparseable or invalid configuration files. The daemon keeps running on
+   * defaults; the panel shows this instead of pretending nothing happened.
+   */
+  warnings: z.string().array(),
+  /** Changes whenever any configuration file changes. */
   revision: z.string(),
 })
 export type RelayConfigView = z.infer<typeof relayConfigSchema>
+
+export const adapterCatalogSchema = z.object({ adapters: z.string().array() })
+export type AdapterCatalog = z.infer<typeof adapterCatalogSchema>
+
+export const runtimeProbeSchema = z.object({
+  ok: z.boolean(),
+  version: z.string().optional(),
+  error: z.string().optional(),
+})
+export type RuntimeProbe = z.infer<typeof runtimeProbeSchema>
+
+/** A runtime write answers with the new configuration and what was verified. */
+export const runtimeMutationSchema = z.object({
+  config: relayConfigSchema,
+  probe: runtimeProbeSchema,
+})
+export type RuntimeMutation = z.infer<typeof runtimeMutationSchema>
 
 export const runtimeOptionsViewSchema = runtimeOptionsSchema
 export type RuntimeOptionsView = z.infer<typeof runtimeOptionsViewSchema>

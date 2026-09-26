@@ -1,5 +1,6 @@
 import type { AgentProfile, RelayPolicy, RelayPolicyOverride } from '@relay/protocol'
 import {
+  adapterCatalogSchema,
   cancelResultSchema,
   eventBatchSchema,
   healthSchema,
@@ -7,9 +8,12 @@ import {
   menuViewSchema,
   refreshResultSchema,
   relayConfigSchema,
+  runtimeMutationSchema,
   runtimeOptionsViewSchema,
+  runtimeProbeSchema,
   snapshotSchema,
   streamMessageSchema,
+  type AdapterCatalog,
   type CancelResult,
   type CodexAction,
   type EventBatch,
@@ -19,7 +23,9 @@ import {
   type MenuView,
   type RefreshResult,
   type RelayConfigView,
+  type RuntimeMutation,
   type RuntimeOptionsView,
+  type RuntimeProbe,
   type StreamMessage,
 } from './contract.js'
 
@@ -162,6 +168,25 @@ export class RelayClient {
   /** Model and reasoning values this runtime's CLI actually advertises. */
   runtimeOptions(runtimeId: string): Promise<RuntimeOptionsView> {
     return this.#json(`/api/runtimes/${encodeURIComponent(runtimeId)}/options`, runtimeOptionsViewSchema)
+  }
+
+  /** Registers a runtime by hand; the daemon probes it before saving. */
+  saveRuntime(runtime: { id: string; adapterId: string; executablePath: string; label?: string }): Promise<RuntimeMutation> {
+    return this.#send('PUT', `/api/config/runtimes/${encodeURIComponent(runtime.id)}`, runtimeMutationSchema, runtime)
+  }
+
+  deleteRuntime(runtimeId: string): Promise<RelayConfigView> {
+    return this.#send('DELETE', `/api/config/runtimes/${encodeURIComponent(runtimeId)}`, relayConfigSchema)
+  }
+
+  /** Every adapter Relay can drive, including CLIs it did not detect. */
+  adapters(): Promise<AdapterCatalog> {
+    return this.#json('/api/adapters', adapterCatalogSchema)
+  }
+
+  /** Checks an executable before it is saved, so the form can report failures. */
+  probeRuntime(input: { adapterId: string; executablePath: string }): Promise<RuntimeProbe> {
+    return this.#send('POST', '/api/runtimes/probe', runtimeProbeSchema, input)
   }
 
   /** Re-detects runtimes and re-reads configuration. */

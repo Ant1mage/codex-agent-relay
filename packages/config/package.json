@@ -1,6 +1,6 @@
 {
   "name": "@relay/config",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@relay/core": "workspace:*",
-    "@relay/protocol": "workspace:*"
+    "@relay/protocol": "workspace:*",
+    "zod": "^4.1.0"
   }
 }

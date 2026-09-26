@@ -1,6 +1,6 @@
 {
   "name": "@relay/mcp",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
@@ -19,7 +19,7 @@
     "zod": "^4.1.0"
   },
   "scripts": {
-    "build": "esbuild src/stdio.ts --bundle --platform=node --format=esm --target=node22 --external:better-sqlite3 --outfile=../../out/mcp/stdio.js --sourcemap"
+    "build": "esbuild src/stdio.ts --bundle --platform=node --format=esm --target=node22 --outfile=../../out/mcp/stdio.js --sourcemap --define:$(node ../../tools/define-version.mjs)"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

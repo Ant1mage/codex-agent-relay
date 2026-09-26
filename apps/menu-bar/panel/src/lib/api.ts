@@ -11,6 +11,9 @@ export interface PanelConnection {
   error?: string
 }
 
+export type PanelTab = 'agents' | 'policy' | 'codex' | 'runtime'
+export type PanelIntent = 'new-agent' | 'edit-agent' | 'add-runtime' | 'codex-actions'
+
 export function parseToken(href: string): string | undefined {
   const match = /[#&?]t=([^&]+)/.exec(href)
   if (!match?.[1]) return undefined
@@ -18,10 +21,7 @@ export function parseToken(href: string): string | undefined {
   return value.length > 0 ? value : undefined
 }
 
-export function connection(
-  href = window.location.href,
-  search = window.location.search,
-): PanelConnection {
+export function connection(href = window.location.href, search = window.location.search): PanelConnection {
   const params = new URLSearchParams(search)
   const base = params.get('base') ?? window.location.origin
   const token = parseToken(href)
@@ -33,7 +33,18 @@ export function locale(search = window.location.search): 'en' | 'zh-CN' {
   return new URLSearchParams(search).get('lang') === 'en' ? 'en' : 'zh-CN'
 }
 
-export function initialTab(search = window.location.search): 'agents' | 'policy' | 'codex' | 'runtime' {
+export function initialTab(search = window.location.search): PanelTab {
   const tab = new URLSearchParams(search).get('tab')
   return tab === 'policy' || tab === 'codex' || tab === 'runtime' ? tab : 'agents'
+}
+
+export function initialIntent(search = window.location.search): PanelIntent | undefined {
+  const intent = new URLSearchParams(search).get('intent')
+  return intent === 'new-agent' || intent === 'edit-agent' || intent === 'add-runtime' || intent === 'codex-actions'
+    ? intent
+    : undefined
+}
+
+export function initialProfileId(search = window.location.search): string | undefined {
+  return new URLSearchParams(search).get('profileId') ?? undefined
 }

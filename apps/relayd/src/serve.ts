@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import type { Server } from 'node:http'
 import { dirname, join } from 'node:path'
-import { RelayConfigStore, relayHome, type RelayConfig } from '@relay/config'
+import { RelayConfigStore, relayHome, relayVersion, resourcesDir, type RelayConfig } from '@relay/config'
 import type { CodexStatus } from '@relay/relay-api'
 import { RelayClient } from '@relay/relay-api'
 import {
@@ -17,8 +17,10 @@ import {
   writeServerInfo,
 } from '@relay/relay-api/server-info'
 import {
+  adapterIds,
   codexStatus,
   detectEnvironment,
+  probeExecutable,
   runCodexAction,
   runtimeOptions,
   type Environment,
@@ -41,13 +43,17 @@ const STARTUP_LOCK_MS = 3_000
 const STALE_LOCK_MS = 10_000
 
 function packageVersion(): string {
+  // Bundles carry the version as a compile-time constant; a source checkout
+  // falls back to its own package.json.
+  const injected = relayVersion()
+  if (injected !== '0.0.0-dev') return injected
   try {
     const parsed = JSON.parse(readFileSync(join(import.meta.dirname, '../package.json'), 'utf8')) as {
       version?: string
     }
-    return parsed.version ?? '0.0.0'
+    return parsed.version ?? injected
   } catch {
-    return '0.0.0'
+    return injected
   }
 }
 
@@ -56,7 +62,9 @@ function packageVersion(): string {
  * apps/web/out. RELAY_WEB_ROOT overrides both.
  */
 function webRoot(): string {
+  const packaged = resourcesDir()
   const candidates = [
+    packaged ? join(packaged, 'relayd', 'web') : undefined,
     process.env.RELAY_WEB_ROOT,
     join(import.meta.dirname, 'web'),
     join(import.meta.dirname, '../../web/out'),
@@ -71,12 +79,14 @@ function webRoot(): string {
       }
     }
   }
-  return candidates[1] ?? join(import.meta.dirname, 'web')
+  return join(import.meta.dirname, 'web')
 }
 
 /** The control panel ships beside the daemon; source checkouts keep it in the tray's out/. */
 function panelRoot(): string {
+  const packaged = resourcesDir()
   const candidates = [
+    packaged ? join(packaged, 'relayd', 'panel') : undefined,
     process.env.RELAY_PANEL_ROOT,
     join(import.meta.dirname, 'panel'),
     join(import.meta.dirname, '../../menu-bar/out/panel'),
@@ -90,7 +100,7 @@ function panelRoot(): string {
       // Try the next location.
     }
   }
-  return candidates[1] ?? join(import.meta.dirname, 'panel')
+  return join(import.meta.dirname, 'panel')
 }
 
 function parsePort(): number {
@@ -224,6 +234,22 @@ const server = createRelayServer({
     return result
   },
   runtimeOptions: (runtimeId) => runtimeOptions(runtimeId, environment.runtimes),
+  adapters: () => adapterIds(),
+  probeRuntime: (input) => probeExecutable(input.executablePath),
+  saveRuntime: async (entry) => {
+    const probe = await probeExecutable(entry.executablePath)
+    if (!probe.ok) return { config: config.read({ runtimes: environment.runtimes }), probe }
+    const next = config.upsertManualRuntime(entry)
+    environment = await detectEnvironment(config)
+    store.setEnvironment(environment)
+    return { config: next, probe }
+  },
+  deleteRuntime: (runtimeId) => {
+    const next = config.removeManualRuntime(runtimeId)
+    environment = { ...environment, runtimes: environment.runtimes.filter((item) => item.id !== runtimeId) }
+    store.setEnvironment(environment)
+    return next
+  },
   saveProfile: (profile) => applyConfig(config.upsertProfile(profile, { runtimes: environment.runtimes })),
   deleteProfile: (profileId) => applyConfig(config.removeProfile(profileId)),
   savePolicy: (input) =>

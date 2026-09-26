@@ -19,8 +19,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build:web": "pnpm --filter @relay/web build && pnpm --filter @relay/menu-bar build:panel && rm -rf out/relayd && mkdir -p out/relayd && cp -R apps/web/out out/relayd/web && cp -R apps/menu-bar/out/panel out/relayd/panel",
     "build:relayd": "pnpm --filter @relay/relayd build",
-    "build:mcp": "pnpm --filter @relay/mcp build && node tools/link-native-deps.mjs",
-    "build:menubar": "pnpm --filter @relay/menu-bar build"
+    "build:mcp": "pnpm --filter @relay/mcp build",
+    "build:menubar": "pnpm --filter @relay/menu-bar build",
+    "pack:mac": "pnpm build && pnpm --filter @relay/menu-bar exec electron-builder --mac --arm64 --publish never",
+    "pack:dir": "pnpm build && pnpm --filter @relay/menu-bar exec electron-builder --mac --arm64 --dir --publish never",
+    "release:mac": "pnpm build && RELAY_UPDATE_URL=$RELAY_UPDATE_URL pnpm --filter @relay/menu-bar exec electron-builder --mac --arm64 --publish always"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -35,5 +38,6 @@
       "electron",
       "esbuild"
     ]
-  }
+  },
+  "version": "0.1.0"
 }

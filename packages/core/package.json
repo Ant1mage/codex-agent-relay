@@ -1,6 +1,6 @@
 {
   "name": "@relay/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "@relay/adapter-sdk": "workspace:*",
-    "@relay/protocol": "workspace:*",
-    "better-sqlite3": "^12.4.1"
+    "@relay/protocol": "workspace:*"
   }
 }

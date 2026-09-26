@@ -23,6 +23,15 @@ export interface DaemonProbe {
    * and "already running" both key off this: a PID on its own proves nothing.
    */
   verified: boolean
+  /**
+   * The daemon answered, but with a different Relay version than this app. After
+   * an update the previous version keeps running until it is restarted, and the
+   * menu has to say so rather than driving a mismatched API.
+   */
+  versionMismatch?: boolean
+  /** Versions on both sides, for the mismatch message. */
+  runningVersion?: string
+  appVersion?: string
 }
 
 const BROWSERS = ['Microsoft Edge', 'Google Chrome', 'Chromium', 'Brave Browser']
@@ -38,17 +47,51 @@ export function repoRoot(): string | undefined {
   return undefined
 }
 
+/**
+ * Where the runtime files live: Contents/Resources inside a packaged app, the
+ * build tree in development. The daemon is told about it explicitly instead of
+ * guessing a path relative to a bundle file (docs/menu-bar.md 5).
+ */
+export function resourcesDir(): string {
+  if (app.isPackaged) return process.resourcesPath
+  const root = repoRoot()
+  return root ? join(root, 'out') : join(process.cwd(), 'out')
+}
+
+interface DaemonCommand {
+  command: string
+  args: string[]
+  cwd?: string
+  env: NodeJS.ProcessEnv
+}
+
 /** The bundled daemon in a packaged app, the workspace command in development. */
-function daemonCommand(): { command: string; args: string[]; cwd?: string } | undefined {
+function daemonCommand(): DaemonCommand | undefined {
   const override = process.env.RELAY_DAEMON_COMMAND
-  if (override) return { command: override, args: [] }
+  if (override) return { command: override, args: [], env: {} }
+  const resources = resourcesDir()
   const bundled = [
+    join(resources, 'relayd', 'serve.js'),
     join(import.meta.dirname, 'relayd', 'serve.js'),
     join(import.meta.dirname, '..', 'relayd', 'serve.js'),
   ].find((candidate) => existsSync(candidate))
-  if (bundled) return { command: process.execPath, args: [bundled] }
+  if (bundled) {
+    // Electron's binary is the only interpreter a packaged app can count on;
+    // with ELECTRON_RUN_AS_NODE=1 it behaves as plain Node.
+    const usesElectron = app.isPackaged || /Electron/i.test(process.execPath)
+    return {
+      command: process.execPath,
+      args: [bundled],
+      env: {
+        ...(usesElectron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+        RELAY_RESOURCES_DIR: resources,
+      },
+    }
+  }
   const root = repoRoot()
-  return root ? { command: 'corepack', args: ['pnpm', '--dir', root, 'relayd'], cwd: root } : undefined
+  return root
+    ? { command: 'corepack', args: ['pnpm', '--dir', root, 'relayd'], cwd: root, env: {} }
+    : undefined
 }
 
 function installedBrowser(): string | undefined {
@@ -98,7 +141,17 @@ export async function probeDaemon(): Promise<DaemonProbe> {
     if (!verified) {
       return { status: 'stopped', info, error: 'server.json 与运行的 daemon 不匹配（已过期）', verified: false }
     }
-    return { status: 'running', info, menu, verified: true }
+    const appVersion = app.getVersion()
+    const versionMismatch = Boolean(appVersion) && health.version !== appVersion
+    return {
+      status: 'running',
+      info,
+      menu,
+      verified: true,
+      ...(versionMismatch ? { versionMismatch: true } : {}),
+      runningVersion: health.version,
+      appVersion,
+    }
   } catch (error) {
     return {
       status: 'stopped',
@@ -121,9 +174,10 @@ export function startDaemon(): string | undefined {
     const child = spawn(resolved.command, resolved.args, {
       detached: true,
       stdio: 'ignore',
-      env: process.env,
+      env: { ...process.env, ...resolved.env },
       ...(resolved.cwd ? { cwd: resolved.cwd } : {}),
     })
+    startedByTray = true
     child.on('error', (error) => {
       process.stderr.write(`[relay] relayd failed to start: ${error.message}\n`)
     })
@@ -132,6 +186,16 @@ export function startDaemon(): string | undefined {
   } catch (error) {
     return error instanceof Error ? error.message : String(error)
   }
+}
+
+/**
+ * True when this tray process launched the running daemon. Only that daemon is
+ * stopped on quit: a daemon the user started themselves keeps serving.
+ */
+let startedByTray = false
+
+export function trayStartedDaemon(): boolean {
+  return startedByTray
 }
 
 /** Only ever called for a daemon whose nonce was verified. */

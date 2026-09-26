@@ -141,6 +141,15 @@ const en = {
   'session.idCopied': 'Session ID copied',
   'session.stopped': 'Stop requested for {count} workers',
   'session.stoppedNone': 'No running workers',
+  'panel.addRuntime': 'Add runtime',
+  'panel.runtime.manual': 'Manually added',
+  'panel.runtime.pathHint': 'Absolute path to the CLI executable. Relay runs it once with --version before saving.',
+  'panel.runtime.check': 'Test',
+  'panel.runtime.checking': 'Testing…',
+  'panel.runtime.probeOk': 'Executable responded',
+  'panel.editAgent': 'Edit agent…',
+  'panel.addAgent': 'New agent…',
+  'panel.addRuntimeMenu': 'Add runtime…',
   'panel.policy': 'Policy',
   'panel.runtime': 'Runtimes',
   'panel.newAgent': 'New agent',
@@ -200,6 +209,14 @@ const en = {
   'menu.startDaemon': 'Start log service',
   'menu.restartDaemon': 'Restart log service',
   'menu.starting': 'Starting…',
+  'menu.checkUpdates': 'Check for updates…',
+  'menu.downloadUpdate': 'Download update',
+  'menu.installUpdate': 'Restart and install',
+  'menu.updateAvailable': 'Update {version} available',
+  'menu.updateNone': 'Relay is up to date',
+  'menu.updateChecking': 'Checking for updates…',
+  'menu.updateUnsupported': 'Updates need an installed build',
+  'menu.daemonStale': 'Log service is version {running} (app {app}) — restart it',
   'menu.openPanel': 'Control panel…',
   'menu.codexSettings': 'Codex integration settings…',
   'menu.repairCodex': 'Repair integration',
@@ -425,6 +442,15 @@ const zhCN: Messages = {
   'session.idCopied': '已复制会话 ID',
   'session.stopped': '已请求停止 {count} 个 worker',
   'session.stoppedNone': '没有正在运行的 worker',
+  'panel.addRuntime': '添加运行时',
+  'panel.runtime.manual': '手动添加',
+  'panel.runtime.pathHint': 'CLI 可执行文件的绝对路径。保存前 Relay 会用 --version 跑一次验证。',
+  'panel.runtime.check': '检测',
+  'panel.runtime.checking': '检测中…',
+  'panel.runtime.probeOk': '可执行文件已响应',
+  'panel.editAgent': '编辑智能体…',
+  'panel.addAgent': '新建智能体…',
+  'panel.addRuntimeMenu': '添加运行时…',
   'panel.policy': '策略',
   'panel.runtime': '运行时',
   'panel.newAgent': '新建智能体',
@@ -483,6 +509,14 @@ const zhCN: Messages = {
   'menu.startDaemon': '启动日志服务',
   'menu.restartDaemon': '重启日志服务',
   'menu.starting': '正在启动…',
+  'menu.checkUpdates': '检查更新…',
+  'menu.downloadUpdate': '下载更新',
+  'menu.installUpdate': '重启并安装',
+  'menu.updateAvailable': '发现新版本 {version}',
+  'menu.updateNone': 'Relay 已是最新版本',
+  'menu.updateChecking': '正在检查更新…',
+  'menu.updateUnsupported': '需要安装版才能检查更新',
+  'menu.daemonStale': '日志服务版本 {running}（App {app}）— 建议重启',
   'menu.openPanel': '打开配置面板…',
   'menu.codexSettings': 'Codex 集成设置…',
   'menu.repairCodex': '修复集成',
@@ -582,6 +616,18 @@ export function translate(locale: Locale, key: TranslationKey): string {
   return resources[locale][key] ?? resources[defaultLocale][key]
 }
 
-export function createTranslator(locale: Locale): (key: TranslationKey) => string {
-  return (key) => translate(locale, key)
+export type Translator = (key: TranslationKey, values?: Record<string, string | number>) => string
+
+/**
+ * Turns a message into a translator. Placeholders are written as {name} so a
+ * message with a version or a path stays one string per locale.
+ */
+export function createTranslator(locale: Locale): Translator {
+  return (key, values) => {
+    const message = translate(locale, key)
+    if (!values) return message
+    return message.replace(/\{(\w+)\}/g, (match, name: string) =>
+      name in values ? String(values[name]) : match,
+    )
+  }
 }

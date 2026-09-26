@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import Database from 'better-sqlite3'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite.js'
 
 export interface RelayControlCommand {
   id: string
@@ -31,11 +31,10 @@ function fromRow(row: CommandRow): RelayControlCommand {
 }
 
 export class SqliteControlQueue {
-  readonly #database: Database.Database
+  readonly #database: SqliteDatabase
 
   constructor(path: string) {
-    this.#database = new Database(path)
-    this.#database.pragma('journal_mode = WAL')
+    this.#database = openSqliteDatabase(path)
     this.#database.exec(`
       CREATE TABLE IF NOT EXISTS relay_control_commands (
         id TEXT PRIMARY KEY,

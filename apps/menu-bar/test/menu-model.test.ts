@@ -114,7 +114,14 @@ describe('buildMenuBarItems', () => {
     expect(empty.find((item) => item.label === 'Sessions')?.submenu).toEqual([
       { kind: 'header', label: 'No sessions yet', enabled: false },
     ])
+    // Even with nothing configured, the submenu keeps its way in to the editor.
     expect(empty.find((item) => item.label === 'Agents')?.submenu).toEqual([
+      {
+        kind: 'normal',
+        label: 'New agent…',
+        action: { type: 'open-panel', tab: 'agents', intent: 'new-agent' },
+      },
+      { kind: 'separator', label: '' },
       { kind: 'header', label: 'No agents configured', enabled: false },
     ])
   })
@@ -133,14 +140,21 @@ describe('buildMenuBarItems', () => {
       }),
     )
     const agents = items.find((item) => item.label === 'Agents')?.submenu ?? []
-    expect(agents.map((item) => item.label)).toEqual([
+    // The submenu opens with the create entry, then lists every profile.
+    expect(agents[0]?.action).toEqual({ type: 'open-panel', tab: 'agents', intent: 'new-agent' })
+    expect(agents.slice(2).map((item) => item.label)).toEqual([
       'DeepSeek Code',
       'Kimi Code · Authentication required',
       'GLM Code · Not installed',
       'Gemini Code · disabled',
     ])
     // A blocked agent is still reachable: the editor is where you fix it.
-    expect(agents[0]?.action).toEqual({ type: 'open-panel', tab: 'agents' })
+    expect(agents[2]?.action).toEqual({
+      type: 'open-panel',
+      tab: 'agents',
+      intent: 'edit-agent',
+      profileId: 'a',
+    })
   })
 
   it('reports the Codex checks and offers the installer', () => {

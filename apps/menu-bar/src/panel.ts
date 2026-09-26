@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { BrowserWindow, screen, type Tray } from 'electron'
 
 /**
@@ -12,12 +13,17 @@ import { BrowserWindow, screen, type Tray } from 'electron'
 
 let panel: BrowserWindow | undefined
 
+export type PanelTab = 'agents' | 'policy' | 'codex' | 'runtime'
+export type PanelIntent = 'new-agent' | 'edit-agent' | 'add-runtime' | 'codex-actions'
+
 export interface PanelTarget {
   /** Daemon base URL, e.g. http://127.0.0.1:7352 */
   base: string
   token: string
   lang: string
-  tab?: string
+  tab?: PanelTab
+  intent?: PanelIntent
+  profileId?: string
 }
 
 export function panelUrl(target: PanelTarget): string {
@@ -26,6 +32,8 @@ export function panelUrl(target: PanelTarget): string {
   if (dev) url.searchParams.set('base', target.base)
   url.searchParams.set('lang', target.lang)
   if (target.tab) url.searchParams.set('tab', target.tab)
+  if (target.intent) url.searchParams.set('intent', target.intent)
+  if (target.profileId) url.searchParams.set('profileId', target.profileId)
   // The token rides the fragment: it never reaches the server or a referrer.
   url.hash = `t=${target.token}`
   return url.toString()
@@ -44,14 +52,19 @@ function placeUnder(tray: Tray, window: BrowserWindow): void {
 }
 
 export function openPanel(tray: Tray, target: PanelTarget): void {
-  const url = panelUrl(target)
   if (panel && !panel.isDestroyed()) {
-    void panel.loadURL(url)
+    // An open panel navigates in place: same window, same state, no reload.
+    panel.webContents.send('relay:panel', {
+      tab: target.tab,
+      intent: target.intent,
+      profileId: target.profileId,
+    })
     placeUnder(tray, panel)
     panel.show()
     panel.focus()
     return
   }
+  const url = panelUrl(target)
   panel = new BrowserWindow({
     width: 420,
     height: 640,
@@ -64,7 +77,12 @@ export function openPanel(tray: Tray, target: PanelTarget): void {
     skipTaskbar: true,
     alwaysOnTop: true,
     backgroundColor: '#1c1d1f',
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: {
+      preload: join(import.meta.dirname, 'panel-preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
   })
   panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   // The panel behaves like a popover: clicking anywhere else dismisses it.
