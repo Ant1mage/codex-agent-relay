@@ -11,8 +11,13 @@ import type { MenuView } from '@relay/relay-api'
 export type MenuBarPlatform = 'darwin' | 'win32' | 'linux'
 export type DaemonStatus = 'running' | 'stopped' | 'starting'
 
+export type PanelTab = 'agents' | 'policy' | 'codex' | 'runtime'
+
 export type MenuBarAction =
   | { type: 'open-inspector'; hostSessionId?: string; runId?: string }
+  | { type: 'open-panel'; tab: PanelTab }
+  | { type: 'rescan' }
+  | { type: 'repair-codex' }
   | { type: 'start-daemon' }
   | { type: 'restart-daemon' }
   | { type: 'cancel-worker'; workerSessionId: string }
@@ -120,6 +125,12 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
     accelerator: 'CmdOrCtrl+O',
     action: { type: 'open-inspector' },
   })
+  items.push({
+    kind: 'normal',
+    label: t('menu.openPanel'),
+    accelerator: 'CmdOrCtrl+,',
+    action: { type: 'open-panel', tab: 'agents' },
+  })
   items.push(separator())
 
   const activeSessions = menu.sessions.filter((session) => session.activeWorkers.length > 0)
@@ -218,20 +229,39 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
                     : undefined
             return {
               kind: 'normal' as const,
-              // Agents are an entry point into the inspector, never a switch:
-              // what Codex may call is decided by profiles, not by a menu.
+              // A name is a shortcut into the editor; the switches live in the
+              // panel because a menu cannot carry a form.
               label: reason ? `${agent.name} · ${reason}` : agent.name,
-              enabled: !agent.blocked,
-              action: { type: 'open-inspector' as const },
+              action: { type: 'open-panel' as const, tab: 'agents' as const },
             }
           }),
+  })
+
+  items.push({
+    kind: 'normal',
+    label: t('panel.runtime'),
+    submenu: [
+      ...(menu.runtimes.length === 0
+        ? [header(t('panel.noRuntimes'))]
+        : menu.runtimes.map((runtime) =>
+            header(
+              `${runtime.adapterId} · ${runtime.health}${runtime.version ? ` · ${runtime.version}` : ''}`,
+            ),
+          )),
+      separator(),
+      { kind: 'normal', label: t('panel.rescan'), action: { type: 'rescan' } },
+      { kind: 'normal', label: t('menu.openPanel'), action: { type: 'open-panel', tab: 'runtime' } },
+    ],
   })
 
   const checkLabels: Record<string, TranslationKey> = {
     'codex-cli': 'onboarding.check.codex-cli',
     'relay-mcp': 'onboarding.check.relay-mcp',
     'relay-skill': 'onboarding.check.relay-skill',
+    'relay-plugin': 'onboarding.check.relay-plugin',
+    'relay-hooks': 'onboarding.check.relay-hooks',
   }
+  const brokenChecks = menu.codex.checks.filter((check) => !check.ok)
   items.push({
     kind: 'normal',
     label: t('menu.codex'),
@@ -240,14 +270,20 @@ export function buildMenuBarItems(view: MenuBarView): MenuBarItem[] {
       ...menu.codex.checks.map((check) => {
         const key = checkLabels[check.id]
         const label = key ? t(key) : check.id
-        return header(`${check.ok ? '✓' : '✗'} ${label}${check.ok ? '' : ` — ${check.detail}`}`)
+        return header(`${check.ok ? '✓' : '✗'} ${label}${check.ok ? '' : ` — ${check.status}`}`)
       }),
       separator(),
-      { kind: 'normal', label: t('menu.installCodex'), action: { type: 'install-codex' } },
+      { kind: 'normal', label: t('menu.codexSettings'), action: { type: 'open-panel', tab: 'codex' } },
+      {
+        kind: 'normal',
+        label: brokenChecks.length > 0 ? t('menu.repairCodex') : t('menu.installCodex'),
+        action: { type: 'repair-codex' },
+      },
     ],
   })
 
   items.push(separator())
+  if (view.error) items.push(header(`⚠︎ ${view.error.slice(0, 80)}`))
   items.push({ kind: 'normal', label: t('menu.refresh'), action: { type: 'refresh' } })
   items.push({ kind: 'normal', label: t('menu.diagnostics'), action: { type: 'copy-diagnostics' } })
   if (view.platform === 'darwin' || view.platform === 'win32') {

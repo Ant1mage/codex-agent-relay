@@ -83,4 +83,29 @@ export class ProfileRegistry {
   list(options: { enabledOnly?: boolean } = {}): AgentProfile[] {
     return [...this.#items.values()].filter((profile) => !options.enabledOnly || profile.enabled)
   }
+
+  /**
+   * Replaces the registered set with what is on disk now. Profiles are user
+   * configuration, so a long-running process has to follow edits without a
+   * restart (docs/inspector.md 9).
+   */
+  sync(inputs: AgentProfile[]): { added: string[]; updated: string[]; removed: string[] } {
+    const parsed = inputs.map((input) => agentProfileSchema.parse(input))
+    const next = new Map(parsed.map((profile) => [profile.id, profile]))
+    const added: string[] = []
+    const updated: string[] = []
+    const removed: string[] = []
+    for (const [id, profile] of next) {
+      const current = this.#items.get(id)
+      if (!current) added.push(id)
+      else if (JSON.stringify(current) !== JSON.stringify(profile)) updated.push(id)
+      this.#items.set(id, profile)
+    }
+    for (const id of [...this.#items.keys()]) {
+      if (next.has(id)) continue
+      this.#items.delete(id)
+      removed.push(id)
+    }
+    return { added, updated, removed }
+  }
 }

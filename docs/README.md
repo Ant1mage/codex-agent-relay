@@ -45,12 +45,14 @@ Relay 不是：
 
 ## 产品边界
 
-用户主入口保持为 Codex。Relay 没有应用窗口：桌面存在感是一个菜单栏图标，日志在一个浏览器页面里。
+用户主入口保持为 Codex。Relay 没有应用窗口：桌面存在感是一个菜单栏图标（状态 + 配置面板），日志在一个浏览器页面里。**配置属于菜单栏，日志属于浏览器**——Web 不承担 Settings 职责。
 
 ```text
-menu-bar（Tray，Electron）── 启动/重启 ──► relayd（日志服务，127.0.0.1:7352）
-        │                                        │ SSE + 静态托管
-        └─ 点击会话 → Edge/Chrome 打开 ──► Web Inspector（React + shadcn）
+menu-bar（Tray + 控制面板）── 启动/停止 ──► relayd（本地 Control Plane，127.0.0.1:7352）
+        │                                     ├─ 配置（Agent / Policy）
+        │                                     ├─ Runtime 扫描 / Codex 集成生命周期
+        │                                     └─ 托管 /panel/（配置）与 /（日志）
+        └─ 点击会话 → Edge/Chrome 打开 ──► Web Inspector（React + shadcn，只读）
 ```
 
 Relay 不画复杂 Agent 拓扑图，也不把自己包装成另一个 AI 工作台。界面沿用本地 macOS 工具的克制信息架构：

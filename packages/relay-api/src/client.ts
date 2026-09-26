@@ -1,21 +1,32 @@
+import type { AgentProfile, RelayPolicy, RelayPolicyOverride } from '@relay/protocol'
 import {
   cancelResultSchema,
   eventBatchSchema,
   healthSchema,
   installResultSchema,
   menuViewSchema,
+  refreshResultSchema,
+  relayConfigSchema,
+  runtimeOptionsViewSchema,
   snapshotSchema,
   streamMessageSchema,
   type CancelResult,
+  type CodexAction,
   type EventBatch,
   type Health,
   type InstallResult,
   type InspectorSnapshot,
   type MenuView,
+  type RefreshResult,
+  type RelayConfigView,
+  type RuntimeOptionsView,
   type StreamMessage,
 } from './contract.js'
 
-type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
+type FetchLike = (
+  input: string,
+  init?: { method?: string; headers?: Record<string, string>; body?: string },
+) => Promise<{
   ok: boolean
   status: number
   text(): Promise<string>
@@ -109,23 +120,66 @@ export class RelayClient {
     return body
   }
 
-  async #post(path: string, schema: { parse(value: unknown): CancelResult | InstallResult }) {
-    const response = await this.#fetch(this.url(path), { method: 'POST', headers: this.#headers() })
+  async #send<T>(
+    method: 'POST' | 'PUT' | 'DELETE',
+    path: string,
+    schema: { parse(value: unknown): T },
+    payload?: unknown,
+  ): Promise<T> {
+    const response = await this.#fetch(this.url(path), {
+      method,
+      headers: {
+        ...this.#headers(),
+        ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+    })
     const body = await response.text()
     if (!response.ok) throw new RelayApiError(body || response.status.toString(), response.status)
-    return schema.parse(JSON.parse(body))
+    return schema.parse(body ? JSON.parse(body) : {})
+  }
+
+  /** Relay's own configuration (Agent Profiles + policy) as stored on disk. */
+  config(): Promise<RelayConfigView> {
+    return this.#json('/api/config', relayConfigSchema)
+  }
+
+  saveProfile(profile: AgentProfile): Promise<RelayConfigView> {
+    return this.#send('PUT', `/api/config/profiles/${encodeURIComponent(profile.id)}`, relayConfigSchema, profile)
+  }
+
+  deleteProfile(profileId: string): Promise<RelayConfigView> {
+    return this.#send('DELETE', `/api/config/profiles/${encodeURIComponent(profileId)}`, relayConfigSchema)
+  }
+
+  savePolicy(input: {
+    policy: RelayPolicy
+    workspaceOverrides: Record<string, RelayPolicyOverride>
+  }): Promise<RelayConfigView> {
+    return this.#send('PUT', '/api/config/policy', relayConfigSchema, input)
+  }
+
+  /** Model and reasoning values this runtime's CLI actually advertises. */
+  runtimeOptions(runtimeId: string): Promise<RuntimeOptionsView> {
+    return this.#json(`/api/runtimes/${encodeURIComponent(runtimeId)}/options`, runtimeOptionsViewSchema)
+  }
+
+  /** Re-detects runtimes and re-reads configuration. */
+  refresh(): Promise<RefreshResult> {
+    return this.#send('POST', '/api/refresh', refreshResultSchema)
+  }
+
+  /** Codex integration lifecycle: install, repair, update, remove. */
+  codex(action: CodexAction): Promise<InstallResult> {
+    return this.#send('POST', `/api/codex/${action}`, installResultSchema)
   }
 
   cancelWorker(workerSessionId: string): Promise<CancelResult> {
-    return this.#post(`/api/workers/${encodeURIComponent(workerSessionId)}/cancel`, cancelResultSchema) as Promise<CancelResult>
+    return this.#send('POST', `/api/workers/${encodeURIComponent(workerSessionId)}/cancel`, cancelResultSchema)
   }
 
   cancelSession(hostSessionId: string): Promise<CancelResult> {
-    return this.#post(`/api/sessions/${encodeURIComponent(hostSessionId)}/cancel`, cancelResultSchema) as Promise<CancelResult>
-  }
-
-  installCodex(): Promise<InstallResult> {
-    return this.#post('/api/codex/install', installResultSchema) as Promise<InstallResult>
+    return this.#send('POST', `/api/sessions/${encodeURIComponent(hostSessionId)}/cancel`, cancelResultSchema)
   }
 
   /** SSE endpoint. EventSource cannot set headers, so the token rides the query. */

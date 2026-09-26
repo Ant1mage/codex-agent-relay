@@ -12,11 +12,9 @@ function snapshot(): InspectorSnapshot {
   const store = new RelayStore(join(directory, 'relay.sqlite'))
   seedDatabase(join(directory, 'relay.sqlite'))
   store.setEnvironment({ runtimes, profiles })
-  const value = store.snapshot({
-    runtimes,
-    profiles,
-    diagnostics: ['kimi: no executable found'],
-    codex: { checks: [{ id: 'relay-mcp', ok: false, detail: '/tmp/.codex/config.toml' }], configured: false },
+  const value = store.snapshot({ runtimes, profiles, diagnostics: ['kimi: no executable found'] }, {
+    checks: [{ id: 'relay-mcp', ok: false, status: 'stale', detail: '/tmp/.codex/config.toml' }],
+    configured: false,
   })
   store.close()
   rmSync(directory, { recursive: true, force: true })

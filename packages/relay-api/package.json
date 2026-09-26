@@ -8,6 +8,7 @@
     "./server-info": "./src/server-info.ts"
   },
   "dependencies": {
+    "@relay/config": "workspace:*",
     "@relay/protocol": "workspace:*",
     "zod": "^4.1.0"
   }

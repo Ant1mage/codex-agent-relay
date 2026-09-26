@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createTranslator } from '@relay/i18n'
-import { Check, CircleAlert, PlugZap } from 'lucide-react'
+import { Check, CircleAlert } from 'lucide-react'
 import type { SessionView } from '@relay/relay-api'
 import { ConsolePane } from './components/console-pane.js'
 import { Header } from './components/header.js'
@@ -54,7 +54,6 @@ export function App() {
   const setNotice = useAppStore((state) => state.setNotice)
   const selectedRunId = useAppStore((state) => state.selectedRunId)
   const [refreshing, setRefreshing] = useState(false)
-  const [installing, setInstalling] = useState(false)
   const t = useMemo(() => createTranslator(locale), [locale])
   const hasSnapshot = Boolean(snapshot)
   const routeKey = `${route.sessionId ?? ''}|${route.runId ?? ''}`
@@ -144,20 +143,6 @@ export function App() {
     }
   }, [bootstrap.client, setNotice, t])
 
-  const installCodex = useCallback(async () => {
-    if (!bootstrap.client) return
-    setInstalling(true)
-    try {
-      const result = await bootstrap.client.installCodex()
-      setNotice(result.messages.join(' · '))
-      await refresh()
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
-    } finally {
-      setInstalling(false)
-    }
-  }, [bootstrap.client, refresh, setNotice])
-
   const cancelWorker = useCallback(
     async (workerSessionId: string) => {
       if (!bootstrap.client) return
@@ -189,9 +174,8 @@ export function App() {
           <CircleAlert className="size-3.5 text-[var(--amber)]" />
           <span className="font-medium">{t('inspector.codexMissing')}</span>
           <span className="text-muted-foreground">{t('inspector.codexMissingBody')}</span>
-          <Button variant="outline" size="sm" className="ml-auto" disabled={installing} onClick={() => void installCodex()}>
-            <PlugZap /> {installing ? t('onboarding.installing') : t('inspector.installCodex')}
-          </Button>
+          {/* Installing into Codex is configuration: it belongs to the menu bar. */}
+          <span className="ml-auto text-muted-foreground">{t('inspector.codexFixInMenuBar')}</span>
         </div>
       )}
 

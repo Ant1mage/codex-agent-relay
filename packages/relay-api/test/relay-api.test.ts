@@ -17,6 +17,7 @@ const info: ServerInfo = {
   port: 7352,
   url: 'http://127.0.0.1:7352',
   token: 'secret',
+  nonce: 'nonce-1',
   startedAt: '2026-01-01T10:00:00.000Z',
   version: '0.0.0',
   database: '/tmp/relay.sqlite',
@@ -59,7 +60,7 @@ describe('RelayClient', () => {
       ok: true,
       status: 200,
       text: async () => JSON.stringify(url.includes('/api/menu')
-        ? { status: 'ready', runningWorkers: 0, awaitingHost: 0, sessions: [], agents: [], codex: { checks: [], configured: true } }
+        ? { status: 'ready', runningWorkers: 0, awaitingHost: 0, sessions: [], agents: [], runtimes: [], codex: { checks: [], configured: true } }
         : {}),
       json: async () => ({}),
     }
@@ -104,6 +105,7 @@ describe('RelayClient', () => {
           JSON.stringify({
             ok: true,
             pid: 1,
+            nonce: 'n',
             port: 7352,
             startedAt: '2026-01-01T10:00:00.000Z',
             version: '0.0.0',
@@ -127,7 +129,9 @@ describe('RelayClient', () => {
 
 describe('contract', () => {
   it('rejects a menu payload without the codex block', () => {
-    expect(() => menuViewSchema.parse({ status: 'ready', runningWorkers: 0, awaitingHost: 0, sessions: [], agents: [] })).toThrow()
+    expect(() =>
+      menuViewSchema.parse({ status: 'ready', runningWorkers: 0, awaitingHost: 0, sessions: [], agents: [], runtimes: [] }),
+    ).toThrow()
   })
 
   it('accepts an empty snapshot', () => {

@@ -1,0 +1,13 @@
+{
+  "name": "@relay/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@relay/core": "workspace:*",
+    "@relay/protocol": "workspace:*"
+  }
+}

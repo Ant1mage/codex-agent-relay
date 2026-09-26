@@ -8,6 +8,7 @@ const menu = (overrides: Partial<MenuView> = {}): MenuView => ({
   awaitingHost: 0,
   sessions: [],
   agents: [],
+  runtimes: [],
   codex: { checks: [], configured: true },
   ...overrides,
 })
@@ -138,8 +139,8 @@ describe('buildMenuBarItems', () => {
       'GLM Code · Not installed',
       'Gemini Code · disabled',
     ])
-    expect(agents.map((item) => item.enabled)).toEqual([true, false, false, false])
-    expect(agents[0]?.action).toEqual({ type: 'open-inspector' })
+    // A blocked agent is still reachable: the editor is where you fix it.
+    expect(agents[0]?.action).toEqual({ type: 'open-panel', tab: 'agents' })
   })
 
   it('reports the Codex checks and offers the installer', () => {
@@ -149,8 +150,8 @@ describe('buildMenuBarItems', () => {
           codex: {
             configured: false,
             checks: [
-              { id: 'codex-cli', ok: true, detail: 'codex 1.0.0' },
-              { id: 'relay-mcp', ok: false, detail: '/tmp/.codex/config.toml' },
+              { id: 'codex-cli', ok: true, status: 'ok', detail: 'codex 1.0.0' },
+              { id: 'relay-mcp', ok: false, status: 'stale', detail: '/tmp/.codex/config.toml' },
             ],
           },
         }),
@@ -160,9 +161,10 @@ describe('buildMenuBarItems', () => {
     expect(codex?.submenu?.map((item) => item.label)).toEqual([
       'Not configured',
       '✓ Codex detected',
-      '✗ Relay MCP configured — /tmp/.codex/config.toml',
+      '✗ Relay MCP configured — stale',
       '',
-      'Install in Codex…',
+      'Codex integration settings…',
+      'Repair integration',
     ])
   })
 

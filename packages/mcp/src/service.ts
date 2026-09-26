@@ -16,7 +16,13 @@ export class RelayService {
     readonly controller: RunController,
     readonly sessions: HostSessionStore,
     readonly codexThreads: CodexThreadMetadataResolver,
+    /**
+     * Applied before a run starts: policy is scoped to the workspace, so it is
+     * resolved with the session's cwd in hand.
+     */
     readonly beforeRun?: (workspace: string) => void | Promise<void>,
+    /** Re-reads Agent Profiles so edits take effect without a restart. */
+    readonly beforeRefresh?: () => void | Promise<void>,
   ) {}
 
   async syncSession(context: CodexInvocationContext): Promise<ReturnType<HostSessionStore['upsertCodex']>> {
@@ -43,6 +49,7 @@ export class RelayService {
   }
 
   async listAgents(context: CodexInvocationContext): Promise<AgentProfile[]> {
+    await this.beforeRefresh?.()
     await this.syncSession(context)
     return this.controller.profiles.list({ enabledOnly: true })
   }
@@ -53,6 +60,8 @@ export class RelayService {
     hostSessionDisplayName: string
   }> {
     const session = await this.syncSession(context)
+    // Configuration first, then policy for this workspace, then the run.
+    await this.beforeRefresh?.()
     await this.beforeRun?.(session.cwd)
     const active = await this.controller.start({
       hostSessionId: session.id,

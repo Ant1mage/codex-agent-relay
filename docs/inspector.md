@@ -1,6 +1,6 @@
 # Relay Inspector 与 relayd
 
-日志不再画在一个应用窗口里。**relayd** 是常驻的本地日志服务，**Web Inspector** 是它托管的浏览器页面，**menu-bar** 只是那个页面的遥控器。三者都是 TypeScript。
+日志不再画在一个应用窗口里。**relayd** 是 Relay 的本地 Control Plane（配置、环境、Codex 集成、投影），**Web Inspector** 是它托管的只读日志页面，**控制面板** 是它托管的配置页面，由 **menu-bar** 打开。四者都是 TypeScript。
 
 ![Relay Inspector](images/inspector.png)
 
@@ -23,10 +23,10 @@ relay-mcp（Codex 启动的 stdio 进程，唯一的执行者）
 
 | 进程 | 拥有什么 | 不做什么 |
 |---|---|---|
-| `relay-mcp` | RunController、policy、**数据库 schema**（`user_version` 迁移）、事件写入、worker 进程 | 不渲染界面 |
-| `relayd` | 只读 projection、SSE、控制队列写入、静态托管、诊断 | 不建表、不启动/重试 worker、不解释原厂 stdout |
-| `menu-bar` | 托盘菜单、打开浏览器、启动/重启 daemon | 不直接打开数据库，不推导状态 |
-| `web` | 展示日志、取消、复制诊断 | 不写入事件日志 |
+| `relay-mcp` | RunController、**数据库 schema**（`user_version` 迁移）、事件写入、worker 进程 | 不渲染界面，不拥有配置（每次调用重读） |
+| `relayd` | **Relay 配置（profiles.json / settings.json 的唯一写者）**、runtime 扫描与 model/reasoning 发现、Codex 集成生命周期、只读 projection、SSE、控制队列写入、静态托管（Inspector + 控制面板）、诊断 | 不建表、不启动/重试 worker、不解释原厂 stdout |
+| `menu-bar` | 托盘菜单 + 控制面板（表单）、打开浏览器、启动/停止 daemon | 不直接打开数据库或配置文件，不推导状态 |
+| `web` | 展示日志、取消、复制诊断 | 不写入任何配置或事件日志 |
 
 因为 daemon 与托盘都不持有执行状态，**它们可以随时重启**：正在跑的委派不受影响，页面重连后从事件日志补齐。
 
@@ -53,7 +53,7 @@ relay-mcp（Codex 启动的 stdio 进程，唯一的执行者）
 - 页面先用 `GET /api/snapshot` 拿全量投影（sessions / runs / steps / workers + runtimes / profiles / codex 检查）。
 - 再连 `GET /api/stream`（SSE）：连接时收到 `hello` 加一份 `snapshot`，之后是增量。
 - 某个 Run 的历史日志按需拉取：`GET /api/runs/:id/events?after=<seq>`，只拉当前正在看的那条。
-- 服务端每 400ms 比对一次变更戳（`PRAGMA data_version` 与 `MAX(rowid)`），有变化才推；每个连接记着 per-run 的 seq 游标，只发新事件。
+- 服务端每 400ms 比对一次变更戳，**内容包含事件日志、运行时扫描、配置文件与 Codex 集成状态**（不只是 SQLite），任何一处变化都会推一份新 snapshot；每个连接记着 per-run 的 seq 游标，只发新事件。
 - 客户端按 `seq` 去重合并，所以"先连流、后补历史"不会重复也不会丢。
 
 ## 4. 安全边界
@@ -66,7 +66,20 @@ daemon 是本机服务，仍然按不可信输入对待：
 4. **Token**：`/api/*` 需要每次启动生成的随机 token（`Authorization: Bearer` 或 `?token=`）。托盘从 `server.json` 读，浏览器从 URL 片段读一次后存 localStorage 并把片段从地址栏清掉。
 5. 静态资源与 API 都不缓存（`cache-control: no-store`）。
 
-## 5. API 一览
+## 5. 配置
+
+Relay 自己的配置也在这个 daemon 上，面板只是它的客户端：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/config` | profiles + policy + workspace 覆盖 + revision |
+| PUT / DELETE | `/api/config/profiles/:id` | 新增/更新/删除 Agent Profile |
+| PUT | `/api/config/policy` | Global policy 与 workspace 覆盖 |
+| GET | `/api/runtimes/:id/options` | 该 CLI 自己报告的 model / reasoning 取值 |
+
+写入是原子替换（临时文件 + rename），并且会立即反映到三处：daemon 的投影、SSE 推送、以及 **relay-mcp 的下一次调用**（MCP 在 `list_agents` / `run_agent` 前重读配置）。
+
+## 6. API 一览
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -77,10 +90,11 @@ daemon 是本机服务，仍然按不可信输入对待：
 | GET | `/api/stream` | SSE：hello / snapshot / events |
 | POST | `/api/workers/:id/cancel` | 写一条取消命令到控制队列 |
 | POST | `/api/sessions/:id/cancel` | 取消该会话所有活跃 worker |
-| POST | `/api/codex/install` | 安装 Relay skill 与 MCP 配置 |
-| POST | `/api/refresh` | 重新检测本机 runtime |
+| POST | `/api/codex/{install,repair,update,remove}` | Codex 集成生命周期（docs/codex-integration.md） |
+| POST | `/api/refresh` | 重新检测本机 runtime 并重读配置 |
 | GET | `/api/diagnostics` | 纯文本诊断报告（复制诊断信息用） |
 | GET | `/*` | Web Inspector 静态资源（SPA 回退到 index.html） |
+| GET | `/panel/*` | 控制面板静态资源（菜单栏使用，与 API 同源） |
 
 契约定义在 `packages/relay-api`（zod schema 与 `RelayClient`），daemon、托盘、Web 共用同一份，客户端会校验服务端返回。
 

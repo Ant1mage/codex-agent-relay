@@ -3,7 +3,10 @@ import {
   agentProfileSchema,
   hostSessionSchema,
   relayEventSchema,
+  relayPolicyOverrideSchema,
+  relayPolicySchema,
   runSchema,
+  runtimeOptionsSchema,
   runtimeSchema,
   stepSchema,
   workerSessionSchema,
@@ -32,10 +35,26 @@ export const sessionViewSchema = z.object({
 })
 export type SessionView = z.infer<typeof sessionViewSchema>
 
+/**
+ * One thing Codex needs before Relay can be delegated to. `status` separates the
+ * shades of "not ok" (never installed, pointing at a stale checkout, older than
+ * the shipped copy, left over from a manual install) so repair can be specific
+ * instead of a blind reinstall.
+ */
+export const codexCheckIdSchema = z.enum([
+  'codex-cli',
+  'relay-mcp',
+  'relay-skill',
+  'relay-plugin',
+  'relay-hooks',
+])
 export const codexCheckSchema = z.object({
-  id: z.enum(['codex-cli', 'relay-mcp', 'relay-skill']),
+  id: codexCheckIdSchema,
   ok: z.boolean(),
+  status: z.enum(['ok', 'missing', 'stale', 'outdated', 'legacy']),
   detail: z.string(),
+  /** Suggested next step, shown verbatim in the control panel. */
+  hint: z.string().optional(),
 })
 export type CodexCheck = z.infer<typeof codexCheckSchema>
 
@@ -78,13 +97,40 @@ export const menuViewSchema = z.object({
   awaitingHost: z.number().int().nonnegative(),
   sessions: menuSessionSchema.array(),
   agents: menuAgentSchema.array(),
+  /** Runtime scan results, so the menu can show the environment itself. */
+  runtimes: runtimeSchema.array(),
   codex: codexStatusSchema,
 })
 export type MenuView = z.infer<typeof menuViewSchema>
 
+/** Relay's own configuration as it exists on disk right now. */
+export const relayConfigSchema = z.object({
+  profiles: agentProfileSchema.array(),
+  policy: relayPolicySchema,
+  workspaceOverrides: z.record(z.string(), relayPolicyOverrideSchema),
+  /** Changes whenever either file changes; clients reload when it differs. */
+  revision: z.string(),
+})
+export type RelayConfigView = z.infer<typeof relayConfigSchema>
+
+export const runtimeOptionsViewSchema = runtimeOptionsSchema
+export type RuntimeOptionsView = z.infer<typeof runtimeOptionsViewSchema>
+
+export const codexActionSchema = z.enum(['install', 'repair', 'update', 'remove'])
+export type CodexAction = z.infer<typeof codexActionSchema>
+
+export const refreshResultSchema = z.object({
+  runtimes: z.number().int().nonnegative(),
+  profiles: z.number().int().nonnegative(),
+  detectedAt: z.string(),
+})
+export type RefreshResult = z.infer<typeof refreshResultSchema>
+
 export const healthSchema = z.object({
   ok: z.literal(true),
   pid: z.number().int().positive(),
+  /** Identity proof: a reused PID cannot fake this. */
+  nonce: z.string(),
   port: z.number().int().positive(),
   startedAt: z.string(),
   version: z.string(),

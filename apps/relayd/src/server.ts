@@ -1,31 +1,51 @@
 import { readFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { extname, join, resolve, sep } from 'node:path'
-import type { CodexStatus, StreamMessage } from '@relay/relay-api'
+import type { AgentProfile, RelayPolicy, RelayPolicyOverride } from '@relay/protocol'
+import type {
+  CodexAction,
+  CodexStatus,
+  InstallResult,
+  RelayConfigView,
+  RuntimeOptionsView,
+  StreamMessage,
+} from '@relay/relay-api'
 import { buildDiagnosticsReport } from './diagnostics.js'
 import type { RelayStore } from './store.js'
 import type { Environment } from './environment.js'
 
 /**
- * The daemon's only listener: loopback HTTP that serves the built inspector and
- * the projection it renders. It is deliberately a plain node:http server — the
- * surface is a dozen routes and an SSE stream, which does not need a framework.
+ * The daemon's only listener: loopback HTTP that serves the built inspector, the
+ * projection it renders, and Relay's own configuration.
+ *
+ * It is deliberately a plain node:http server — the surface is a couple of dozen
+ * routes and an SSE stream, which does not need a framework.
  */
 
 export interface RelayServerOptions {
   store: RelayStore
   environment(): Environment
+  config(): RelayConfigView
   codex(): Promise<CodexStatus>
-  refreshEnvironment(): Promise<Environment>
-  installCodex(): Promise<{ status: CodexStatus; messages: string[] }>
+  /** Re-detects runtimes and re-reads configuration; used by the panel and tray. */
+  refresh(): Promise<{ environment: Environment; config: RelayConfigView }>
+  /** Codex integration lifecycle. */
+  runCodex(action: CodexAction): Promise<InstallResult>
+  runtimeOptions(runtimeId: string): Promise<RuntimeOptionsView>
+  saveProfile(profile: AgentProfile): RelayConfigView
+  deleteProfile(profileId: string): RelayConfigView
+  savePolicy(input: { policy: RelayPolicy; workspaceOverrides: Record<string, RelayPolicyOverride> }): RelayConfigView
   webRoot: string
+  /** The tray's control panel, served from the same origin as the API. */
+  panelRoot: string
   token: string
   /** Read after binding: the daemon may fall back to the next free port. */
   port: () => number
   version: string
   databasePath: string
   startedAt: string
-  /** How often the projection is re-read for SSE clients. */
+  nonce: string
+  /** How often projection, configuration and environment are compared. */
   tickMs?: number
 }
 
@@ -44,6 +64,8 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 }
 
+const MAX_BODY_BYTES = 1_000_000
+
 interface StreamClient {
   response: ServerResponse
   cursors: Map<string, number>
@@ -53,11 +75,28 @@ function send(response: ServerResponse, message: StreamMessage): void {
   response.write(`data: ${JSON.stringify(message)}\n\n`)
 }
 
+function digest(value: unknown): string {
+  return JSON.stringify(value)
+}
+
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of request) {
+    const buffer = chunk as Buffer
+    size += buffer.length
+    if (size > MAX_BODY_BYTES) throw new Error('Request body too large')
+    chunks.push(buffer)
+  }
+  if (size === 0) return undefined
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
 export function createRelayServer(options: RelayServerOptions): Server {
   const startedAt = options.startedAt
   const tickMs = options.tickMs ?? 400
   const clients = new Set<StreamClient>()
-  let lastRevision = ''
+  let lastStamp = ''
   let ticking = false
 
   /** Rebuilt per request: the port is only known once the socket is bound. */
@@ -82,8 +121,7 @@ export function createRelayServer(options: RelayServerOptions): Server {
     const origin = request.headers.origin
     if (!origin) return true
     try {
-      const url = new URL(origin)
-      return hostNames().has(url.host)
+      return hostNames().has(new URL(origin).host)
     } catch {
       return false
     }
@@ -91,8 +129,7 @@ export function createRelayServer(options: RelayServerOptions): Server {
 
   function authorized(request: IncomingMessage, url: URL): boolean {
     if (url.searchParams.get('token') === options.token) return true
-    const header = request.headers.authorization
-    return header === `Bearer ${options.token}`
+    return request.headers.authorization === `Bearer ${options.token}`
   }
 
   function json(response: ServerResponse, status: number, value: unknown): void {
@@ -113,18 +150,27 @@ export function createRelayServer(options: RelayServerOptions): Server {
     response.end(body)
   }
 
+  async function snapshot() {
+    return options.store.snapshot(options.environment(), await options.codex())
+  }
+
   async function serveStatic(response: ServerResponse, pathname: string): Promise<void> {
-    const webRoot = resolve(options.webRoot)
-    const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
+    // /panel/* is the control panel: a separate build, same origin, so its API
+    // calls pass the Origin guard without special cases.
+    const isPanel = pathname === '/panel' || pathname.startsWith('/panel/')
+    const webRoot = resolve(isPanel ? options.panelRoot : options.webRoot)
+    const relative = isPanel
+      ? pathname.replace(/^\/panel\/?/, '') || 'index.html'
+      : pathname === '/'
+        ? 'index.html'
+        : pathname.replace(/^\/+/, '')
     const candidate = resolve(join(webRoot, relative))
-    // Path traversal guard: never read outside the built web directory.
     const inside = candidate === webRoot || candidate.startsWith(`${webRoot}${sep}`)
     const target = inside ? candidate : join(webRoot, 'index.html')
     try {
       const body = await readFile(target)
       response.writeHead(200, {
         'content-type': MIME[extname(target)] ?? 'application/octet-stream',
-        // The inspector is a local, always-current build; never cache it.
         'cache-control': 'no-store',
       })
       response.end(body)
@@ -160,29 +206,23 @@ export function createRelayServer(options: RelayServerOptions): Server {
     const path = url.pathname
 
     if (path === '/api/health') {
-      const snapshot = options.store.snapshot({
-        ...options.environment(),
-        codex: await options.codex(),
-      })
+      const value = await snapshot()
       json(response, 200, {
         ok: true,
         pid: process.pid,
+        nonce: options.nonce,
         port: options.port(),
         startedAt,
         version: options.version,
         database: options.databasePath,
-        sessions: snapshot.sessions.length,
-        runs: snapshot.sessions.reduce((total, session) => total + session.runs.length, 0),
+        sessions: value.sessions.length,
+        runs: value.sessions.reduce((total, session) => total + session.runs.length, 0),
       })
       return true
     }
 
     if (path === '/api/snapshot') {
-      json(
-        response,
-        200,
-        options.store.snapshot({ ...options.environment(), codex: await options.codex() }),
-      )
+      json(response, 200, await snapshot())
       return true
     }
 
@@ -191,8 +231,42 @@ export function createRelayServer(options: RelayServerOptions): Server {
       return true
     }
 
+    if (path === '/api/config') {
+      json(response, 200, options.config())
+      return true
+    }
+
+    const profile = /^\/api\/config\/profiles\/([^/]+)$/.exec(path)
+    if (profile) {
+      const id = decodeURIComponent(profile[1] ?? '')
+      if (request.method === 'PUT') {
+        const body = (await readJson(request)) as AgentProfile | undefined
+        if (!body) throw new Error('Missing profile body')
+        json(response, 200, options.saveProfile({ ...body, id }))
+        return true
+      }
+      if (request.method === 'DELETE') {
+        json(response, 200, options.deleteProfile(id))
+        return true
+      }
+    }
+
+    if (path === '/api/config/policy' && request.method === 'PUT') {
+      const body = (await readJson(request)) as
+        | { policy?: RelayPolicy; workspaceOverrides?: Record<string, RelayPolicyOverride> }
+        | undefined
+      if (!body?.policy) throw new Error('Missing policy body')
+      json(response, 200, options.savePolicy({ policy: body.policy, workspaceOverrides: body.workspaceOverrides ?? {} }))
+      return true
+    }
+
+    const runtimeOptions = /^\/api\/runtimes\/([^/]+)\/options$/.exec(path)
+    if (runtimeOptions) {
+      json(response, 200, await options.runtimeOptions(decodeURIComponent(runtimeOptions[1] ?? '')))
+      return true
+    }
+
     if (path === '/api/diagnostics') {
-      const snapshot = options.store.snapshot({ ...options.environment(), codex: await options.codex() })
       text(
         response,
         200,
@@ -203,7 +277,7 @@ export function createRelayServer(options: RelayServerOptions): Server {
           arch: process.arch,
           port: options.port(),
           databasePath: options.databasePath,
-          snapshot,
+          snapshot: await snapshot(),
         }),
       )
       return true
@@ -229,16 +303,18 @@ export function createRelayServer(options: RelayServerOptions): Server {
       return true
     }
 
-    if (path === '/api/codex/install' && request.method === 'POST') {
-      json(response, 200, await options.installCodex())
+    const codexAction = /^\/api\/codex\/(install|repair|update|remove)$/.exec(path)
+    if (codexAction && request.method === 'POST') {
+      json(response, 200, await options.runCodex(codexAction[1] as CodexAction))
       return true
     }
 
     if (path === '/api/refresh' && request.method === 'POST') {
-      const environment = await options.refreshEnvironment()
+      const refreshed = await options.refresh()
       json(response, 200, {
-        runtimes: environment.runtimes.length,
-        profiles: environment.profiles.length,
+        runtimes: refreshed.environment.runtimes.length,
+        profiles: refreshed.config.profiles.length,
+        detectedAt: new Date().toISOString(),
       })
       return true
     }
@@ -263,10 +339,7 @@ export function createRelayServer(options: RelayServerOptions): Server {
     clients.add(client)
     void (async () => {
       send(response, { type: 'hello', port: options.port(), startedAt })
-      send(response, {
-        type: 'snapshot',
-        snapshot: options.store.snapshot({ ...options.environment(), codex: await options.codex() }),
-      })
+      send(response, { type: 'snapshot', snapshot: await snapshot() })
     })()
     const heartbeat = setInterval(() => response.write(': ping\n\n'), 15_000)
     request.on('close', () => {
@@ -275,25 +348,36 @@ export function createRelayServer(options: RelayServerOptions): Server {
     })
   }
 
+  /**
+   * One stamp covers everything a client can see: the event log, the runtime
+   * scan, the configuration files and the Codex integration. Without the last
+   * three a client would keep rendering state that changed elsewhere
+   * (docs/inspector.md 9).
+   */
+  async function stamp(): Promise<string> {
+    const codex = await options.codex()
+    return digest([options.store.revision(), options.config().revision, options.environment(), codex])
+  }
+
   async function tick(): Promise<void> {
     if (ticking || clients.size === 0) return
     ticking = true
     try {
-      const revision = options.store.revision()
-      if (revision === lastRevision) return
-      lastRevision = revision
+      const current = await stamp()
+      if (current === lastStamp) return
+      lastStamp = current
       const codex = await options.codex()
-      const snapshot = options.store.snapshot({ ...options.environment(), codex })
-      const current = options.store.cursors()
+      const value = options.store.snapshot(options.environment(), codex)
+      const cursors = options.store.cursors()
       for (const client of clients) {
-        for (const [runId, seq] of current) {
+        for (const [runId, seq] of cursors) {
           const sent = client.cursors.get(runId) ?? 0
           if (seq <= sent) continue
           const batch = options.store.eventsFor(runId, sent)
           client.cursors.set(runId, seq)
           if (batch.events.length > 0) send(client.response, { type: 'events', batch })
         }
-        send(client.response, { type: 'snapshot', snapshot })
+        send(client.response, { type: 'snapshot', snapshot: value })
       }
     } finally {
       ticking = false
@@ -323,7 +407,8 @@ export function createRelayServer(options: RelayServerOptions): Server {
       }
       await serveStatic(response, url.pathname)
     })().catch((error: unknown) => {
-      if (!response.headersSent) json(response, 500, { error: error instanceof Error ? error.message : String(error) })
+      const message = error instanceof Error ? error.message : String(error)
+      if (!response.headersSent) json(response, 400, { error: message })
       else response.end()
     })
   })

@@ -10,11 +10,18 @@
     "@relay/adapter-deepseek": "workspace:*",
     "@relay/adapter-gemini": "workspace:*",
     "@relay/adapter-kimi": "workspace:*",
-    "@relay/adapter-zai": "workspace:*",
     "@relay/adapter-sdk": "workspace:*",
+    "@relay/adapter-zai": "workspace:*",
+    "@relay/config": "workspace:*",
     "@relay/core": "workspace:*",
     "@relay/integration-codex": "workspace:*",
     "@relay/protocol": "workspace:*",
     "zod": "^4.1.0"
+  },
+  "scripts": {
+    "build": "esbuild src/stdio.ts --bundle --platform=node --format=esm --target=node22 --external:better-sqlite3 --outfile=../../out/mcp/stdio.js --sourcemap"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
   }
 }

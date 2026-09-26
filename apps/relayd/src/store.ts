@@ -48,7 +48,6 @@ export interface ProjectionInput {
   runtimes: Runtime[]
   profiles: AgentProfile[]
   diagnostics: string[]
-  codex: CodexStatus
 }
 
 /** First line of a delegated task, cut to a length a menu can show. */
@@ -191,13 +190,13 @@ export class RelayStore {
     return this.#environment
   }
 
-  snapshot(input: ProjectionInput): InspectorSnapshot {
+  snapshot(environment: ProjectionInput, codex: CodexStatus): InspectorSnapshot {
     return {
       sessions: this.sessionsWithRuns(),
-      runtimes: input.runtimes,
-      profiles: input.profiles,
-      diagnostics: input.diagnostics,
-      codex: input.codex,
+      runtimes: environment.runtimes,
+      profiles: environment.profiles,
+      diagnostics: environment.diagnostics,
+      codex,
       generatedAt: new Date().toISOString(),
     }
   }
@@ -249,6 +248,7 @@ export class RelayStore {
       awaitingHost,
       sessions: menuSessions,
       agents,
+      runtimes,
       codex: input.codex,
     }
   }

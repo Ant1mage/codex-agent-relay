@@ -5,9 +5,10 @@
   "type": "module",
   "main": "out/main.js",
   "scripts": {
-    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --external:electron --outfile=out/main.js --sourcemap",
+    "build": "pnpm build:panel && esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --external:electron --outfile=out/main.js --sourcemap",
     "dev": "pnpm build && electron .",
-    "start": "electron ."
+    "start": "electron .",
+    "build:panel": "vite build --config vite.panel.config.ts"
   },
   "dependencies": {
     "@relay/i18n": "workspace:*",
@@ -16,6 +17,20 @@
   },
   "devDependencies": {
     "electron": "^44.4.5",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^5.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cn": "^0.4.0",
+    "lucide-react": "^0.544.0",
+    "radix-ui": "^1.6.7",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwind-merge": "^3.7.0",
+    "tailwindcss": "^4.3.3",
+    "vite": "^7.0.0"
   }
 }

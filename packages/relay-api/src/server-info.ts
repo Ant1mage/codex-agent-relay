@@ -1,11 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
+import { databasePath, profilesPath, relayHome, settingsPath } from '@relay/config'
 
 /**
  * Where the daemon records how to reach it. The tray and any script read this
  * file instead of assuming a port, which is what makes the automatic port
  * fallback safe: whoever wants the daemon asks this file where it is.
+ *
+ * The record also carries a per-process nonce. Liveness cannot be proven by a
+ * PID (they get reused), so the startup guard and the tray's restart path both
+ * make the daemon confirm its nonce before anything is trusted or killed.
  */
 
 export const HOST = '127.0.0.1'
@@ -13,26 +17,11 @@ export const HOST = '127.0.0.1'
 export const DEFAULT_PORT = 7352
 /** Consecutive ports the daemon tries before giving up. */
 export const PORT_ATTEMPTS = 8
-export const DEFAULT_TOKEN_TTL_MS = 0
 
-export function relayHome(): string {
-  return process.env.RELAY_HOME ?? join(homedir(), '.relay')
-}
-
-export function databasePath(): string {
-  return process.env.RELAY_DB_PATH ?? join(relayHome(), 'relay.sqlite')
-}
-
-export function settingsPath(): string {
-  return process.env.RELAY_SETTINGS_PATH ?? join(relayHome(), 'settings.json')
-}
-
-export function profilesPath(): string {
-  return process.env.RELAY_PROFILES_PATH ?? join(relayHome(), 'profiles.json')
-}
+export { databasePath, profilesPath, relayHome, settingsPath }
 
 export function serverInfoPath(): string {
-  return join(relayHome(), 'server.json')
+  return `${relayHome()}/server.json`
 }
 
 export interface ServerInfo {
@@ -42,6 +31,8 @@ export interface ServerInfo {
   url: string
   /** Per-run secret; required by /api/* and by the stream. */
   token: string
+  /** Random per process start; /api/health echoes it so identity is provable. */
+  nonce: string
   startedAt: string
   version: string
   database: string
@@ -64,6 +55,7 @@ export function readServerInfo(path = serverInfoPath()): ServerInfo | undefined 
       port: parsed.port,
       url: parsed.url,
       token: parsed.token,
+      nonce: typeof parsed.nonce === 'string' ? parsed.nonce : '',
       startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
       version: typeof parsed.version === 'string' ? parsed.version : '0.0.0',
       database: typeof parsed.database === 'string' ? parsed.database : databasePath(),
@@ -76,7 +68,8 @@ export function readServerInfo(path = serverInfoPath()): ServerInfo | undefined 
 
 export function writeServerInfo(info: ServerInfo, path = serverInfoPath()): void {
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(info, null, 2)}\n`, 'utf8')
+  // 0600: the token in this file is the only credential the daemon has.
+  writeFileSync(path, `${JSON.stringify(info, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
 }
 
 /** Removes the file only when it still describes this process. */
@@ -112,8 +105,4 @@ export function inspectorPath(sessionId?: string, runId?: string): string {
 /** Loopback URL plus the token in the fragment, which no server ever receives. */
 export function inspectorUrl(info: ServerInfo, sessionId?: string, runId?: string): string {
   return `${info.url}${inspectorPath(sessionId, runId)}#t=${info.token}`
-}
-
-export function apiUrl(info: ServerInfo, path: string): string {
-  return `${info.url}${path}`
 }

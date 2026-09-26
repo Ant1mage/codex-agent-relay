@@ -1,6 +1,5 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { DeepSeekAdapter } from '@relay/adapter-deepseek'
 import { AntigravityAdapter } from '@relay/adapter-antigravity'
@@ -8,18 +7,13 @@ import { GeminiAdapter } from '@relay/adapter-gemini'
 import { KimiAdapter } from '@relay/adapter-kimi'
 import { ZaiAdapter } from '@relay/adapter-zai'
 import type { AgentAdapter } from '@relay/adapter-sdk'
+import { RelayConfigStore, databasePath as resolveDatabasePath } from '@relay/config'
 import {
-  defaultProfiles,
   RunController,
   SqliteControlQueue,
   SqliteEventStore,
   SqliteHostSessionStore,
 } from '@relay/core'
-import {
-  agentProfileSchema,
-  relayPolicyOverrideSchema,
-  relayPolicySchema,
-} from '@relay/protocol'
 import { CodexAppServerThreadResolver } from '@relay/integration-codex'
 import { createRelayMcpServer } from './server.js'
 import { RelayService } from './service.js'
@@ -29,37 +23,38 @@ interface RelayRuntime {
   commands: SqliteControlQueue
 }
 
-function applyPolicySettings(
+/**
+ * Reloads Agent Profiles and policy from disk. Called at startup and again
+ * before every listing or run, because the daemon (the menu bar's control
+ * plane) writes those files while this process keeps running: configuration
+ * edits must take effect without restarting Codex (docs/inspector.md 9).
+ */
+function applyConfig(
   controller: RunController,
-  settingsPath: string,
+  config: RelayConfigStore,
   workspace?: string,
 ): void {
-  if (!existsSync(settingsPath)) return
   try {
-    const parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-      policy?: unknown
-      workspaceOverrides?: Record<string, unknown>
-    }
-    controller.policies.setGlobal(relayPolicySchema.parse(parsed.policy))
+    const loaded = config.read({ runtimes: controller.runtimes.list() })
+    controller.profiles.sync(loaded.profiles)
+    controller.policies.setGlobal(loaded.policy)
     if (workspace) {
       controller.policies.clearWorkspace(workspace)
-      const override = parsed.workspaceOverrides?.[workspace]
-      if (override) controller.policies.setWorkspace(workspace, relayPolicyOverrideSchema.parse(override))
+      const override = loaded.workspaceOverrides[workspace]
+      if (override) controller.policies.setWorkspace(workspace, override)
     }
   } catch (error) {
     process.stderr.write(
-      `[relay] Ignoring invalid settings: ${error instanceof Error ? error.message : String(error)}\n`,
+      `[relay] Ignoring invalid configuration: ${error instanceof Error ? error.message : String(error)}\n`,
     )
   }
 }
 
 async function createRuntime(): Promise<RelayRuntime> {
-  const databasePath = process.env.RELAY_DB_PATH ?? join(homedir(), '.relay', 'relay.sqlite')
-  const settingsPath = process.env.RELAY_SETTINGS_PATH ?? join(homedir(), '.relay', 'settings.json')
-  const profilesPath = process.env.RELAY_PROFILES_PATH ?? join(homedir(), '.relay', 'profiles.json')
+  const databasePath = resolveDatabasePath()
   mkdirSync(dirname(databasePath), { recursive: true })
   const controller = new RunController(new SqliteEventStore(databasePath))
-  applyPolicySettings(controller, settingsPath)
+  const config = new RelayConfigStore()
   const adapters: AgentAdapter[] = [
     new DeepSeekAdapter(), new AntigravityAdapter(), new KimiAdapter(), new GeminiAdapter(), new ZaiAdapter(),
   ]
@@ -68,26 +63,14 @@ async function createRuntime(): Promise<RelayRuntime> {
   for (const detection of detections) for (const diagnostic of detection.diagnostics) process.stderr.write(`[relay] ${diagnostic}\n`)
   const runtimes = detections.flatMap((detection) => detection.runtimes)
   for (const runtime of runtimes) controller.registerRuntime(runtime)
-  const defaults = defaultProfiles(runtimes)
-  let profiles = defaults
-  if (existsSync(profilesPath)) {
-    try {
-      const availableRuntimeIds = new Set(runtimes.map((runtime) => runtime.id))
-      const stored = agentProfileSchema.array().parse(JSON.parse(readFileSync(profilesPath, 'utf8')))
-      const storedById = new Map(stored.filter((profile) => availableRuntimeIds.has(profile.runtimeId)).map((profile) => [profile.id, profile]))
-      profiles = defaults.map((profile) => storedById.get(profile.id) ?? profile)
-      for (const profile of storedById.values()) if (!profiles.some((candidate) => candidate.id === profile.id)) profiles.push(profile)
-    } catch (error) {
-      process.stderr.write(`[relay] Ignoring invalid profiles: ${error instanceof Error ? error.message : String(error)}\n`)
-    }
-  }
-  for (const profile of profiles) controller.registerProfile(profile)
+  applyConfig(controller, config)
   return {
     service: new RelayService(
       controller,
       new SqliteHostSessionStore(databasePath),
       new CodexAppServerThreadResolver(),
-      (workspace) => applyPolicySettings(controller, settingsPath, workspace),
+      (workspace) => applyConfig(controller, config, workspace),
+      () => applyConfig(controller, config),
     ),
     commands: new SqliteControlQueue(databasePath),
   }
