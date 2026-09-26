@@ -24,6 +24,7 @@ let settings: DesktopSettings = {
     allowNetwork: false,
   },
   workspaceOverrides: {},
+  menuBar: { hideDockIcon: false },
   ...(previewMode === 'onboarding' ? {} : { onboardingCompletedAt: now }),
 }
 
@@ -131,6 +132,10 @@ export function installBrowserPreview(): void {
     runtimeOptions: async () => runtimeOptions,
     completeOnboarding: async () => { settings = { ...settings, onboardingCompletedAt: now }; return settings },
     openWorkspace: async () => ({ ok: true }),
+    // The browser has no menu bar; these exist so the fixture satisfies the same
+    // contract Electron provides (docs/menu-bar.md).
+    onNavigate: () => () => {},
+    setLocale: () => {},
   }
   document.title = 'Relay UI preview'
 }

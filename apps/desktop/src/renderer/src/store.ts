@@ -11,6 +11,9 @@ function preferredStepId(steps: Step[] | undefined): string | undefined {
   return steps?.find((step) => step.status === 'running')?.id ?? steps?.[0]?.id
 }
 
+/** Settings pages the menu bar can open directly. */
+export type SettingsSection = 'general' | 'agents' | 'workspace' | 'advanced'
+
 interface AppState {
   locale: Locale
   snapshot: DesktopSnapshot | undefined
@@ -18,6 +21,11 @@ interface AppState {
   selectedRunId: string | undefined
   selectedStepId: string | undefined
   settingsOpen: boolean
+  /**
+   * Page Settings should show the next time it is open. Set by the menu bar,
+   * which can point at the Agents page but cannot render it (docs/menu-bar.md).
+   */
+  settingsSection: SettingsSection | undefined
   onboardingOpen: boolean
   /** Prevents polling from treating an unfinished setup value as a first load forever. */
   hasLoadedInitialSnapshot: boolean
@@ -25,6 +33,7 @@ interface AppState {
   error: string | undefined
   notice: string | undefined
   setSettingsOpen(open: boolean): void
+  openSettings(section?: SettingsSection): void
   openOnboarding(): void
   closeOnboarding(): void
   setLocale(locale: Locale): void
@@ -48,12 +57,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedRunId: undefined,
   selectedStepId: undefined,
   settingsOpen: false,
+  settingsSection: undefined,
   onboardingOpen: false,
   hasLoadedInitialSnapshot: false,
   loading: true,
   error: undefined,
   notice: undefined,
-  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setSettingsOpen: (settingsOpen) =>
+    set(settingsOpen ? { settingsOpen } : { settingsOpen, settingsSection: undefined }),
+  openSettings: (section) => set({ settingsOpen: true, settingsSection: section }),
   openOnboarding: () => set({ onboardingOpen: true }),
   closeOnboarding: () => set({ onboardingOpen: false }),
   setLocale: (locale) => {

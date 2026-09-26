@@ -1,31 +1,44 @@
-/*
- * Tailwind v4 entry, plus the Relay design tokens exposed as Tailwind theme
- * values so utilities and existing CSS read the same palette.
- *
- * Loaded before styles.css: Tailwind owns `theme`, `base` (preflight) and
- * `utilities`; Relay's component rules live in the `components` layer, so
- * utilities win where both apply.
- */
 @import "tailwindcss";
+@custom-variant dark (&:is(.dark *));
 
-/*
- * `inline` keeps the utilities pointing at the runtime custom properties rather
- * than baking literal values, so a utility like `bg-surface` follows the
- * dark-mode overrides below.
- */
+/* shadcn utilities resolve through these runtime tokens in both appearances. */
 @theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted-surface);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-border: var(--border);
   --color-sidebar: var(--sidebar);
-  --color-surface: var(--surface);
-  --color-surface-subtle: var(--surface-subtle);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-surface: var(--card);
+  --color-surface-subtle: var(--secondary);
   --color-line: var(--border);
   --color-line-strong: var(--border-strong);
-  --color-text: var(--text);
-  --color-muted: var(--muted);
+  --color-text: var(--foreground);
   --color-faint: var(--faint);
-  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft: var(--accent);
   --color-ok: var(--green);
   --color-warn: var(--amber);
-  --color-danger: var(--red);
+  --color-danger: var(--destructive);
 }
 
 /*
@@ -34,110 +47,91 @@
  */
 @source "../../../";  /* apps/desktop/src, resolved from this file */
 
-/* Relay palette, then the shadcn names mapped onto it. */
-@theme {
-  --color-bg: #f4f4f3;
-  --color-sidebar: #ececea;
-  --color-surface: #ffffff;
-  --color-surface-subtle: #f8f8f7;
-  --color-border: #d9d9d6;
-  --color-border-strong: #c8c8c4;
-  --color-text: #25272a;
-  --color-muted: #73767a;
-  --color-faint: #9a9ca0;
-  --color-accent: #2563eb;
-  --color-accent-soft: #eaf0ff;
-  --color-green: #23845b;
-  --color-amber: #a56313;
-  --color-red: #b84343;
-
-  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  --radius-panel: 9px;
-  --radius-control: 6px;
-
-  /*
-   * shadcn/ui component tokens mapped onto Relay's own palette, so registry
-   * components read Relay's colours instead of the registry's defaults
-   * (`--primary` etc. are what Button/Badge/Input reference).
-   */
-  --color-background: #ffffff;
-  --color-foreground: #25272a;
-  --color-primary: #2563eb;
-  --color-primary-foreground: #ffffff;
-  --color-secondary: #f8f8f7;
-  --color-secondary-foreground: #25272a;
-  --color-muted-foreground: #73767a;
-  --color-accent-foreground: #25272a;
-  --color-destructive: #b84343;
-  --color-input: #d9d9d6;
-  --color-ring: #2563eb;
-  /* Card/Popover surfaces: shadcn references these and they have no fallback. */
-  --color-card: #ffffff;
-  --color-card-foreground: #25272a;
-  --color-popover: #ffffff;
-  --color-popover-foreground: #25272a;
-  --color-accent: #eaf0ff;
-}
-
-/*
- * Dark mode for the Relay tokens. Utilities built with @theme inline reference
- * these variables, so one override covers both the migrated component classes
- * and plain utilities.
- */
 @layer base {
+  * { @apply border-border outline-ring/50; }
+
   :root {
-    --bg:#f4f4f3; --sidebar:#ececea; --surface:#ffffff; --surface-subtle:#f8f8f7;
-    --border:#d9d9d6; --border-strong:#c8c8c4; --text:#25272a; --muted:#73767a;
-    --faint:#9a9ca0; --accent:#2563eb; --accent-soft:#eaf0ff; --green:#23845b;
-    --amber:#a56313; --red:#b84343;
+    --background: #f4f4f3;
+    --foreground: #25272a;
+    --card: #ffffff;
+    --card-foreground: #25272a;
+    --popover: #ffffff;
+    --popover-foreground: #25272a;
+    --primary: #2563eb;
+    --primary-foreground: #ffffff;
+    --secondary: #f8f8f7;
+    --secondary-foreground: #25272a;
+    --muted-surface: #f8f8f7;
+    --muted-foreground: #73767a;
+    --accent: #eaf0ff;
+    --accent-foreground: #25272a;
+    --destructive: #b84343;
+    --border: #d9d9d6;
+    --input: #d9d9d6;
+    --ring: #2563eb;
+    --sidebar: #ececea;
+    --sidebar-foreground: #25272a;
+    --sidebar-primary: #2563eb;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #eaf0ff;
+    --sidebar-accent-foreground: #25272a;
+    --sidebar-border: #d9d9d6;
+    --sidebar-ring: #2563eb;
+    --bg: var(--background);
+    --surface: var(--card);
+    --surface-subtle: var(--secondary);
+    --text: var(--foreground);
+    --muted: var(--muted-foreground);
+    --faint: #9a9ca0;
+    --accent-soft: var(--accent);
+    --green: #23845b;
+    --amber: #a56313;
+    --red: var(--destructive);
+    --border-strong: #c8c8c4;
     --overlay: color-mix(in srgb, var(--surface) 86%, transparent);
     --shadow: 0 16px 45px rgba(28,30,33,.12);
     --titlebar-height: 38px;
     --space-1:4px; --space-2:8px; --space-3:12px;
     --space-4:16px; --space-5:20px; --space-6:28px; --control-h:30px;
+    --font-sans: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --radius-panel: 9px;
+    --radius-control: 6px;
+    color-scheme: light;
   }
 
-  :root[data-theme="dark"] {
-    --color-background:#2a2b2e; --color-foreground:#ededed;
-    --color-primary:#78a6ff; --color-primary-foreground:#1c1d1f;
-    --color-secondary:#242527; --color-secondary-foreground:#ededed;
-    --color-muted-foreground:#a1a3a7; --color-accent:#273652;
-    --color-accent-foreground:#ededed; --color-destructive:#ef8585;
-    --color-input:#3b3d40; --color-ring:#78a6ff;
-    --color-card:#2a2b2e; --color-card-foreground:#ededed;
-    --color-popover:#2a2b2e; --color-popover-foreground:#ededed;
-    --bg:#1c1d1f; --sidebar:#242527; --surface:#2a2b2e; --surface-subtle:#242527;
-    --border:#3b3d40; --border-strong:#4a4c50; --text:#ededed; --muted:#a1a3a7;
-    --faint:#7f8287; --accent:#78a6ff; --accent-soft:#273652; --green:#63c496;
-    --amber:#e0a75a; --red:#ef8585;
+  .dark {
+    --background: #1c1d1f;
+    --foreground: #ededed;
+    --card: #2a2b2e;
+    --card-foreground: #ededed;
+    --popover: #2a2b2e;
+    --popover-foreground: #ededed;
+    --primary: #78a6ff;
+    --primary-foreground: #1c1d1f;
+    --secondary: #242527;
+    --secondary-foreground: #ededed;
+    --muted-surface: #242527;
+    --muted-foreground: #a1a3a7;
+    --accent: #273652;
+    --accent-foreground: #ededed;
+    --destructive: #ef8585;
+    --border: #3b3d40;
+    --input: #3b3d40;
+    --ring: #78a6ff;
+    --sidebar: #242527;
+    --sidebar-foreground: #ededed;
+    --sidebar-primary: #78a6ff;
+    --sidebar-primary-foreground: #1c1d1f;
+    --sidebar-accent: #273652;
+    --sidebar-accent-foreground: #ededed;
+    --sidebar-border: #3b3d40;
+    --sidebar-ring: #78a6ff;
+    --faint: #7f8287;
+    --green: #63c496;
+    --amber: #e0a75a;
+    --border-strong: #4a4c50;
     --shadow: 0 16px 45px rgba(0,0,0,.3);
+    color-scheme: dark;
   }
-
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) {
-      --color-background:#2a2b2e; --color-foreground:#ededed;
-      --color-primary:#78a6ff; --color-primary-foreground:#1c1d1f;
-      --color-secondary:#242527; --color-secondary-foreground:#ededed;
-      --color-muted-foreground:#a1a3a7; --color-accent:#273652;
-      --color-accent-foreground:#ededed; --color-destructive:#ef8585;
-      --color-input:#3b3d40; --color-ring:#78a6ff;
-      --color-card:#2a2b2e; --color-card-foreground:#ededed;
-      --color-popover:#2a2b2e; --color-popover-foreground:#ededed;
-      --bg:#1c1d1f; --sidebar:#242527; --surface:#2a2b2e; --surface-subtle:#242527;
-      --border:#3b3d40; --border-strong:#4a4c50; --text:#ededed; --muted:#a1a3a7;
-      --faint:#7f8287; --accent:#78a6ff; --accent-soft:#273652; --green:#63c496;
-      --amber:#e0a75a; --red:#ef8585;
-      --shadow: 0 16px 45px rgba(0,0,0,.3);
-      color-scheme: dark;
-    }
-  }
-
-  :root { color-scheme: light; }
-  :root[data-theme="dark"] { color-scheme: dark; }
 }
-
-/* ------------------------------------------------------------------ */
-/* Relay component classes, expressed with Tailwind utilities.          */
-/* ------------------------------------------------------------------ */

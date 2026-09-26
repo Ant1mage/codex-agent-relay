@@ -8,6 +8,15 @@
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
+    <script>
+      try {
+        const theme = localStorage.getItem('relay.theme') || 'system'
+        const isDark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.toggle('dark', isDark)
+        document.documentElement.dataset.theme = theme
+        document.documentElement.style.colorScheme = isDark ? 'dark' : 'light'
+      } catch {}
+    </script>
     <link rel="icon" type="image/png" sizes="32x32" href="/appicon/png/light/relay-icon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/appicon/png/light/relay-icon-16.png" />
     <title>Relay</title>
