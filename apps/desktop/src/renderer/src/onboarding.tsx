@@ -5,7 +5,8 @@ import type { CodexIntegrationStatus } from '../../shared/api.js'
 import { useAppStore } from './store.js'
 import { ProfileFields } from './profile-editor.js'
 import { Button } from './components/ui/button.js'
-import { Card, CardContent } from './components/ui/card.js'
+import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card.js'
+import { OnboardingStepper } from './components/onboarding-stepper.js'
 import {
   providerMetadata,
   providerOrder,
@@ -33,7 +34,7 @@ const PAGES: OnboardingPage[] = ['codex', 'agents', 'ready']
  * landing page.
  */
 export function Onboarding({ t }: { t: Translator }) {
-  const { snapshot, refresh, setNotice } = useAppStore()
+  const { snapshot, refresh, setNotice, closeOnboarding } = useAppStore()
   const [page, setPage] = useState<OnboardingPage>('codex')
   const [codex, setCodex] = useState<CodexIntegrationStatus>()
   const [draft, setDraft] = useState<AgentProfile>()
@@ -88,6 +89,9 @@ export function Onboarding({ t }: { t: Translator }) {
 
   const finish = async () => {
     await window.relay.completeOnboarding()
+    // Completion changes the persistence gate. Close this local surface now;
+    // polling intentionally does not re-decide onboarding after the first load.
+    closeOnboarding()
     await refresh()
   }
 
@@ -99,13 +103,20 @@ export function Onboarding({ t }: { t: Translator }) {
 
   return (
     <main className="onboarding">
-      <Card className="onboarding-card">
-        <CardContent className="flex flex-col gap-4">
-        <div className="onboarding-meta">
-          <span>{t('onboarding.setup')}</span>
-          <span>{pageIndex + 1} {t('onboarding.of')} {PAGES.length}</span>
-        </div>
-        <h1>{title}</h1>
+      <Card className="onboarding-card gap-0 py-0 shadow-sm">
+        <CardHeader className="gap-3 border-b px-6 py-5">
+          <div className="flex items-center justify-between gap-4">
+            <CardTitle className="text-lg">{t('onboarding.setup')}</CardTitle>
+            <span className="text-xs font-medium text-muted">{pageIndex + 1} {t('onboarding.of')} {PAGES.length}</span>
+          </div>
+          <OnboardingStepper
+            current={pageIndex}
+            labels={[t('onboarding.connect'), t('onboarding.addAgents'), t('onboarding.readyTitle')]}
+          />
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4 px-6 py-5">
+        <div className="space-y-1">
+          <h1>{title}</h1>
 
         {page === 'codex' && (
           <>
@@ -255,6 +266,7 @@ export function Onboarding({ t }: { t: Translator }) {
             </div>
           </>
         )}
+        </div>
         </CardContent>
       </Card>
     </main>

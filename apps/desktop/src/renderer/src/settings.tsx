@@ -11,7 +11,6 @@ import {
   X,
 } from 'lucide-react'
 import { Button } from './components/ui/button.js'
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card.js'
 import {
   Dialog,
   DialogContent,
@@ -199,7 +198,7 @@ export function SettingsSheet({
 
   return (
     <Dialog open onOpenChange={(next) => { if (!next) setSettingsOpen(false) }}>
-      <DialogContent className="settings-sheet max-w-[760px] gap-0 p-0">
+      <DialogContent showCloseButton={false} className="settings-sheet max-w-[760px] gap-0 p-0">
         <DialogHeader className="flex-row items-center justify-between gap-2 border-b border-line px-5 py-3">
           <DialogTitle className="text-base">{t('settings.title')}</DialogTitle>
           <DialogDescription className="sr-only">{t('settings.subtitle')}</DialogDescription>
@@ -250,12 +249,10 @@ export function SettingsSheet({
               are all "set once" choices rather than part of the delegation path.
             */}
             {selection === 'general' && (
-              <div className="flex flex-col gap-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>{t('settings.language')}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
+              <div className="settings-preferences">
+                <section className="settings-preference">
+                  <h2>{t('settings.language')}</h2>
+                  <div className="settings-preference-control">
                     <ToggleGroup
                       type="single"
                       value={locale}
@@ -266,14 +263,12 @@ export function SettingsSheet({
                       <ToggleGroupItem value="en">English</ToggleGroupItem>
                       <ToggleGroupItem value="zh-CN">简体中文</ToggleGroupItem>
                     </ToggleGroup>
-                  </CardContent>
-                </Card>
+                  </div>
+                </section>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>{t('settings.appearance')}</CardTitle>
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-4">
+                <section className="settings-preference">
+                  <h2>{t('settings.appearance')}</h2>
+                  <div className="settings-preference-control flex flex-col gap-4">
                     <ToggleGroup
                       type="single"
                       value={theme}
@@ -297,8 +292,8 @@ export function SettingsSheet({
                         </SelectContent>
                       </Select>
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </section>
               </div>
             )}
 
