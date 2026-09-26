@@ -59,6 +59,9 @@ describe('buildMenuBarItems', () => {
       '',
       'Copy diagnostics',
       '',
+      // App updates are offered even when the log service is down.
+      'Check for updates…',
+      '',
       'Quit Relay',
     ])
     expect(items[1]?.action).toEqual({ type: 'start-daemon' })
