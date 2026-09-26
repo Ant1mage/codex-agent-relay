@@ -7,6 +7,7 @@ import {
   Languages,
   Moon,
   PanelLeft,
+  PanelRight,
   Plus,
   RefreshCw,
   Settings,
@@ -24,6 +25,7 @@ type Translator = (key: TranslationKey) => string
 type Inspector = 'changes' | 'raw' | undefined
 type Theme = 'system' | 'light' | 'dark'
 type ConsoleKind = 'read' | 'search' | 'edit' | 'command' | 'test' | 'result' | 'error' | 'status'
+type SettingsSection = 'general' | 'agents' | 'workspace' | 'appearance'
 const DEFAULT_FONT_SIZE = 14
 const MAX_FONT_SIZE = 20
 
@@ -81,30 +83,30 @@ function StatusLabel({ status, t }: { status: RunStatus; t: Translator }) {
 }
 
 function Sidebar({ t }: { t: Translator }) {
-  const { snapshot, selectedSessionId, selectSession } = useAppStore()
+  const { snapshot, selectedSessionId, selectSession, setSettingsOpen } = useAppStore()
   return (
     <aside className="sidebar">
+      <div className="sidebar-brand"><strong>Relay</strong></div>
       <div className="sidebar-section-title">{t('sessions.title')}</div>
       <div className="session-list">
         {snapshot?.sessions.map((session) => (
           <button className={session.id === selectedSessionId ? 'session-name selected' : 'session-name'} key={session.id} onClick={() => selectSession(session.id)} title={session.displayName}>
-            {session.displayName}
+            <strong>{session.displayName}</strong><span>{t(`common.${session.status}`)} · {elapsed(session.updatedAt)}</span>
           </button>
         ))}
         {!snapshot?.sessions.length && <p className="sidebar-empty">{t('sessions.empty')}</p>}
       </div>
+      <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings size={15} />{t('settings.title')}</button>
     </aside>
   )
 }
 
 function AppToolbar({ t, sidebarCollapsed, toggleSidebar }: { t: Translator; sidebarCollapsed: boolean; toggleSidebar(): void }) {
-  const { setSettingsOpen } = useAppStore()
   const sidebarLabel = sidebarCollapsed ? t('action.showSidebar') : t('action.hideSidebar')
   return (
     <header className="app-toolbar">
-      <div className="toolbar-leading"><button className="plain-icon" aria-label={sidebarLabel} title={sidebarLabel} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}><PanelLeft size={16} /></button><strong>Relay</strong></div>
+      <div className="toolbar-leading"><button className="plain-icon" aria-label={sidebarLabel} title={sidebarLabel} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}><PanelLeft size={16} /></button></div>
       <div className="toolbar-drag" />
-      <div className="toolbar-actions"><button className="plain-icon" aria-label={t('settings.title')} title={t('settings.title')} onClick={() => setSettingsOpen(true)}><Settings size={16} /></button></div>
     </header>
   )
 }
@@ -144,7 +146,7 @@ function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
   )
 }
 
-function Console({ view, step, t, openInspector }: { view: DesktopRunView; step: Step; t: Translator; openInspector(inspector: Exclude<Inspector, undefined>): void }) {
+function Console({ view, step, t, openInspector, cliInfoOpen, toggleCliInfo }: { view: DesktopRunView; step: Step; t: Translator; openInspector(inspector: Exclude<Inspector, undefined>): void; cliInfoOpen: boolean; toggleCliInfo(): void }) {
   const { setNotice } = useAppStore()
   const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
   const events = view.events.filter((event) => (!event.stepId || event.stepId === step.id) && eventKind(event) !== undefined)
@@ -156,6 +158,7 @@ function Console({ view, step, t, openInspector }: { view: DesktopRunView; step:
       <header className="console-header">
         <div><strong>{t('console.title')} · {view.run.profileId}</strong><span>{t('steps.iteration')} {step.iteration} · {elapsed(step.createdAt, worker?.endedAt)}</span></div>
         <div className="console-actions">
+          <button className={cliInfoOpen ? 'selected' : ''} onClick={toggleCliInfo}><PanelRight size={13} />{t('cliInfo.title')}</button>
           {changeCount > 0 && <button onClick={() => openInspector('changes')}><FileDiff size={13} />{t('console.changes')} <b>{changeCount}</b></button>}
           <button onClick={() => openInspector('raw')}>{t('console.rawOutput')} <b>{rawCount}</b></button>
           {(step.status === 'running' || step.status === 'starting') && worker && (
@@ -177,6 +180,26 @@ function Console({ view, step, t, openInspector }: { view: DesktopRunView; step:
   )
 }
 
+function CliInfo({ view, step, t, close }: { view: DesktopRunView; step: Step; t: Translator; close(): void }) {
+  const { snapshot } = useAppStore()
+  const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
+  const profile = snapshot?.profiles.find((candidate) => candidate.id === view.run.profileId)
+  const runtime = snapshot?.runtimes.find((candidate) => candidate.id === worker?.runtimeId)
+  const changeCount = view.events.filter((event) => (!event.stepId || event.stepId === step.id) && event.type === 'tool/edit').length
+  return (
+    <aside className="cli-info">
+      <header><div><span>{profile?.name ?? view.run.profileId}</span><h2>{t('cliInfo.title')}</h2></div><button className="plain-icon" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></button></header>
+      <dl>
+        <div><dt>{t('cliInfo.status')}</dt><dd><StatusLabel status={step.status} t={t} /></dd></div>
+        <div><dt>{t('cliInfo.runtime')}</dt><dd>{runtime?.adapterId ?? worker?.runtimeId ?? t('common.notAvailable')}</dd></div>
+        <div><dt>{t('cliInfo.workingDirectory')}</dt><dd title={view.run.cwd}>{view.run.cwd}</dd></div>
+        <div><dt>{t('cliInfo.started')}</dt><dd>{new Date(step.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</dd></div>
+        <div><dt>{t('cliInfo.changes')}</dt><dd>{changeCount}</dd></div>
+      </dl>
+    </aside>
+  )
+}
+
 function InspectorSheet({ inspector, view, step, t, close }: { inspector: Exclude<Inspector, undefined>; view: DesktopRunView; step: Step; t: Translator; close(): void }) {
   const events = view.events.filter((event) => !event.stepId || event.stepId === step.id)
   const changes = events.filter((event) => event.type === 'tool/edit')
@@ -195,11 +218,13 @@ function InspectorSheet({ inspector, view, step, t, close }: { inspector: Exclud
 function SessionWorkspace({ t }: { t: Translator }) {
   const { snapshot, selectedSessionId, selectedRunId, selectedStepId, loading, refresh } = useAppStore()
   const [inspector, setInspector] = useState<Inspector>()
+  const [cliInfoOpen, setCliInfoOpen] = useState(() => localStorage.getItem('relay.cli-info-open') !== 'false')
   const session = snapshot?.sessions.find((item) => item.id === selectedSessionId)
   const views = useMemo(() => snapshot?.runs.filter((item) => item.run.hostSessionId === selectedSessionId) ?? [], [snapshot, selectedSessionId])
   const stepItems = views.flatMap((view) => view.steps.map((step) => ({ view, step })))
   const selectedView = views.find((view) => view.run.id === selectedRunId) ?? views[0]
   const selectedStep = selectedView?.steps.find((step) => step.id === selectedStepId) ?? selectedView?.steps[0]
+  const toggleCliInfo = () => setCliInfoOpen((current) => { const next = !current; localStorage.setItem('relay.cli-info-open', String(next)); return next })
 
   if (!session) return <main className="workspace empty-workspace"><h1>{t('sessions.empty')}</h1><p>{t('sessions.emptyHint')}</p></main>
   return (
@@ -208,7 +233,7 @@ function SessionWorkspace({ t }: { t: Translator }) {
         <div><span>{session.displayName}</span><h1>{selectedView?.run.task ?? session.displayName}</h1><p>{session.cwd}</p></div>
         <div className="heading-actions">{selectedView && <StatusLabel status={selectedView.run.status} t={t} />}<button className="plain-icon" title={t('common.refresh')} onClick={() => void refresh()}><RefreshCw className={loading ? 'spin' : ''} size={15} /></button></div>
       </header>
-      {stepItems.length ? <><StepNavigator items={stepItems} t={t} />{selectedView && selectedStep && <Console view={selectedView} step={selectedStep} t={t} openInspector={setInspector} />}</> : <div className="workspace-placeholder">{t('runs.empty')}</div>}
+      {stepItems.length ? <><StepNavigator items={stepItems} t={t} />{selectedView && selectedStep && <div className={cliInfoOpen ? 'workspace-lower cli-info-open' : 'workspace-lower'}><Console view={selectedView} step={selectedStep} t={t} openInspector={setInspector} cliInfoOpen={cliInfoOpen} toggleCliInfo={toggleCliInfo} />{cliInfoOpen && <CliInfo view={selectedView} step={selectedStep} t={t} close={toggleCliInfo} />}</div>}</> : <div className="workspace-placeholder">{t('runs.empty')}</div>}
       {inspector && selectedView && selectedStep && <InspectorSheet inspector={inspector} view={selectedView} step={selectedStep} t={t} close={() => setInspector(undefined)} />}
     </main>
   )
@@ -235,32 +260,53 @@ function SettingsSheet({ t, theme, setTheme, fontSize, setFontSize }: { t: Trans
   const { snapshot, settingsOpen, setSettingsOpen, locale, setLocale, setNotice } = useAppStore()
   const [settings, setSettings] = useState<DesktopSettings | undefined>(snapshot?.settings)
   const [scope, setScope] = useState('global')
+  const [section, setSection] = useState<SettingsSection>('general')
   const [editing, setEditing] = useState<AgentProfile>()
-  useEffect(() => setSettings(snapshot?.settings), [snapshot?.settings])
+  const [settingsDirty, setSettingsDirty] = useState(false)
+  const latestSnapshotSettings = useRef<DesktopSettings | undefined>(undefined)
+  const saveRevision = useRef(0)
+  useEffect(() => {
+    if (snapshot?.settings === latestSnapshotSettings.current) return
+    latestSnapshotSettings.current = snapshot?.settings
+    if (!settingsDirty) setSettings(snapshot?.settings)
+  }, [snapshot?.settings, settingsDirty])
   if (!settingsOpen || !settings || !snapshot) return null
   const workspaces = [...new Set(snapshot.sessions.map((session) => session.cwd))]
   const policy = scope === 'global' ? settings.policy : { ...settings.policy, ...settings.workspaceOverrides[scope] }
-  const updatePolicy = (next: Partial<RelayPolicy>) => setSettings(scope === 'global' ? { ...settings, policy: { ...settings.policy, ...next } } : { ...settings, workspaceOverrides: { ...settings.workspaceOverrides, [scope]: { ...settings.workspaceOverrides[scope], ...next } } })
+  const persistSettings = (next: DesktopSettings) => {
+    const revision = ++saveRevision.current
+    setSettings(next)
+    setSettingsDirty(true)
+    void window.relay.saveSettings(next).then((saved) => {
+      if (saveRevision.current !== revision) return
+      setSettings(saved)
+      setSettingsDirty(false)
+    }).catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+  }
+  const updatePolicy = (next: Partial<RelayPolicy>) => persistSettings(scope === 'global'
+    ? { ...settings, policy: { ...settings.policy, ...next } }
+    : { ...settings, workspaceOverrides: { ...settings.workspaceOverrides, [scope]: { ...settings.workspaceOverrides[scope], ...next } } })
   const createProfile = () => {
     const runtime = snapshot.runtimes[0]
     if (!runtime) return
     setEditing({ id: `profile-${Date.now()}`, name: runtime.adapterId, runtimeId: runtime.id, description: '', capabilities: { readWorkspace: true, writeWorkspace: false, executeCommands: false, networkAccess: false }, enabled: true })
   }
+  const navigation: { id: SettingsSection; label: string; icon: typeof Languages }[] = [
+    { id: 'general', label: t('settings.general'), icon: Languages },
+    { id: 'agents', label: t('agents.title'), icon: Settings },
+    { id: 'workspace', label: t('settings.workspaceSection'), icon: ShieldCheck },
+    { id: 'appearance', label: t('settings.appearance'), icon: Sun },
+  ]
   return (
-    <div className="sheet-backdrop">
-      <aside className="settings-sheet">
+    <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}>
+      <aside className="settings-sheet" onMouseDown={(event) => event.stopPropagation()}>
         <header><h1>{t('settings.title')}</h1><button className="plain-icon" onClick={() => setSettingsOpen(false)}><X size={16} /></button></header>
-        <section><div className="setting-heading"><Languages size={16} /><div><strong>{t('settings.language')}</strong><span>English / 简体中文</span></div></div><div className="segmented"><button className={locale === 'en' ? 'selected' : ''} onClick={() => setLocale('en')}>English</button><button className={locale === 'zh-CN' ? 'selected' : ''} onClick={() => setLocale('zh-CN')}>简体中文</button></div></section>
-        <section><div className="setting-heading"><Sun size={16} /><strong>{t('settings.appearance')}</strong></div><div className="segmented">{(['system', 'light', 'dark'] as Theme[]).map((value) => <button className={theme === value ? 'selected' : ''} onClick={() => setTheme(value)} key={value}>{value === 'dark' && <Moon size={12} />}{t(`settings.${value}`)}</button>)}</div><label className="appearance-setting"><div><strong>{t('settings.fontSize')}</strong><span>{t('settings.fontSizeHint')}</span></div><select value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))}>{Array.from({ length: MAX_FONT_SIZE - DEFAULT_FONT_SIZE + 1 }, (_, index) => DEFAULT_FONT_SIZE + index).map((value) => <option value={value} key={value}>{value} px</option>)}</select></label></section>
-        <section><div className="setting-heading section-action"><div><strong>{t('settings.profiles')}</strong><span>{snapshot.runtimes.length} runtimes · {snapshot.profiles.length} profiles</span></div><button className="secondary" onClick={createProfile} disabled={!snapshot.runtimes.length}><Plus size={12} />{t('agents.create')}</button></div><div className="profile-list">{snapshot.profiles.map((profile) => { const runtime = snapshot.runtimes.find((item) => item.id === profile.runtimeId); return <button key={profile.id} onClick={() => setEditing(profile)}><div><strong>{profile.name}</strong><span>{runtime?.adapterId} · {runtime?.version ?? t('common.notAvailable')}</span></div><ChevronRight size={14} /></button> })}</div></section>
-        <section>
-          <div className="setting-heading"><ShieldCheck size={16} /><div><strong>{t('settings.policy')}</strong><span>{scope === 'global' ? t('settings.global') : t('settings.workspace')}</span></div></div>
-          <label className="setting-row"><span>{t('settings.scope')}</span><select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">{t('settings.global')}</option>{workspaces.map((workspace) => <option value={workspace} key={workspace}>{workspace}</option>)}</select></label>
-          <label className="setting-row"><span>{t('settings.maxRuns')}</span><input type="number" min="1" max="16" value={policy.maxConcurrentRuns} onChange={(event) => updatePolicy({ maxConcurrentRuns: Number(event.target.value) })} /></label>
-          <label className="setting-row"><span>{t('settings.maxWriters')}</span><input type="number" min="1" max="8" value={policy.maxConcurrentWriters} onChange={(event) => updatePolicy({ maxConcurrentWriters: Number(event.target.value) })} /></label>
-          {([['requireWorktreeForParallelWriters', 'settings.requireWorktree'], ['allowWrite', 'settings.allowWrite'], ['allowCommands', 'settings.allowCommands'], ['allowNetwork', 'settings.allowNetwork']] as const).map(([key, label]) => <label className="setting-row" key={key}><span>{t(label)}</span><input type="checkbox" checked={policy[key]} onChange={() => updatePolicy({ [key]: !policy[key] })} /></label>)}
-          <button className="primary save-settings" onClick={async () => { const saved = await window.relay.saveSettings(settings); setSettings(saved); setNotice(t('settings.saved')) }}>{t('action.save')}</button>
-        </section>
+        <div className="settings-layout"><nav className="settings-navigation">{navigation.map(({ id, label, icon: Icon }) => <button className={section === id ? 'selected' : ''} onClick={() => setSection(id)} key={id}><Icon size={14} />{label}</button>)}</nav><div className="settings-content">
+          {section === 'general' && <section><div className="setting-heading"><Languages size={16} /><div><strong>{t('settings.language')}</strong><span>English / 简体中文</span></div></div><div className="segmented"><button className={locale === 'en' ? 'selected' : ''} onClick={() => setLocale('en')}>English</button><button className={locale === 'zh-CN' ? 'selected' : ''} onClick={() => setLocale('zh-CN')}>简体中文</button></div></section>}
+          {section === 'appearance' && <section><div className="setting-heading"><Sun size={16} /><strong>{t('settings.appearance')}</strong></div><div className="segmented">{(['system', 'light', 'dark'] as Theme[]).map((value) => <button className={theme === value ? 'selected' : ''} onClick={() => setTheme(value)} key={value}>{value === 'dark' && <Moon size={12} />}{t(`settings.${value}`)}</button>)}</div><label className="appearance-setting"><div><strong>{t('settings.fontSize')}</strong><span>{t('settings.fontSizeHint')}</span></div><select value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))}>{Array.from({ length: MAX_FONT_SIZE - DEFAULT_FONT_SIZE + 1 }, (_, index) => DEFAULT_FONT_SIZE + index).map((value) => <option value={value} key={value}>{value} px</option>)}</select></label></section>}
+          {section === 'agents' && <section><div className="setting-heading section-action"><div><strong>{t('settings.profiles')}</strong><span>{snapshot.runtimes.length} runtimes · {snapshot.profiles.length} profiles</span></div><button className="secondary" onClick={createProfile} disabled={!snapshot.runtimes.length}><Plus size={12} />{t('agents.create')}</button></div><div className="profile-list">{snapshot.profiles.map((profile) => { const runtime = snapshot.runtimes.find((item) => item.id === profile.runtimeId); return <button key={profile.id} onClick={() => setEditing(profile)}><div><strong>{profile.name}</strong><span>{runtime?.adapterId} · {runtime?.version ?? t('common.notAvailable')}</span></div><ChevronRight size={14} /></button> })}</div></section>}
+          {section === 'workspace' && <section><div className="setting-heading"><ShieldCheck size={16} /><div><strong>{t('settings.policy')}</strong><span>{scope === 'global' ? t('settings.global') : t('settings.workspace')}</span></div></div><label className="setting-row"><span>{t('settings.scope')}</span><select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">{t('settings.global')}</option>{workspaces.map((workspace) => <option value={workspace} key={workspace}>{workspace}</option>)}</select></label><label className="setting-row"><span>{t('settings.maxRuns')}</span><input type="number" min="1" max="16" value={policy.maxConcurrentRuns} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePolicy({ maxConcurrentRuns: value }) }} /></label><label className="setting-row"><span>{t('settings.maxWriters')}</span><input type="number" min="1" max="8" value={policy.maxConcurrentWriters} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePolicy({ maxConcurrentWriters: value }) }} /></label>{([['requireWorktreeForParallelWriters', 'settings.requireWorktree'], ['allowWrite', 'settings.allowWrite'], ['allowCommands', 'settings.allowCommands'], ['allowNetwork', 'settings.allowNetwork']] as const).map(([key, label]) => <label className="setting-row" key={key}><span>{t(label)}</span><input type="checkbox" checked={policy[key]} onChange={() => updatePolicy({ [key]: !policy[key] })} /></label>)}</section>}
+        </div></div>
       </aside>
       {editing && <ProfileEditor profile={editing} runtimes={snapshot.runtimes} t={t} close={() => setEditing(undefined)} />}
     </div>
