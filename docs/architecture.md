@@ -293,18 +293,23 @@ GUI 所有状态来自 Event projection。Renderer 不直接读取 worker stdout
 Codex
   │ stdio MCP
   ▼
-relay-mcp（薄桥接进程）
-  │ Unix Domain Socket / Named Pipe
-  ▼
-Relay Desktop / Core（Electron Main）
-  ├─ SessionManager
-  ├─ WorkerManager
-  ├─ RoutingPolicy
-  ├─ EventStore
-  └─ AdapterRegistry
+relay-mcp（执行侧：RunController、RoutingPolicy、EventStore 写入、Adapter 进程）
   │ child_process.spawn + stdin/stdout/stderr
   ▼
 Worker CLIs
+  │
+  └─ RelayEvent（append-only）→ ~/.relay/relay.sqlite
+                                   │ 只读 projection + 控制队列
+                                   ▼
+                    relayd（127.0.0.1:7352：HTTP API + SSE + 托管 Web Inspector）
+                              ▲                              ▲
+                    HTTP /api/menu                   打开 /s/<session>
+                              │                              │
+                    menu-bar（Electron，仅托盘）        Edge / Chrome
 ```
 
-三个通信面彼此独立，全程不需要 TCP 端口。Renderer 通过 Electron IPC 读取 Core projection。
+三个通信面彼此独立：MCP stdio（Codex ↔ Relay）、SQLite 事件日志（执行 ↔ 展示）、loopback HTTP（daemon ↔ 托盘与浏览器）。
+
+- 执行侧只有 relay-mcp 一个写者；daemon 只读事件日志，并往控制队列表写取消请求。因此 daemon 与托盘可以随时重启，不影响正在运行的委派。
+- daemon 绑定 127.0.0.1，校验 Host 与 Origin，并要求每次启动生成的 token；端口、token 与安全边界见 docs/inspector.md。
+- 界面是浏览器页面，不是 Electron Renderer：托盘点击会话即用 Edge/Chrome 打开对应 URL，日志展示与应用外壳彻底解耦。

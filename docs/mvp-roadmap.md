@@ -47,14 +47,15 @@ MVP 采用全栈 TypeScript，优先降低本地进程与协议集成的复杂�
 
 | 层 | 推荐技术 |
 |---|---|
-| Desktop | Electron |
-| UI | React + TypeScript + Vite |
+| 菜单栏 | Electron（仅 Tray，无窗口/无 Renderer） |
+| 日志服务 | Node.js + TypeScript（`node:http` + SSE + 静态托管） |
+| UI | React + TypeScript + Vite（浏览器页面，由日志服务托管） |
 | UI state | Zustand |
 | UI components | shadcn/ui + Tailwind CSS |
 | Runtime/Core | Node.js + TypeScript |
 | CLI 管理 | `child_process.spawn()` |
 | MCP | 官方 MCP TypeScript server/stdio packages |
-| 内部 IPC | Unix Domain Socket / Windows Named Pipe，使用 Node `net` |
+| 内部 IPC | 回环 HTTP（`127.0.0.1:7352`）+ SQLite 事件日志 |
 | 持久化 | SQLite + `better-sqlite3` |
 | Schema | Zod |
 | i18n | 类型安全的内置资源（`en` / `zh-CN`），Renderer 与 Core 共用翻译键 |
@@ -63,18 +64,21 @@ MVP 采用全栈 TypeScript，优先降低本地进程与协议集成的复杂�
 | Logging | 自定义、版本化的 `RelayEvent` |
 | 测试 | Vitest；Adapter 增加 fixture-based parser tests |
 
-选择 Electron 而不是 Tauri，是因为 Relay 的难点集中在 Node 生态：MCP、stdio、子进程、JSON event stream 和各类 Node-based CLI。Tauri 会额外引入 Rust → Node sidecar 层，而 Electron Main 可直接承载 Core。Renderer 不承担进程管理。
+选择 Electron 而不是 Tauri，是因为原生菜单栏在纯 Node 里没有绑定：Electron 只用来画一个 Tray，其余全部是普通 Node 进程与浏览器页面。Core 由 relay-mcp 承载，展示由 relayd + Web Inspector 承载，Electron 不参与数据链路。
 
 建议 monorepo：
 
 ```text
 relay/
 ├── apps/
-│   └── desktop/          # Electron Main + React Renderer
+│   ├── menu-bar/         # Electron 仅托盘
+│   ├── relayd/           # 日志 daemon：HTTP + SSE + 静态托管
+│   └── web/              # Web Inspector（React + shadcn）
 ├── packages/
 │   ├── core/             # registry, policy, runs, events
 │   ├── mcp/              # 极薄 stdio bridge
 │   ├── protocol/         # Zod schemas + shared types
+│   ├── relay-api/        # 传输契约 + 客户端（daemon/托盘/Web 共用）
 │   ├── adapter-sdk/      # AgentAdapter contract + test kit
 │   └── adapters/
 │       ├── deepseek/

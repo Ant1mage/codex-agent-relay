@@ -1,0 +1,14 @@
+{
+  "name": "@relay/relay-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server-info": "./src/server-info.ts"
+  },
+  "dependencies": {
+    "@relay/protocol": "workspace:*",
+    "zod": "^4.1.0"
+  }
+}

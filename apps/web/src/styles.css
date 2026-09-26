@@ -1,0 +1,53 @@
+@import "./tailwind.css";
+
+/*
+ * Relay Inspector shell. Everything visual beyond the shadcn tokens is layout:
+ * a fixed session rail, a run strip and the log pane that takes the rest.
+ */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A local log viewer is read top-to-bottom; keep scrollbars quiet. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+/* The Relay mark follows the text colour through a mask, like the app icon. */
+.mark-tinted {
+  background-color: currentColor;
+  mask: url('/favicon.svg') center / contain no-repeat;
+  -webkit-mask: url('/favicon.svg') center / contain no-repeat;
+}
+
+.log-row {
+  border-left-width: 2px;
+  border-left-color: transparent;
+}
+
+@media print {
+  .no-print {
+    display: none;
+  }
+}

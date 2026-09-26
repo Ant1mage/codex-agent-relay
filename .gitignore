@@ -1,6 +1,7 @@
 node_modules/
 dist/
 out/
+output/
 coverage/
 .playwright-cli/
 .DS_Store
