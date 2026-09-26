@@ -131,11 +131,10 @@ function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
           const selected = view.run.id === selectedRunId && step.id === selectedStepId
           return (
             <div className="step-link" key={step.id}>
-              {index > 0 && <ChevronRight size={13} />}
               <button ref={selected ? currentRef : undefined} className={selected ? 'step-node selected' : `step-node ${step.status}`} onClick={() => selectStep(view.run.id, step.id)}>
                 <span>{t('steps.step')} {index + 1}</span>
                 <strong>{view.run.profileId}</strong>
-                <i />
+                <em>{t(`run.status.${step.status}`)}</em>
               </button>
             </div>
           )
@@ -155,7 +154,7 @@ function Console({ view, step, t, openInspector }: { view: DesktopRunView; step:
   return (
     <section className="console-panel">
       <header className="console-header">
-        <div><strong>{t('console.title')}</strong><span>{view.run.profileId} · {t('steps.iteration')} {step.iteration} · {elapsed(step.createdAt, worker?.endedAt)}</span></div>
+        <div><strong>{t('console.title')} · {view.run.profileId}</strong><span>{t('steps.iteration')} {step.iteration} · {elapsed(step.createdAt, worker?.endedAt)}</span></div>
         <div className="console-actions">
           {changeCount > 0 && <button onClick={() => openInspector('changes')}><FileDiff size={13} />{t('console.changes')} <b>{changeCount}</b></button>}
           <button onClick={() => openInspector('raw')}>{t('console.rawOutput')} <b>{rawCount}</b></button>

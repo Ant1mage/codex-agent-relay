@@ -18,7 +18,7 @@ const en = {
   'runs.events': 'Live events',
   'runs.duration': 'Duration',
   'runs.worker': 'Worker',
-  'steps.title': 'Steps',
+  'steps.title': 'Step',
   'steps.step': 'Step',
   'steps.iteration': 'Iteration',
   'console.title': 'Console',
