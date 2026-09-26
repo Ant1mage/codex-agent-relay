@@ -2,22 +2,15 @@ import { useEffect, useRef, useState, type ReactElement } from 'react'
 import {
   Bot,
   ChevronRight,
-  Languages,
   Plus,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
-  Sun,
-  X,
 } from 'lucide-react'
 import { Button } from './components/ui/button.js'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from './components/ui/dialog.js'
+import { SettingsFrame } from './components/settings-frame.js'
+import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card.js'
+import { Field, FieldGroup, FieldLabel, FieldSeparator } from './components/ui/field.js'
 import {
   Item,
   ItemContent,
@@ -26,9 +19,7 @@ import {
   ItemTitle,
 } from './components/ui/item.js'
 import { Input } from './components/ui/input.js'
-import { Label } from './components/ui/label.js'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select.js'
-import { Separator } from './components/ui/separator.js'
 import { ToggleGroup, ToggleGroupItem } from './components/ui/toggle-group.js'
 import { Switch } from './components/ui/switch.js'
 import type { AgentProfile, Locale, RelayPolicy } from '@relay/protocol'
@@ -197,16 +188,14 @@ export function SettingsSheet({
   )
 
   return (
-    <Dialog open onOpenChange={(next) => { if (!next) setSettingsOpen(false) }}>
-      <DialogContent showCloseButton={false} className="settings-sheet max-w-[760px] gap-0 p-0">
-        <DialogHeader className="flex-row items-center justify-between gap-2 border-b border-line px-5 py-3">
-          <DialogTitle className="text-base">{t('settings.title')}</DialogTitle>
-          <DialogDescription className="sr-only">{t('settings.subtitle')}</DialogDescription>
-          <Button variant="ghost" size="icon-xs" aria-label={t('action.close')} onClick={() => setSettingsOpen(false)}><X size={16} /></Button>
-        </DialogHeader>
-        <div className="settings-layout">
-          <nav className="settings-navigation">
-            <ItemGroup className="gap-0.5">
+    <SettingsFrame
+      open
+      onOpenChange={(next) => { if (!next) setSettingsOpen(false) }}
+      title={t('settings.title')}
+      description={t('settings.subtitle')}
+      closeLabel={t('action.close')}
+      navigation={(
+        <ItemGroup className="gap-0.5">
             {navButton('general', t('settings.general'), <Settings2 size={14} />)}
             {navButton('agents', t('settings.providerAgents'), <Bot size={14} />)}
             {/* Provider sub-items (docs/ui.md 17.2): indented under Agents */}
@@ -239,20 +228,25 @@ export function SettingsSheet({
 
             {navButton('workspace', t('settings.workspaceSection'), <ShieldCheck size={14} />)}
             {navButton('advanced', t('settings.advanced'), <SlidersHorizontal size={14} />)}
-            </ItemGroup>
-          </nav>
-
-          <div className="settings-content">
+        </ItemGroup>
+      )}
+    >
+      <div className="p-5">
             {/*
               General holds every non-core preference: language, theme and text
               size. None of them is worth a top-level row of its own, and they
               are all "set once" choices rather than part of the delegation path.
             */}
             {selection === 'general' && (
-              <div className="settings-preferences">
-                <section className="settings-preference">
-                  <h2>{t('settings.language')}</h2>
-                  <div className="settings-preference-control">
+              <div className="flex flex-col gap-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>{t('settings.language')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <FieldGroup className="gap-4">
+                      <Field orientation="horizontal">
+                        <FieldLabel>{t('settings.language')}</FieldLabel>
                     <ToggleGroup
                       type="single"
                       value={locale}
@@ -263,12 +257,19 @@ export function SettingsSheet({
                       <ToggleGroupItem value="en">English</ToggleGroupItem>
                       <ToggleGroupItem value="zh-CN">简体中文</ToggleGroupItem>
                     </ToggleGroup>
-                  </div>
-                </section>
+                      </Field>
+                    </FieldGroup>
+                  </CardContent>
+                </Card>
 
-                <section className="settings-preference">
-                  <h2>{t('settings.appearance')}</h2>
-                  <div className="settings-preference-control flex flex-col gap-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>{t('settings.appearance')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <FieldGroup className="gap-4">
+                      <Field orientation="horizontal">
+                        <FieldLabel>{t('settings.appearance')}</FieldLabel>
                     <ToggleGroup
                       type="single"
                       value={theme}
@@ -280,9 +281,10 @@ export function SettingsSheet({
                         <ToggleGroupItem value={value} key={value}>{t(`settings.${value}`)}</ToggleGroupItem>
                       ))}
                     </ToggleGroup>
-                    <Separator />
-                    <div className="flex items-center justify-between gap-4">
-                      <Label htmlFor="relay-font-size">{t('settings.fontSize')}</Label>
+                      </Field>
+                      <FieldSeparator />
+                      <Field orientation="horizontal">
+                      <FieldLabel htmlFor="relay-font-size">{t('settings.fontSize')}</FieldLabel>
                       <Select value={String(fontSize)} onValueChange={(next) => setFontSize(Number(next))}>
                         <SelectTrigger id="relay-font-size" className="w-[96px]"><SelectValue /></SelectTrigger>
                         <SelectContent>
@@ -291,9 +293,10 @@ export function SettingsSheet({
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
-                  </div>
-                </section>
+                      </Field>
+                    </FieldGroup>
+                  </CardContent>
+                </Card>
               </div>
             )}
 
@@ -457,9 +460,7 @@ export function SettingsSheet({
                 )}
               </section>
             )}
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </SettingsFrame>
   )
 }

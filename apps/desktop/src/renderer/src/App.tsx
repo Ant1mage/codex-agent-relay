@@ -4,7 +4,6 @@ import {
   CircleAlert,
   Info,
   MoreHorizontal,
-  PanelLeft,
   RefreshCw,
   Settings as SettingsIcon,
   Square,
@@ -14,6 +13,7 @@ import type { HostSession, Step, StepStatus } from '@relay/protocol'
 import type { DesktopRunView } from '../../shared/api.js'
 import type { CodexIntegrationStatus } from '../../shared/api.js'
 import { useAppStore } from './store.js'
+import { cn } from './lib/utils.js'
 import { Badge } from './components/ui/badge.js'
 import { Item, ItemContent, ItemGroup, ItemMedia, ItemTitle } from './components/ui/item.js'
 import { ScrollArea } from './components/ui/scroll-area.js'
@@ -33,6 +33,21 @@ import {
 } from './components/ui/sheet.js'
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs.js'
 import { Button } from './components/ui/button.js'
+import {
+  Sidebar as ShadcnSidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from './components/ui/sidebar.js'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -98,53 +113,61 @@ function EnvironmentChip({ t }: { t: Translator }) {
   )
 }
 
-function Sidebar({ t }: { t: Translator }) {
+function RelaySidebar({ t, macOS }: { t: Translator; macOS: boolean }) {
   const { snapshot, selectedSessionId, selectSession, setSettingsOpen } = useAppStore()
   const sessions = snapshot?.sessions ?? []
   return (
-    <aside className="sidebar">
-      <div className="sidebar-top">
-        <div className="sidebar-brand">
-          <span className="sidebar-mark mark-tinted" role="img" aria-label="Relay" />
-          <strong>{t('app.name')}</strong>
+    <ShadcnSidebar collapsible="offcanvas">
+      <SidebarHeader className={macOS ? 'pt-10' : undefined}>
+        <div className="flex items-center gap-2 px-2 py-1 text-sm font-semibold">
+          <span className="size-4 mark-tinted" role="img" aria-label="Relay" />
+          <span>{t('app.name')}</span>
         </div>
-      </div>
-      <div className="sidebar-section-title">{t('sessions.title')}</div>
-      <ItemGroup className="min-h-0 flex-1 gap-0 overflow-auto px-2 pb-4">
-        {/* Text-first rows, no per-session icons (docs/ui.md 4.3) */}
-        {sessions.map((session) => (
-          <Item
-            asChild
-            key={session.id}
-            size="sm"
-            className={`rounded-md px-2 py-1.5 ${
-              session.id === selectedSessionId ? 'bg-[color-mix(in_srgb,var(--text)_9%,transparent)]' : ''
-            }`}
-          >
-            <button
-              type="button"
-              className="w-full text-left"
-              onClick={() => selectSession(session.id)}
-              title={session.displayName}
-            >
-              <ItemContent className="gap-0.5">
-                <ItemTitle className="text-xs font-medium">{session.displayName}</ItemTitle>
-                <span className="truncate text-[9px] text-faint">
-                  {relativeTime(session.updatedAt, session.status, t)}
-                </span>
-              </ItemContent>
-            </button>
-          </Item>
-        ))}
-        {!sessions.length && <p className="px-2 text-[11px] leading-snug text-faint">{t('sessions.empty')}</p>}
-      </ItemGroup>
-      <Item asChild size="sm" className="m-2 rounded-md">
-        <button type="button" className="w-full text-left text-[11px] text-muted" onClick={() => setSettingsOpen(true)}>
-          <ItemMedia><SettingsIcon size={15} /></ItemMedia>
-          <ItemContent><ItemTitle className="text-[11px] font-normal">{t('settings.title')}</ItemTitle></ItemContent>
-        </button>
-      </Item>
-    </aside>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>{t('sessions.title')}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {sessions.map((session) => (
+                <SidebarMenuItem key={session.id}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={session.id === selectedSessionId}
+                    tooltip={session.displayName}
+                    className="h-auto items-start py-2"
+                  >
+                    <button type="button" onClick={() => selectSession(session.id)}>
+                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <span>{session.displayName}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {relativeTime(session.updatedAt, session.status, t)}
+                        </span>
+                      </span>
+                    </button>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+              {!sessions.length && (
+                <SidebarMenuItem>
+                  <span className="block px-2 py-1 text-xs text-muted-foreground">{t('sessions.empty')}</span>
+                </SidebarMenuItem>
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={() => setSettingsOpen(true)} tooltip={t('settings.title')}>
+              <SettingsIcon />
+              <span>{t('settings.title')}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+    </ShadcnSidebar>
   )
 }
 
@@ -687,7 +710,15 @@ function EmptyStateBody({ t, hint }: { t: Translator; hint?: boolean }) {
   )
 }
 
-function SessionWorkspace({ t }: { t: Translator }) {
+function SessionWorkspace({
+  t,
+  macOS,
+  sidebarCollapsed,
+}: {
+  t: Translator
+  macOS: boolean
+  sidebarCollapsed: boolean
+}) {
   const { snapshot, selectedSessionId, selectedRunId, selectedStepId, loading, refresh, onboardingOpen } = useAppStore()
   const [inspector, setInspector] = useState<Inspector>()
   // Contextual inspector: closed until the user asks for it (docs/ui.md 15).
@@ -720,15 +751,22 @@ function SessionWorkspace({ t }: { t: Translator }) {
       {/* The title names the Codex session and never changes with Step selection;
           worker/task detail belongs to Step and Console (docs/ui.md 6). */}
       <header className="workspace-heading">
-        <div>
+        <div className="flex min-w-0 items-start gap-2">
+          <SidebarTrigger
+            className={cn('mt-0.5 shrink-0', macOS && sidebarCollapsed && 'ml-14')}
+            aria-label={sidebarCollapsed ? t('action.showSidebar') : t('action.hideSidebar')}
+          />
+          <div className="min-w-0">
           <h1 title={session.displayName}>{session.displayName}</h1>
           <p>
             {selectedView && <StatusLabel status={selectedView.run.status} t={t} />}
             {selectedView && <span className="heading-sep">·</span>}
             <span>{new Date(session.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
           </p>
+          </div>
         </div>
         <div className="heading-actions">
+          <EnvironmentChip t={t} />
           <Button variant="ghost" size="icon-xs" title={t('common.refresh')} onClick={() => void refresh()}>
             <RefreshCw className={loading ? 'spin' : ''} size={15} />
           </Button>
@@ -788,12 +826,10 @@ export function App() {
   const t = createTranslator(locale)
 
   const setTheme = (next: Theme) => { localStorage.setItem('relay.theme', next); setThemeState(next) }
-  const toggleSidebar = () =>
-    setSidebarCollapsed((current) => {
-      const next = !current
-      localStorage.setItem('relay.sidebar-collapsed', String(next))
-      return next
-    })
+  const setSidebarOpen = (open: boolean) => {
+    localStorage.setItem('relay.sidebar-collapsed', String(!open))
+    setSidebarCollapsed(!open)
+  }
   const setFontSize = (next: number) => {
     const value = Math.min(20, Math.max(14, Math.round(next)))
     localStorage.setItem('relay.font-size', String(value))
@@ -810,16 +846,6 @@ export function App() {
     document.documentElement.style.fontSize = `${fontSize}px`
   }, [fontSize])
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
-        event.preventDefault()
-        toggleSidebar()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  })
-  useEffect(() => {
     void refresh()
     const timer = window.setInterval(() => void refresh(), 2_000)
     return () => window.clearInterval(timer)
@@ -830,37 +856,17 @@ export function App() {
     return () => window.clearTimeout(timer)
   }, [notice, setNotice])
 
-  const sidebarLabel = sidebarCollapsed ? t('action.showSidebar') : t('action.hideSidebar')
-  // macOS keeps its traffic lights inside the hidden-inset titlebar, so the
-  // sidebar carries the extra top padding instead of a separate toolbar row.
   const macOS = navigator.userAgent.includes('Macintosh')
 
   return (
-    <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}${macOS ? ' macos' : ''}`}>
-      {/* Transparent chrome plane over the content: the sidebar control sits
-          beside the native traffic lights, the environment chip reports what
-          Relay detected. An overlay, not a layout row. */}
-      <div className="window-chrome">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="sidebar-toggle"
-          aria-label={sidebarLabel}
-          title={`${sidebarLabel} (\u2318B)`}
-          aria-expanded={!sidebarCollapsed}
-          onClick={toggleSidebar}
-        >
-          <PanelLeft />
-        </Button>
-        <EnvironmentChip t={t} />
-      </div>
-      <div className="app-main">
-        <Sidebar t={t} />
-        <SessionWorkspace t={t} />
-      </div>
+    <SidebarProvider open={!sidebarCollapsed} onOpenChange={setSidebarOpen}>
+      <RelaySidebar t={t} macOS={macOS} />
+      <SidebarInset className="min-h-svh">
+        <SessionWorkspace t={t} macOS={macOS} sidebarCollapsed={sidebarCollapsed} />
+      </SidebarInset>
       <SettingsSheet t={t} theme={theme} setTheme={setTheme} fontSize={fontSize} setFontSize={setFontSize} />
       {error && <div className="toast error"><CircleAlert size={14} />{error}</div>}
       {notice && <div className="toast"><Check size={14} />{notice}</div>}
-    </div>
+    </SidebarProvider>
   )
 }
