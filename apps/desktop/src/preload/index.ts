@@ -8,6 +8,12 @@ const api: RelayDesktopApi = {
   saveProfile: (profile: AgentProfile) => ipcRenderer.invoke('relay:profile:save', profile),
   cancelWorker: (workerSessionId: string) =>
     ipcRenderer.invoke('relay:worker:cancel', workerSessionId),
+  cancelSessionWorkers: (hostSessionId: string) =>
+    ipcRenderer.invoke('relay:session:cancel', hostSessionId),
+  codexStatus: () => ipcRenderer.invoke('relay:codex:status'),
+  runtimeOptions: (runtimeId: string) => ipcRenderer.invoke('relay:runtime:options', runtimeId),
+  completeOnboarding: () => ipcRenderer.invoke('relay:onboarding:complete'),
+  openWorkspace: (path: string) => ipcRenderer.invoke('relay:workspace:open', path),
 }
 
 contextBridge.exposeInMainWorld('relay', api)

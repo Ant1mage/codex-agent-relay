@@ -8,6 +8,7 @@
     "deepseek:smoke": "tsx packages/adapters/deepseek/src/smoke.ts",
     "desktop:build": "pnpm --filter @relay/desktop build",
     "desktop:dev": "pnpm --filter @relay/desktop dev",
+    "icons": "bash tools/build-icons.sh",
     "mcp:dev": "tsx packages/mcp/src/stdio.ts",
     "test": "vitest run",
     "test:watch": "vitest",

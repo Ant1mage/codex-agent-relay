@@ -4,7 +4,12 @@ export const isoTimestampSchema = z.iso.datetime({ offset: true })
 export const identifierSchema = z.string().trim().min(1).max(256)
 export const localeSchema = z.enum(['en', 'zh-CN'])
 export type Locale = z.infer<typeof localeSchema>
-export const reasoningEffortSchema = z.enum(['low', 'medium', 'high'])
+/**
+ * Reasoning is a value the runtime's CLI defines and reports, not a fixed Relay
+ * scale, so it is stored as an opaque token (docs/ui.md 16.1). Relay only ever
+ * writes a value the CLI itself listed.
+ */
+export const reasoningEffortSchema = z.string().trim().min(1).max(64)
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>
 
 export const capabilitySetSchema = z.object({
@@ -23,8 +28,51 @@ export const adapterCapabilitiesSchema = z.object({
   send: z.boolean(),
   cancel: z.boolean(),
   childSessions: z.boolean(),
+  /**
+   * True only when the CLI itself advertises a model flag, i.e. when Relay can
+   * actually hand a model to it. Declared capabilities stay false until the
+   * probe in @relay/adapter-sdk finds the flag, so the UI never offers a picker
+   * that cannot affect a run.
+   */
+  modelSelection: z.boolean().optional(),
 })
 export type AdapterCapabilities = z.infer<typeof adapterCapabilitiesSchema>
+
+/**
+ * One selectable model, as reported by the CLI itself. Relay never invents
+ * model names: `value` is what the CLI accepts on its model flag.
+ */
+export const modelOptionSchema = z.object({
+  value: z.string().trim().min(1).max(128),
+  label: z.string().trim().min(1).max(200).optional(),
+})
+export type ModelOption = z.infer<typeof modelOptionSchema>
+
+/**
+ * One selectable reasoning strength. `strength` gives the slider its order, so
+ * a CLI reporting four levels yields four stops rather than three.
+ */
+export const reasoningLevelSchema = z.object({
+  strength: z.number().int().min(1).max(5),
+  label: z.string().trim().min(1).max(200),
+  value: z.string().trim().min(1).max(128),
+})
+export type ReasoningLevel = z.infer<typeof reasoningLevelSchema>
+
+/** What a runtime's CLI reports about its own model and reasoning choices. */
+export const runtimeOptionsSchema = z.object({
+  runtimeId: identifierSchema,
+  adapterId: identifierSchema,
+  models: modelOptionSchema.array(),
+  levels: reasoningLevelSchema.array(),
+  /** Flags Relay would use, empty when the CLI did not advertise them. */
+  modelFlag: z.string().trim().min(1).optional(),
+  reasoningFlag: z.string().trim().min(1).optional(),
+  /** Where the reported choices came from, so the UI can say so. */
+  source: z.enum(['cli', 'api', 'default']),
+  diagnostics: z.string().array(),
+})
+export type RuntimeOptions = z.infer<typeof runtimeOptionsSchema>
 
 export const runtimeSchema = z.object({
   id: identifierSchema,

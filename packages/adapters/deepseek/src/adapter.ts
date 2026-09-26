@@ -15,7 +15,14 @@ import type {
   ResumeInput,
   WorkerSessionHandle,
 } from '@relay/adapter-sdk'
-import type { AdapterCapabilities, StartInput } from '@relay/protocol'
+import {
+  probeRuntimeOptions,
+  readHelp,
+  selectionOf,
+  withModelFallback,
+  withSelectionArgs,
+} from '@relay/adapter-sdk'
+import type { AdapterCapabilities, RuntimeOptions, StartInput } from '@relay/protocol'
 import { parseDeepSeekLine } from './parser.js'
 
 class AsyncEventQueue implements AsyncIterable<AdapterEvent> {
@@ -96,6 +103,7 @@ export class DeepSeekAdapter implements AgentAdapter {
   readonly #environment: NodeJS.ProcessEnv | undefined
   readonly #processes = new Map<string, ChildProcess>()
   #features = { json: true, resume: true }
+  #options: RuntimeOptions | undefined
   #disposed = false
 
   constructor(options: DeepSeekAdapterOptions = {}) {
@@ -114,6 +122,35 @@ export class DeepSeekAdapter implements AgentAdapter {
       cancel: true,
       childSessions: false,
     }
+  }
+
+  /**
+   * Model and reasoning choices, read from the CLI's own --help. Relay reports
+   * only what the CLI advertises; a CLI with no model flag yields no models and
+   * a diagnostic, so the UI shows the CLI default rather than a guessed list.
+   */
+  async reportOptions(runtimeId: string): Promise<RuntimeOptions> {
+    const executablePath = discoverExecutable('dsh')
+    if (!executablePath) {
+      return {
+        runtimeId,
+        adapterId: this.id,
+        models: [],
+        levels: [],
+        source: 'default',
+        diagnostics: ['Runtime executable was not found, so Relay cannot read its model options'],
+      }
+    }
+    const evidence = readHelp(executablePath, [...this.#prefixArgs, '--profile', 'headless'], this.#environment)
+    const cli = probeRuntimeOptions(this.capabilities(), evidence, runtimeId, this.id).options
+    // CLI first; fall back to the official API when the CLI exposes no list.
+    return withModelFallback(cli, 'deepseek')
+  }
+
+  /** Capabilities with model support set from what the CLI advertises. */
+  #probedCapabilities(executablePath: string): AdapterCapabilities {
+    const evidence = readHelp(executablePath, [...this.#prefixArgs, '--profile', 'headless'], this.#environment)
+    return probeRuntimeOptions(this.capabilities(), evidence, 'runtime:deepseek-harness', this.id).capabilities
   }
 
   async detect(): Promise<DetectionResult> {
@@ -164,6 +201,14 @@ export class DeepSeekAdapter implements AgentAdapter {
     const executablePath = this.#configuredExecutable ?? discoverExecutable('dsh')
     if (!executablePath) throw new Error('DeepSeek Harness executable `dsh` was not found')
     this.#features = this.#probeFeatures(executablePath)
+    // Probe the CLI once per launch so model/reasoning flags are only sent when
+    // dsh actually advertises them.
+    this.#options = probeRuntimeOptions(
+      this.capabilities(),
+      readHelp(executablePath, [...this.#prefixArgs, '--profile', 'headless'], this.#environment),
+      'runtime:deepseek-harness',
+      this.id,
+    ).options
     if (!this.#features.json) return this.#launchPlain(executablePath, input, resumeSessionId)
 
     const args = [
@@ -173,7 +218,8 @@ export class DeepSeekAdapter implements AgentAdapter {
       '--json',
       ...(resumeSessionId ? ['--session-id', resumeSessionId] : []),
     ]
-    const child = spawn(executablePath, args, {
+    const selected = withSelectionArgs(args, selectionOf(input), this.#options ?? {})
+    const child = spawn(executablePath, selected, {
       cwd: input.cwd,
       env: { ...process.env, ...this.#environment, NO_COLOR: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -285,7 +331,8 @@ export class DeepSeekAdapter implements AgentAdapter {
       ...(resumeSessionId ? ['--session-id', resumeSessionId] : []),
       input.task,
     ]
-    const child = spawn(executablePath, args, {
+    const selected = withSelectionArgs(args, selectionOf(input), this.#options ?? {})
+    const child = spawn(executablePath, selected, {
       cwd: input.cwd,
       env: { ...process.env, ...this.#environment, NO_COLOR: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],

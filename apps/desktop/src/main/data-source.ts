@@ -1,8 +1,17 @@
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { AgentProfile, RelayPolicy, RelayPolicyOverride, Runtime } from '@relay/protocol'
+import { promisify } from 'node:util'
+import type {
+  AgentProfile,
+  RelayPolicy,
+  RelayPolicyOverride,
+  Runtime,
+  RuntimeOptions,
+} from '@relay/protocol'
 import {
   hostSessionSchema,
   agentProfileSchema,
@@ -17,7 +26,123 @@ import { GeminiAdapter } from '@relay/adapter-gemini'
 import { KimiAdapter } from '@relay/adapter-kimi'
 import { ZaiAdapter } from '@relay/adapter-zai'
 import { defaultPolicy, defaultProfiles, projectRun } from '@relay/core'
-import type { DesktopSettings, DesktopSnapshot } from '../shared/api.js'
+import { httpModelQueries } from '@relay/adapter-sdk'
+import type {
+  CodexIntegrationCheck,
+  CodexIntegrationStatus,
+  DesktopRunView,
+  DesktopSettings,
+  DesktopSnapshot,
+} from '../shared/api.js'
+
+const execFileAsync = promisify(execFile)
+
+/**
+ * Real detection for the three checks in docs/ui.md 22.2 "Connect Codex".
+ * The integration ships as repo content (integrations/codex); these probe the
+ * user's Codex home so onboarding reports actual status rather than an
+ * optimistic checklist.
+ */
+const CODEX_PROBE_TIMEOUT_MS = 4_000
+
+/** Runtime option probes spawn the CLI, so reuse a recent result. */
+const OPTIONS_CACHE_MS = 30_000
+
+/** An API-derived model list is stable; keep it across restarts for a day. */
+const OPTIONS_DISK_TTL_MS = 24 * 60 * 60 * 1_000
+
+function codexHome(): string {
+  const configured = process.env.CODEX_HOME
+  return configured && configured.length > 0 ? configured : join(homedir(), '.codex')
+}
+
+/**
+ * Candidate `codex` executables, in the order Codex itself installs them.
+ *
+ * The CLI is still named `codex`. It just is not always on PATH: the VS Code
+ * extension and the desktop app both bundle their own copy, which is the normal
+ * install for most users, so a PATH-only check reports "not found" on a machine
+ * that plainly has Codex running.
+ */
+function codexCandidates(): string[] {
+  const home = homedir()
+  const candidates = [
+    join(codexHome(), 'bin', 'codex'),
+    join(home, '.local', 'bin', 'codex'),
+    join(home, '.npm-global', 'bin', 'codex'),
+    '/usr/local/bin/codex',
+    '/opt/homebrew/bin/codex',
+  ]
+  // The VS Code extension ships a per-platform binary under a versioned folder.
+  for (const root of [join(home, '.vscode', 'extensions'), join(home, '.vscode-insiders', 'extensions')]) {
+    try {
+      const versions = readdirSync(root)
+        .filter((entry) => entry.startsWith('openai.chatgpt-'))
+        .sort()
+        .reverse()
+      for (const entry of versions) {
+        for (const target of ['macos-aarch64', 'macos-x86_64', 'linux-x86_64', 'linux-aarch64']) {
+          candidates.push(join(root, entry, 'bin', target, 'codex'))
+        }
+      }
+    } catch {
+      // VS Code is optional.
+    }
+  }
+  return candidates
+}
+
+async function probeCodexCli(): Promise<CodexIntegrationCheck> {
+  const tried: string[] = ['PATH']
+  const attempts = ['codex', ...codexCandidates()]
+  for (const candidate of attempts) {
+    try {
+      const { stdout } = await execFileAsync(candidate, ['--version'], {
+        timeout: CODEX_PROBE_TIMEOUT_MS,
+      })
+      const version = stdout.trim() || 'unknown version'
+      return {
+        id: 'codex-cli',
+        ok: true,
+        // Distinguish a PATH install from a bundled one so the reason is visible.
+        detail: candidate === 'codex' ? `codex · ${version}` : `${candidate} · ${version}`,
+      }
+    } catch {
+      if (candidate !== 'codex') tried.push(candidate)
+    }
+  }
+  return {
+    id: 'codex-cli',
+    ok: false,
+    detail: `codex not found on PATH or in a VS Code extension; checked ${tried.length} locations`,
+  }
+}
+
+function probeRelayMcp(): CodexIntegrationCheck {
+  const candidates = [join(codexHome(), 'config.toml'), join(codexHome(), 'mcp.json')]
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue
+    try {
+      const contents = readFileSync(candidate, 'utf8')
+      // Either a TOML [mcp_servers.relay] table or a JSON "relay" key.
+      if (/mcp_servers\.relay|"relay"\s*:/i.test(contents)) {
+        return { id: 'relay-mcp', ok: true, detail: candidate }
+      }
+    } catch {
+      // Unreadable config is reported as not configured below.
+    }
+  }
+  return { id: 'relay-mcp', ok: false, detail: join(codexHome(), 'config.toml') }
+}
+
+function probeRelaySkill(): CodexIntegrationCheck {
+  const primary = join(codexHome(), 'skills', 'relay', 'SKILL.md')
+  const candidates = [primary, join(homedir(), '.config', 'codex', 'skills', 'relay', 'SKILL.md')]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return { id: 'relay-skill', ok: true, detail: candidate }
+  }
+  return { id: 'relay-skill', ok: false, detail: primary }
+}
 
 interface EventRow {
   id: string
@@ -42,6 +167,8 @@ export class DesktopDataSource {
     new GeminiAdapter(),
     new ZaiAdapter(),
   ]
+  readonly #optionsCache = new Map<string, { at: number; authRequired: boolean; value: RuntimeOptions }>()
+  readonly #optionsCachePath: string
   #runtimes: Runtime[] = []
   #profiles: AgentProfile[] = []
   #diagnostics: string[] = []
@@ -90,6 +217,7 @@ export class DesktopDataSource {
     }
     this.#settingsPath = settingsPath
     this.#profilesPath = join(dirname(settingsPath), 'profiles.json')
+    this.#optionsCachePath = join(dirname(settingsPath), 'runtime-options.json')
   }
 
   async initialize(): Promise<void> {
@@ -125,12 +253,19 @@ export class DesktopDataSource {
         const parsed = JSON.parse(readFileSync(this.#settingsPath, 'utf8')) as {
           policy?: unknown
           workspaceOverrides?: Record<string, unknown>
+          onboardingCompletedAt?: unknown
         }
         const workspaceOverrides: Record<string, RelayPolicyOverride> = {}
         for (const [workspace, override] of Object.entries(parsed.workspaceOverrides ?? {})) {
           workspaceOverrides[workspace] = relayPolicyOverrideSchema.parse(override)
         }
-        return { policy: relayPolicySchema.parse(parsed.policy), workspaceOverrides }
+        return {
+          policy: relayPolicySchema.parse(parsed.policy),
+          workspaceOverrides,
+          ...(typeof parsed.onboardingCompletedAt === 'string'
+            ? { onboardingCompletedAt: parsed.onboardingCompletedAt }
+            : {}),
+        }
       } catch {
         // Invalid user settings fall back to conservative defaults.
       }
@@ -143,9 +278,118 @@ export class DesktopDataSource {
     for (const [workspace, override] of Object.entries(input.workspaceOverrides)) {
       workspaceOverrides[workspace] = relayPolicyOverrideSchema.parse(override)
     }
-    const settings = { policy: relayPolicySchema.parse(input.policy), workspaceOverrides }
+    const settings: DesktopSettings = {
+      policy: relayPolicySchema.parse(input.policy),
+      workspaceOverrides,
+      ...(input.onboardingCompletedAt ? { onboardingCompletedAt: input.onboardingCompletedAt } : {}),
+    }
     writeFileSync(this.#settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
     return settings
+  }
+
+  /** Marks first-run onboarding finished so later launches skip it (docs/ui.md 22.3). */
+  completeOnboarding(): DesktopSettings {
+    return this.saveSettings({ ...this.settings(), onboardingCompletedAt: new Date().toISOString() })
+  }
+
+  /**
+   * Model and reasoning choices for a runtime, as reported by its CLI. Cached
+   * briefly because the probe spawns the CLI with --help, and the renderer asks
+   * whenever the user opens an agent editor.
+   */
+
+  #readOptionsCache(): Record<string, { at: number; authRequired: boolean; value: RuntimeOptions }> {
+    try {
+      if (!existsSync(this.#optionsCachePath)) return {}
+      const parsed: unknown = JSON.parse(readFileSync(this.#optionsCachePath, 'utf8'))
+      return parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, { at: number; authRequired: boolean; value: RuntimeOptions }>)
+        : {}
+    } catch {
+      // A corrupt cache is not worth failing over; the probe runs again.
+      return {}
+    }
+  }
+
+  #writeOptionsCache(
+    runtimeId: string,
+    entry: { at: number; authRequired: boolean; value: RuntimeOptions },
+  ): void {
+    try {
+      const next = { ...this.#readOptionsCache(), [runtimeId]: entry }
+      writeFileSync(this.#optionsCachePath, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+    } catch {
+      // Caching is best-effort; a read-only home directory must not break the UI.
+    }
+  }
+
+  /**
+   * A result produced without an API key is only valid while there is still no
+   * key: once one appears the provider may now answer over HTTP.
+   */
+  #cacheStillValid(entry: { authRequired: boolean }): boolean {
+    if (!entry.authRequired) return true
+    return !Object.values(httpModelQueries).some((query) =>
+      query.keyEnv.some((name) => {
+        const value = process.env[name]
+        return Boolean(value && value.trim())
+      }),
+    )
+  }
+
+  async runtimeOptions(runtimeId: string): Promise<RuntimeOptions> {
+    const cached = this.#optionsCache.get(runtimeId)
+    if (cached && Date.now() - cached.at < OPTIONS_CACHE_MS && this.#cacheStillValid(cached)) {
+      return cached.value
+    }
+    // Fall back to the on-disk cache: an HTTP-derived list is slow and
+    // key-gated, so it should outlive the process.
+    const stored = this.#readOptionsCache()[runtimeId]
+    if (stored && Date.now() - stored.at < OPTIONS_DISK_TTL_MS && this.#cacheStillValid(stored)) {
+      this.#optionsCache.set(runtimeId, stored)
+      return stored.value
+    }
+    const runtime = this.#runtimes.find((candidate) => candidate.id === runtimeId)
+    const adapter = runtime
+      ? this.#adapters.find((candidate) => candidate.id === runtime.adapterId)
+      : undefined
+    if (!runtime || !adapter) {
+      return {
+        runtimeId,
+        adapterId: runtime?.adapterId ?? 'unknown',
+        models: [],
+        levels: [],
+        source: 'default',
+        diagnostics: ['Unknown runtime; Relay cannot read its options'],
+      }
+    }
+    let value: RuntimeOptions
+    if (adapter.reportOptions) {
+      value = await adapter.reportOptions(runtimeId)
+    } else {
+      value = {
+        runtimeId,
+        adapterId: adapter.id,
+        models: [],
+        levels: [],
+        source: 'default',
+        diagnostics: [`${adapter.id} exposes no model or reasoning options`],
+      }
+    }
+    const entry = {
+      at: Date.now(),
+      // Remember if this ran without a credential, so adding a key re-probes.
+      authRequired: value.diagnostics.some((line) => line.includes('official API')),
+      value,
+    }
+    this.#optionsCache.set(runtimeId, entry)
+    this.#writeOptionsCache(runtimeId, entry)
+    return value
+  }
+
+  async codexIntegration(): Promise<CodexIntegrationStatus> {
+    const checks = [await probeCodexCli(), probeRelayMcp(), probeRelaySkill()]
+    return { checks, configured: checks.every((check) => check.ok) }
   }
 
   saveProfile(input: AgentProfile): AgentProfile {
@@ -160,11 +404,8 @@ export class DesktopDataSource {
     return profile
   }
 
-  snapshot(): DesktopSnapshot {
-    const sessions = this.#database
-      .prepare('SELECT data_json FROM host_sessions ORDER BY updated_at DESC')
-      .all()
-      .map((row) => hostSessionSchema.parse(JSON.parse(String(row.data_json))))
+  /** Projects every stored run; shared by snapshot and session-level controls. */
+  #projectedRuns(): DesktopRunView[] {
     const runIds = this.#database
       .prepare('SELECT DISTINCT run_id FROM relay_events ORDER BY timestamp ASC')
       .all()
@@ -172,7 +413,7 @@ export class DesktopDataSource {
     const eventQuery = this.#database.prepare(
       'SELECT * FROM relay_events WHERE run_id = ? ORDER BY seq ASC',
     )
-    const runs = runIds.map((runId) => {
+    return runIds.map((runId) => {
       const events = (eventQuery.all(runId) as unknown as EventRow[]).map((row) =>
         relayEventSchema.parse({
           id: row.id,
@@ -196,6 +437,14 @@ export class DesktopDataSource {
         events,
       }
     })
+  }
+
+  snapshot(): DesktopSnapshot {
+    const sessions = this.#database
+      .prepare('SELECT data_json FROM host_sessions ORDER BY updated_at DESC')
+      .all()
+      .map((row) => hostSessionSchema.parse(JSON.parse(String(row.data_json))))
+    const runs = this.#projectedRuns()
     return {
       sessions,
       runs: runs.sort((left, right) => right.run.createdAt.localeCompare(left.run.createdAt)),
@@ -216,6 +465,19 @@ export class DesktopDataSource {
       `)
       .run(randomUUID(), workerSessionId, new Date().toISOString())
     return { accepted: true, message: 'Cancellation requested' }
+  }
+
+  /** "Stop all workers" from the session contextual menu (docs/ui.md 19). */
+  cancelSessionWorkers(hostSessionId: string): { accepted: boolean; count: number } {
+    const active = new Set<string>()
+    for (const view of this.#projectedRuns()) {
+      if (view.run.hostSessionId !== hostSessionId) continue
+      for (const worker of view.workers) {
+        if (worker.status === 'running' || worker.status === 'starting') active.add(worker.id)
+      }
+    }
+    for (const workerSessionId of active) this.cancelWorker(workerSessionId)
+    return { accepted: true, count: active.size }
   }
 
   close(): void {

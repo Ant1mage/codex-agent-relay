@@ -1,7 +1,15 @@
 import { create } from 'zustand'
-import type { Locale } from '@relay/protocol'
-import type { DesktopSnapshot } from '../../shared/api.js'
+import type { Locale, Step } from '@relay/protocol'
+import type { DesktopRunView, DesktopSnapshot } from '../../shared/api.js'
 import { resolveLocale } from '@relay/i18n'
+
+/**
+ * The step the user should be looking at for a run: the active one when work is
+ * in flight, otherwise the first (docs/ui.md 7.4 keeps current execution visible).
+ */
+function preferredStepId(steps: Step[] | undefined): string | undefined {
+  return steps?.find((step) => step.status === 'running')?.id ?? steps?.[0]?.id
+}
 
 interface AppState {
   locale: Locale
@@ -10,10 +18,13 @@ interface AppState {
   selectedRunId: string | undefined
   selectedStepId: string | undefined
   settingsOpen: boolean
+  onboardingOpen: boolean
   loading: boolean
   error: string | undefined
   notice: string | undefined
   setSettingsOpen(open: boolean): void
+  openOnboarding(): void
+  closeOnboarding(): void
   setLocale(locale: Locale): void
   selectSession(id: string): void
   selectRun(id: string): void
@@ -35,23 +46,29 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedRunId: undefined,
   selectedStepId: undefined,
   settingsOpen: false,
+  onboardingOpen: false,
   loading: true,
   error: undefined,
   notice: undefined,
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  openOnboarding: () => set({ onboardingOpen: true }),
+  closeOnboarding: () => set({ onboardingOpen: false }),
   setLocale: (locale) => {
     localStorage.setItem('relay.locale', locale)
     set({ locale })
   },
   selectSession: (selectedSessionId) => {
-    const selectedRunId = get().snapshot?.runs.find(
-      (item) => item.run.hostSessionId === selectedSessionId,
-    )?.run.id
-    const selectedStepId = get().snapshot?.runs.find((item) => item.run.id === selectedRunId)?.steps[0]?.id
+    const runs = get().snapshot?.runs ?? []
+    const selectedRunId = runs.find((item) => item.run.hostSessionId === selectedSessionId)?.run.id
+    const selectedStepId = preferredStepId(runs.find((item) => item.run.id === selectedRunId)?.steps)
+    // Remember the session so the next launch restores it (docs/ui.md 22.4).
+    localStorage.setItem('relay.last-session', selectedSessionId)
     set({ selectedSessionId, selectedRunId, selectedStepId })
   },
   selectRun: (selectedRunId) => {
-    const selectedStepId = get().snapshot?.runs.find((item) => item.run.id === selectedRunId)?.steps[0]?.id
+    const selectedStepId = preferredStepId(
+      get().snapshot?.runs.find((item) => item.run.id === selectedRunId)?.steps,
+    )
     set({ selectedRunId, selectedStepId })
   },
   selectStep: (selectedRunId, selectedStepId) => set({ selectedRunId, selectedStepId }),
@@ -60,26 +77,33 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ loading: true, error: undefined })
     try {
       const snapshot = await window.relay.snapshot()
-      const selectedSessionId =
-        get().selectedSessionId && snapshot.sessions.some((item) => item.id === get().selectedSessionId)
-          ? get().selectedSessionId
-          : snapshot.sessions[0]?.id
-      const sessionRuns = snapshot.runs.filter(
-        (item) => item.run.hostSessionId === selectedSessionId,
-      )
-      const selectedRunId =
-        get().selectedRunId && sessionRuns.some((item) => item.run.id === get().selectedRunId)
-          ? get().selectedRunId
-          : sessionRuns.find((item) => item.run.status === 'running')?.run.id ??
-            sessionRuns.find((item) => item.run.status === 'starting')?.run.id ??
-            sessionRuns[0]?.run.id
-      const selectedRun = sessionRuns.find((item) => item.run.id === selectedRunId)
-      const selectedStepId =
-        get().selectedStepId && selectedRun?.steps.some((step) => step.id === get().selectedStepId)
-          ? get().selectedStepId
-          : selectedRun?.steps.find((step) => step.status === 'running')?.id ??
-            selectedRun?.steps[0]?.id
-      set({ snapshot, selectedSessionId, selectedRunId, selectedStepId, loading: false })
+      const { selectedSessionId: currentSessionId, selectedRunId: currentRunId, selectedStepId: currentStepId } = get()
+      const lastSessionId = localStorage.getItem('relay.last-session') ?? undefined
+      // Restore the last viewed session, falling back to the newest one.
+      const sessionId = [currentSessionId, lastSessionId].find((id) =>
+        id ? snapshot.sessions.some((session) => session.id === id) : false,
+      ) ?? snapshot.sessions[0]?.id
+      const sessionRuns = snapshot.runs.filter((item) => item.run.hostSessionId === sessionId)
+      const runId = (currentRunId && sessionRuns.some((item) => item.run.id === currentRunId)
+        ? currentRunId
+        : undefined) ??
+        sessionRuns.find((item) => item.run.status === 'running')?.run.id ??
+        sessionRuns.find((item) => item.run.status === 'starting')?.run.id ??
+        sessionRuns[0]?.run.id
+      const selectedRun = sessionRuns.find((item) => item.run.id === runId)
+      const stepId = (currentStepId && selectedRun?.steps.some((step) => step.id === currentStepId)
+        ? currentStepId
+        : undefined) ?? preferredStepId(selectedRun?.steps)
+      // First-run onboarding is a one-time gate; afterwards an empty workspace
+      // shows the minimal empty state instead (docs/ui.md 22.3/22.4).
+      set({
+        snapshot,
+        selectedSessionId: sessionId,
+        selectedRunId: runId,
+        selectedStepId: stepId,
+        loading: false,
+        onboardingOpen: !snapshot.settings.onboardingCompletedAt,
+      })
     } catch (error) {
       set({
         loading: false,
@@ -88,3 +112,5 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 }))
+
+export type { AppState }

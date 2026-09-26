@@ -10,8 +10,13 @@ import {
   type AgentAdapter,
   type DetectionResult,
   type WorkerSessionHandle,
+  probeRuntimeOptions,
+  readHelp,
+  withModelFallback,
+  selectionOf,
+  withSelectionArgs,
 } from '@relay/adapter-sdk'
-import type { AdapterCapabilities, StartInput } from '@relay/protocol'
+import type { AdapterCapabilities, RuntimeOptions, StartInput } from '@relay/protocol'
 import { parseKimiLine } from './parser.js'
 
 export interface KimiAdapterOptions {
@@ -25,6 +30,7 @@ export class KimiAdapter implements AgentAdapter {
   readonly #configuredExecutable: string | undefined
   readonly #prefixArgs: string[]
   readonly #environment: NodeJS.ProcessEnv | undefined
+  #options: RuntimeOptions | undefined
   readonly #processes = new Map<string, ChildProcess>()
   #disposed = false
 
@@ -44,6 +50,35 @@ export class KimiAdapter implements AgentAdapter {
       cancel: true,
       childSessions: false,
     }
+  }
+
+  /**
+   * Model and reasoning choices, read from the CLI's own --help. Relay reports
+   * only what the CLI advertises; a CLI with no model flag yields no models and
+   * a diagnostic, so the UI shows the CLI default rather than a guessed list.
+   */
+  async reportOptions(runtimeId: string): Promise<RuntimeOptions> {
+    const executablePath = this.#executable()
+    if (!executablePath) {
+      return {
+        runtimeId,
+        adapterId: this.id,
+        models: [],
+        levels: [],
+        source: 'default',
+        diagnostics: ['Runtime executable was not found, so Relay cannot read its model options'],
+      }
+    }
+    const evidence = readHelp(executablePath, this.#prefixArgs, this.#environment)
+    const cli = probeRuntimeOptions(this.capabilities(), evidence, runtimeId, this.id).options
+    // CLI first; fall back to the official API when the CLI exposes no list.
+    return withModelFallback(cli, 'kimi')
+  }
+
+  /** Capabilities with model support set from what the CLI advertises. */
+  #probedCapabilities(executablePath: string): AdapterCapabilities {
+    const evidence = readHelp(executablePath, this.#prefixArgs, this.#environment)
+    return probeRuntimeOptions(this.capabilities(), evidence, 'runtime:kimi-code', this.id).capabilities
   }
 
   #executable(): string | undefined {
@@ -87,6 +122,14 @@ export class KimiAdapter implements AgentAdapter {
     if (this.#disposed) throw new Error('Kimi adapter is disposed')
     const executablePath = this.#executable()
     if (!executablePath) throw new Error('Kimi Code executable `kimi` was not found')
+    // Probe the CLI once per launch so model/reasoning flags are only sent
+    // when the CLI actually advertises them.
+    this.#options = probeRuntimeOptions(
+      this.capabilities(),
+      readHelp(executablePath, this.#prefixArgs, this.#environment),
+      'runtime:kimi-code',
+      this.id,
+    ).options
     const args = [
       ...this.#prefixArgs,
       '--prompt',
@@ -94,7 +137,8 @@ export class KimiAdapter implements AgentAdapter {
       '--output-format',
       'stream-json',
     ]
-    const child = spawn(executablePath, args, {
+    const selected = withSelectionArgs(args, selectionOf(input), this.#options ?? {})
+    const child = spawn(executablePath, selected, {
       cwd: input.cwd,
       env: { ...process.env, ...this.#environment, NO_COLOR: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],

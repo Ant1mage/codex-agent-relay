@@ -1,24 +1,30 @@
 import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { DesktopDataSource } from './data-source.js'
 import type { DesktopSettings } from '../shared/api.js'
 import type { AgentProfile } from '@relay/protocol'
 
 let dataSource: DesktopDataSource | undefined
 
+// Icons are generated from the SVG masters in assets/app-icon by
+// tools/build-icons.sh. Vite copies that directory into the renderer build
+// (see publicDir in electron.vite.config.ts), so the packaged path mirrors it.
+function iconFile(name: string): string {
+  return app.isPackaged
+    ? join(import.meta.dirname, `../renderer/app-icon/build/${name}`)
+    : join(import.meta.dirname, `../../../../assets/app-icon/build/${name}`)
+}
+
 function createWindow(): void {
-  const iconPath = app.isPackaged
-    ? join(import.meta.dirname, '../renderer/icon/relay-icon.png')
-    : join(import.meta.dirname, '../../../../assets/icon/relay-icon.png')
   const window = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 980,
     minHeight: 680,
     title: 'Relay',
-    icon: iconPath,
+    icon: iconFile('appicon-256.png'),
     backgroundColor: '#0b0d10',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -45,10 +51,8 @@ void app.whenReady().then(async () => {
   await dataSource.initialize()
 
   if (process.platform === 'darwin') {
-    const iconPath = app.isPackaged
-      ? join(import.meta.dirname, '../renderer/icon/relay-icon.png')
-      : join(import.meta.dirname, '../../../../assets/icon/relay-icon.png')
-    app.dock?.setIcon(iconPath)
+    // Largest raster: the Dock renders the mark well above 256pt on Retina.
+    app.dock?.setIcon(iconFile('appicon-1024.png'))
   }
 
   ipcMain.handle('relay:snapshot', () => dataSource?.snapshot())
@@ -61,6 +65,21 @@ void app.whenReady().then(async () => {
   ipcMain.handle('relay:worker:cancel', (_event, workerSessionId: string) =>
     dataSource?.cancelWorker(workerSessionId),
   )
+  ipcMain.handle('relay:session:cancel', (_event, hostSessionId: string) =>
+    dataSource?.cancelSessionWorkers(hostSessionId),
+  )
+  ipcMain.handle('relay:codex:status', () => dataSource?.codexIntegration())
+  ipcMain.handle('relay:runtime:options', (_event, runtimeId: string) =>
+    dataSource?.runtimeOptions(runtimeId),
+  )
+  ipcMain.handle('relay:onboarding:complete', () => dataSource?.completeOnboarding())
+  ipcMain.handle('relay:workspace:open', async (_event, path: string) => {
+    // Only ever the cwd Relay recorded for a session, never renderer-supplied paths.
+    const allowed = dataSource?.snapshot().sessions.some((session) => session.cwd === path)
+    if (!allowed) return { ok: false, message: 'Unknown workspace' }
+    const failure = await shell.openPath(path)
+    return failure ? { ok: false, message: failure } : { ok: true }
+  })
 
   createWindow()
   app.on('activate', () => {

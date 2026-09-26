@@ -1,147 +1,179 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
-  ChevronRight,
   CircleAlert,
   FileDiff,
-  Languages,
-  Moon,
+  MoreHorizontal,
   PanelLeft,
   PanelRight,
-  Plus,
   RefreshCw,
-  Settings,
-  ShieldCheck,
+  Settings as SettingsIcon,
   Square,
-  Sun,
   X,
 } from 'lucide-react'
-import { createTranslator, type TranslationKey } from '@relay/i18n'
-import type { AgentProfile, RelayEvent, RelayPolicy, RunStatus, Step } from '@relay/protocol'
-import type { DesktopRunView, DesktopSettings } from '../../shared/api.js'
+import type { HostSession, Step } from '@relay/protocol'
+import type { DesktopRunView } from '../../shared/api.js'
 import { useAppStore } from './store.js'
+import { createTranslator } from '@relay/i18n'
+import { Onboarding } from './onboarding.js'
+import { SettingsSheet } from './settings.js'
+import {
+  ConsoleRows,
+  ProviderIcon,
+  StatusLabel,
+  consoleRows,
+  elapsed,
+  eventSummary,
+  relativeTime,
+  statusGlyph,
+  storedFontSize,
+  useRuntimeOptions,
+  type Inspector,
+  type Theme,
+  type Translator,
+} from './ui.js'
 
-type Translator = (key: TranslationKey) => string
-type Inspector = 'changes' | 'raw' | undefined
-type Theme = 'system' | 'light' | 'dark'
-type ConsoleKind = 'read' | 'search' | 'edit' | 'command' | 'test' | 'result' | 'error' | 'status'
-type SettingsSection = 'general' | 'agents' | 'workspace' | 'appearance'
-type ProviderIconId = 'deepseek' | 'gemini' | 'glm' | 'grok' | 'kimi'
-const DEFAULT_FONT_SIZE = 14
-const MAX_FONT_SIZE = 20
-
-const providerMetadata: Record<ProviderIconId, { label: string; src: string }> = {
-  deepseek: { label: 'DeepSeek', src: '/providers/deepseek.svg' },
-  gemini: { label: 'Gemini', src: '/providers/gemini.svg' },
-  glm: { label: 'GLM', src: '/providers/glm.svg' },
-  grok: { label: 'Grok', src: '/providers/grok.svg' },
-  kimi: { label: 'Kimi', src: '/providers/kimi.svg' },
-}
-
-function providerIconId(name: string | undefined, adapterId: string | undefined): ProviderIconId | undefined {
-  const value = `${name ?? ''} ${adapterId ?? ''}`.toLowerCase()
-  if (value.includes('deepseek')) return 'deepseek'
-  if (value.includes('gemini')) return 'gemini'
-  if (value.includes('glm') || value.includes('z.ai') || value.includes('zhipu') || value.includes('zai-cli')) return 'glm'
-  if (value.includes('grok') || value.includes('x.ai')) return 'grok'
-  if (value.includes('kimi') || value.includes('moonshot')) return 'kimi'
-  return undefined
-}
-
-function ProviderIcon({ name, adapterId }: { name: string | undefined; adapterId: string | undefined }) {
-  const id = providerIconId(name, adapterId)
-  if (!id) return null
-  const provider = providerMetadata[id]
-  return <img className="provider-icon" src={provider.src} alt={provider.label} title={provider.label} />
-}
-
-function storedFontSize(): number {
-  const value = Number(localStorage.getItem('relay.font-size'))
-  return Number.isInteger(value) && value >= DEFAULT_FONT_SIZE && value <= MAX_FONT_SIZE ? value : DEFAULT_FONT_SIZE
-}
-
-function elapsed(start: string, end?: string): string {
-  const total = Math.max(0, new Date(end ?? Date.now()).getTime() - new Date(start).getTime())
-  const seconds = Math.floor(total / 1_000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  return `${minutes}m ${seconds % 60}s`
-}
-
-function eventKind(event: RelayEvent): ConsoleKind | undefined {
-  if (event.type === 'tool/read') return 'read'
-  if (event.type === 'tool/search') return 'search'
-  if (event.type === 'tool/edit') return 'edit'
-  if (event.type === 'tool/command') return 'command'
-  if (event.type === 'test/result') return 'test'
-  if (event.type === 'tool/result' || event.type === 'worker/completed') return 'result'
-  if (event.type === 'worker/failed' || event.type === 'worker/orphaned') return 'error'
-  if (
-    event.type === 'worker/started' ||
-    event.type === 'worker/status' ||
-    event.type === 'worker/message' ||
-    event.type === 'worker/cancelled' ||
-    event.type === 'worker/interrupted' ||
-    event.type === 'run/awaiting_host' ||
-    event.type === 'run/accepted'
-  ) return 'status'
-  return undefined
-}
-
-function eventSummary(event: RelayEvent): string {
-  const data = event.data
-  if (!data || typeof data !== 'object') return String(data ?? event.type)
-  const record = data as Record<string, unknown>
-  const value = record.path ?? record.file ?? record.command ?? record.query ?? record.summary ??
-    record.text ?? record.message ?? record.result ?? record.status ?? record.tool
-  if (value !== undefined) return typeof value === 'string' ? value : JSON.stringify(value)
-  if (event.type === 'worker/started') {
-    const worker = record.worker as Record<string, unknown> | undefined
-    return worker?.runtimeId ? String(worker.runtimeId) : 'Worker started'
-  }
-  if (event.type === 'run/awaiting_host') return 'Worker finished; waiting for Codex review'
-  if (event.type === 'run/accepted') return 'Accepted by Codex'
-  return event.type
-}
-
-function StatusLabel({ status, t }: { status: RunStatus; t: Translator }) {
-  return <span className={`status-label ${status}`}><i />{t(`run.status.${status}`)}</span>
-}
+/* ------------------------------------------------------------------ */
+/* Sidebar (docs/ui.md 4-5)                                            */
+/* ------------------------------------------------------------------ */
 
 function Sidebar({ t }: { t: Translator }) {
   const { snapshot, selectedSessionId, selectSession, setSettingsOpen } = useAppStore()
+  const sessions = snapshot?.sessions ?? []
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand"><img src="/icon/relay-icon.png" alt="" /><strong>Relay</strong></div>
+      <div className="sidebar-brand">
+        <span className="sidebar-mark mark-tinted" role="img" aria-label="Relay" />
+        <strong>{t('app.name')}</strong>
+      </div>
       <div className="sidebar-section-title">{t('sessions.title')}</div>
       <div className="session-list">
-        {snapshot?.sessions.map((session) => (
-          <button className={session.id === selectedSessionId ? 'session-name selected' : 'session-name'} key={session.id} onClick={() => selectSession(session.id)} title={session.displayName}>
-            <strong>{session.displayName}</strong><span>{t(`common.${session.status}`)} · {elapsed(session.updatedAt)}</span>
+        {/* Text-first rows, no per-session icons (docs/ui.md 4.3) */}
+        {sessions.map((session) => (
+          <button
+            className={session.id === selectedSessionId ? 'session-name selected' : 'session-name'}
+            key={session.id}
+            onClick={() => selectSession(session.id)}
+            title={session.displayName}
+          >
+            <strong>{session.displayName}</strong>
+            <span>{relativeTime(session.updatedAt, session.status, t)}</span>
           </button>
         ))}
-        {!snapshot?.sessions.length && <p className="sidebar-empty">{t('sessions.empty')}</p>}
+        {!sessions.length && <p className="sidebar-empty">{t('sessions.empty')}</p>}
       </div>
-      <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings size={15} />{t('settings.title')}</button>
+      <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}>
+        <SettingsIcon size={15} />{t('settings.title')}
+      </button>
     </aside>
   )
 }
 
-function AppToolbar({ t, sidebarCollapsed, toggleSidebar }: { t: Translator; sidebarCollapsed: boolean; toggleSidebar(): void }) {
-  const sidebarLabel = sidebarCollapsed ? t('action.showSidebar') : t('action.hideSidebar')
-  const macOS = navigator.userAgent.includes('Macintosh')
+/**
+ * Session contextual menu (docs/ui.md 6/19). Session-level controls live here so
+ * the toolbar never carries a global Stop button.
+ */
+function SessionMenu({ session, view, t }: { session: HostSession; view: DesktopRunView | undefined; t: Translator }) {
+  const { setNotice, refresh } = useAppStore()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [open])
+
+  const stopAll = async () => {
+    setOpen(false)
+    const result = await window.relay.cancelSessionWorkers(session.id)
+    setNotice(result.count ? t('session.stopped').replace('{count}', String(result.count)) : t('session.stoppedNone'))
+    await refresh()
+  }
+  const openWorkspace = async () => {
+    setOpen(false)
+    const result = await window.relay.openWorkspace(session.cwd)
+    if (!result.ok) setNotice(result.message ?? t('error.generic'))
+  }
+  const copyId = async () => {
+    setOpen(false)
+    await navigator.clipboard.writeText(session.nativeSessionId)
+    setNotice(t('session.idCopied'))
+  }
+
   return (
-    <header className={macOS ? 'app-toolbar macos' : 'app-toolbar'}>
-      <div className="toolbar-leading"><button className="plain-icon" aria-label={sidebarLabel} title={sidebarLabel} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}><PanelLeft size={16} /></button></div>
-      <div className="toolbar-drag" />
-    </header>
+    <div className="session-menu" ref={ref}>
+      <button
+        className="plain-icon"
+        aria-label={t('session.menu')}
+        aria-expanded={open}
+        title={t('session.menu')}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open && (
+        <div className="menu-popover" role="menu">
+          <button onClick={() => void stopAll()}>{t('session.stopAll')}</button>
+          <button onClick={() => void openWorkspace()}>{t('session.openWorkspace')}</button>
+          <button onClick={() => void copyId()}>{t('session.copyId')}</button>
+        </div>
+      )}
+      {view && <span className="session-run-status"><StatusLabel status={view.run.status} t={t} /></span>}
+    </div>
   )
 }
 
+/* ------------------------------------------------------------------ */
+/* Step (docs/ui.md 7-11)                                              */
+/* ------------------------------------------------------------------ */
+
 interface StepItem { view: DesktopRunView; step: Step }
 
+function StepNode({
+  item,
+  index,
+  selected,
+  t,
+  registerRef,
+}: {
+  item: StepItem
+  index: number
+  selected: boolean
+  t: Translator
+  registerRef(element: HTMLButtonElement | null): void
+}) {
+  const { snapshot, selectStep } = useAppStore()
+  const { view, step } = item
+  const profile = snapshot?.profiles.find((candidate) => candidate.id === view.run.profileId)
+  const runtime = snapshot?.runtimes.find((candidate) => candidate.id === profile?.runtimeId)
+  const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
+  const name = profile?.name ?? view.run.profileId
+
+  return (
+    <div className="step-link">
+      <button
+        ref={registerRef}
+        className={selected ? 'step-node selected' : `step-node ${step.status}`}
+        onClick={() => selectStep(view.run.id, step.id)}
+        title={`${t('steps.step')} ${index + 1} · ${name}`}
+      >
+        <div className="step-profile">
+          <i className={`step-glyph ${step.status}`} aria-hidden="true">{statusGlyph(step.status)}</i>
+          <ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} />
+          <strong>{name}</strong>
+        </div>
+        <em>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</em>
+      </button>
+    </div>
+  )
+}
+
 function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
-  const { snapshot, selectedRunId, selectedStepId, selectStep } = useAppStore()
+  const { selectedRunId, selectedStepId } = useAppStore()
   const currentRef = useRef<HTMLButtonElement>(null)
   const ordered = useMemo(
     () => [...items].sort((left, right) => left.step.createdAt.localeCompare(right.step.createdAt)),
@@ -156,18 +188,17 @@ function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
     <section className="step-strip" aria-label={t('steps.title')}>
       <div className="step-strip-label">{t('steps.title')}</div>
       <div className="step-scroll">
-        {ordered.map(({ view, step }, index) => {
-          const selected = view.run.id === selectedRunId && step.id === selectedStepId
-          const profile = snapshot?.profiles.find((candidate) => candidate.id === view.run.profileId)
-          const runtime = snapshot?.runtimes.find((candidate) => candidate.id === profile?.runtimeId)
+        {ordered.map((item, index) => {
+          const selected = item.view.run.id === selectedRunId && item.step.id === selectedStepId
           return (
-            <div className="step-link" key={step.id}>
-              <button ref={selected ? currentRef : undefined} className={selected ? 'step-node selected' : `step-node ${step.status}`} onClick={() => selectStep(view.run.id, step.id)}>
-                <span>{t('steps.step')} {index + 1}</span>
-                <div className="step-profile"><ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} /><strong>{profile?.name ?? view.run.profileId}</strong></div>
-                <em>{t(`run.status.${step.status}`)}</em>
-              </button>
-            </div>
+            <StepNode
+              key={item.step.id}
+              item={item}
+              index={index}
+              selected={selected}
+              t={t}
+              registerRef={(element) => { if (selected) currentRef.current = element }}
+            />
           )
         })}
       </div>
@@ -175,175 +206,350 @@ function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
   )
 }
 
-function Console({ view, step, t, openInspector, cliInfoOpen, toggleCliInfo }: { view: DesktopRunView; step: Step; t: Translator; openInspector(inspector: Exclude<Inspector, undefined>): void; cliInfoOpen: boolean; toggleCliInfo(): void }) {
-  const { setNotice } = useAppStore()
+/* ------------------------------------------------------------------ */
+/* Console (docs/ui.md 12-14)                                          */
+/* ------------------------------------------------------------------ */
+
+function Console({
+  view,
+  step,
+  t,
+  openInspector,
+  cliInfoOpen,
+  toggleCliInfo,
+}: {
+  view: DesktopRunView
+  step: Step
+  t: Translator
+  openInspector(inspector: Exclude<Inspector, undefined>): void
+  cliInfoOpen: boolean
+  toggleCliInfo(): void
+}) {
+  const { setNotice, snapshot } = useAppStore()
   const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
-  const events = view.events.filter((event) => (!event.stepId || event.stepId === step.id) && eventKind(event) !== undefined)
+  const events = view.events.filter((event) => !event.stepId || event.stepId === step.id)
+  const rows = useMemo(() => consoleRows(events), [events])
   const changeCount = events.filter((event) => event.type === 'tool/edit').length
-  const rawCount = view.events.filter((event) => (!event.stepId || event.stepId === step.id) && event.nativeEvent !== undefined).length
+  const rawCount = events.filter((event) => event.nativeEvent !== undefined).length
+  const active = step.status === 'running' || step.status === 'starting'
+  const profile = snapshot?.profiles.find((item) => item.id === view.run.profileId)
 
   return (
     <section className="console-panel">
       <header className="console-header">
-        <div><strong>{t('console.title')} · {view.run.profileId}</strong><span>{t('steps.iteration')} {step.iteration} · {elapsed(step.createdAt, worker?.endedAt)}</span></div>
+        <div>
+          <strong>{t('console.title')} · {profile?.name ?? view.run.profileId}</strong>
+          <span>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</span>
+        </div>
         <div className="console-actions">
-          <button className={cliInfoOpen ? 'selected' : ''} onClick={toggleCliInfo}><PanelRight size={13} />{t('cliInfo.title')}</button>
-          {changeCount > 0 && <button onClick={() => openInspector('changes')}><FileDiff size={13} />{t('console.changes')} <b>{changeCount}</b></button>}
-          <button onClick={() => openInspector('raw')}>{t('console.rawOutput')} <b>{rawCount}</b></button>
-          {(step.status === 'running' || step.status === 'starting') && worker && (
-            <button className="stop-button" onClick={async () => {
-              const response = await window.relay.cancelWorker(worker.id)
-              setNotice(response.accepted ? t('runs.cancelQueued') : response.message)
-            }}><Square size={11} />{t('action.cancel')}</button>
+          {changeCount > 0 && (
+            <button onClick={() => openInspector('changes')}><FileDiff size={13} />{t('console.changes')} <b>{changeCount}</b></button>
           )}
+          <button onClick={() => openInspector('raw')}>{t('console.rawOutput')} <b>{rawCount}</b></button>
+          {/* Worker-level Stop sits beside the selected CLI (docs/ui.md 19) */}
+          {active && worker && (
+            <button
+              className="stop-button"
+              onClick={async () => {
+                const response = await window.relay.cancelWorker(worker.id)
+                setNotice(response.accepted ? t('runs.cancelQueued') : response.message)
+              }}
+            >
+              <Square size={11} />{t('action.stop')}
+            </button>
+          )}
+          <button className={cliInfoOpen ? 'selected' : ''} onClick={toggleCliInfo}>
+            <PanelRight size={13} />{t('cliInfo.title')}
+          </button>
         </div>
       </header>
       <div className="console-body">
-        {!events.length && <div className="console-empty">{t('console.empty')}</div>}
-        {events.map((event) => {
-          const kind = eventKind(event)!
-          return <div className={`console-row ${kind}`} key={event.id}><time>{new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><span className="console-kind">{t(`console.${kind}`)}</span><code>{eventSummary(event)}</code></div>
-        })}
+        {!rows.length && <div className="console-empty">{t('console.empty')}</div>}
+        <ConsoleRows rows={rows} t={t} />
       </div>
     </section>
   )
 }
 
-function CliInfo({ view, step, t, close }: { view: DesktopRunView; step: Step; t: Translator; close(): void }) {
-  const { snapshot } = useAppStore()
+/* ------------------------------------------------------------------ */
+/* CLI Info (docs/ui.md 15-16, 18)                                     */
+/* ------------------------------------------------------------------ */
+
+type Override = { model?: string; reasoning?: string }
+
+function overrideKey(runId: string): string {
+  return `relay.override.${runId}`
+}
+
+function CliInfo({ view, step, t, close, openInspector }: {
+  view: DesktopRunView
+  step: Step
+  t: Translator
+  close(): void
+  openInspector(inspector: Exclude<Inspector, undefined>): void
+}) {
+  const { snapshot, setNotice } = useAppStore()
   const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
   const profile = snapshot?.profiles.find((candidate) => candidate.id === view.run.profileId)
   const runtime = snapshot?.runtimes.find((candidate) => candidate.id === worker?.runtimeId)
+  const { options } = useRuntimeOptions(runtime?.id)
+  const [override, setOverride] = useState<Override>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(overrideKey(view.run.id)) ?? '{}') as Override
+    } catch {
+      return {}
+    }
+  })
+  const active = step.status === 'running' || step.status === 'starting'
   const changeCount = view.events.filter((event) => (!event.stepId || event.stepId === step.id) && event.type === 'tool/edit').length
-  const reasoningLabel = profile?.reasoning === 'low' ? t('agents.reasoningLow') : profile?.reasoning === 'medium' ? t('agents.reasoningMedium') : profile?.reasoning === 'high' ? t('agents.reasoningHigh') : t('agents.default')
+  const childAgents = new Set(
+    view.events
+      .filter((event) => event.type === 'child/started')
+      .map((event) => String((event.data as { agentId?: string } | undefined)?.agentId ?? event.id)),
+  ).size
+  /**
+   * Reasoning values are CLI tokens, so label them using the CLI's own names and
+   * only fall back to a generic label for a value the CLI no longer reports.
+   */
+  const reasoningLabel = (value: string | undefined) => {
+    if (!value) return t('agents.default')
+    return options?.levels.find((level) => level.value === value)?.label ?? value
+  }
+
+  const applyOverride = (key: keyof Override, value: string) => {
+    const merged: Override = { ...override }
+    if (value) merged[key] = value
+    else delete merged[key]
+    setOverride(merged)
+    localStorage.setItem(overrideKey(view.run.id), JSON.stringify(merged))
+    // Never mutate a running worker; the override applies to the next run.
+    if (active) setNotice(t('cliInfo.overrideHint'))
+  }
+
   return (
     <aside className="cli-info">
-      <header><div><span className="cli-profile"><ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} />{profile?.name ?? view.run.profileId}</span><h2>{t('cliInfo.title')}</h2></div><button className="plain-icon" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></button></header>
+      <header>
+        <div>
+          <span className="cli-profile">
+            <ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} />
+            {profile?.name ?? view.run.profileId}
+          </span>
+          <h2>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</h2>
+        </div>
+        <button className="plain-icon" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></button>
+      </header>
       <dl>
-        <div><dt>{t('cliInfo.status')}</dt><dd><StatusLabel status={step.status} t={t} /></dd></div>
         <div><dt>{t('cliInfo.runtime')}</dt><dd>{runtime?.adapterId ?? worker?.runtimeId ?? t('common.notAvailable')}</dd></div>
-        <div><dt>{t('agents.model')}</dt><dd>{profile?.model ?? t('agents.default')}</dd></div>
-        <div><dt>{t('agents.reasoning')}</dt><dd>{reasoningLabel}</dd></div>
+        <div>
+          <dt>{t('agents.model')}</dt>
+          <dd>
+            {/* Session-level override; applies to the next run (docs/ui.md 16.2) */}
+            {options?.models.length ? (
+              <select
+                aria-label={t('agents.model')}
+                value={override.model ?? ''}
+                onChange={(event) => applyOverride('model', event.target.value)}
+              >
+                <option value="">{profile?.model ?? t('agents.runtimeDefault')}</option>
+                {options.models.map((model) => (
+                  <option value={model.value} key={model.value}>{model.label ?? model.value}</option>
+                ))}
+              </select>
+            ) : (
+              <span className="field-note">{t('agents.noModelList')}</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>{t('agents.reasoning')}</dt>
+          <dd>
+            {options?.levels.length ? (
+              <select
+                aria-label={t('agents.reasoning')}
+                value={override.reasoning ?? profile?.reasoning ?? ''}
+                onChange={(event) => applyOverride('reasoning', event.target.value)}
+              >
+                <option value="">{reasoningLabel(profile?.reasoning)}</option>
+                {options.levels.map((level) => (
+                  <option value={level.value} key={level.value}>{level.label}</option>
+                ))}
+              </select>
+            ) : (
+              <span className="field-note">{t('agents.noReasoningLevels')}</span>
+            )}
+          </dd>
+        </div>
         <div><dt>{t('cliInfo.workingDirectory')}</dt><dd title={view.run.cwd}>{view.run.cwd}</dd></div>
         <div><dt>{t('cliInfo.started')}</dt><dd>{new Date(step.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</dd></div>
-        <div><dt>{t('cliInfo.changes')}</dt><dd>{changeCount}</dd></div>
+        {childAgents > 0 && <div><dt>{t('cliInfo.agents')}</dt><dd>{childAgents}</dd></div>}
+        <div>
+          <dt>{t('cliInfo.changes')}</dt>
+          <dd>
+            {changeCount
+              ? <button className="link-button" onClick={() => openInspector('changes')}>{changeCount} {t('console.files')}</button>
+              : 0}
+          </dd>
+        </div>
       </dl>
     </aside>
   )
 }
 
-function InspectorSheet({ inspector, view, step, t, close }: { inspector: Exclude<Inspector, undefined>; view: DesktopRunView; step: Step; t: Translator; close(): void }) {
+/* ------------------------------------------------------------------ */
+/* Drill-down sheets (docs/ui.md 14, 18)                               */
+/* ------------------------------------------------------------------ */
+
+function InspectorSheet({ inspector, view, step, t, close }: {
+  inspector: Exclude<Inspector, undefined>
+  view: DesktopRunView
+  step: Step
+  t: Translator
+  close(): void
+}) {
   const events = view.events.filter((event) => !event.stepId || event.stepId === step.id)
   const changes = events.filter((event) => event.type === 'tool/edit')
   const raw = events.filter((event) => event.nativeEvent !== undefined)
   return (
     <div className="sheet-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}>
       <aside className="inspector-sheet">
-        <header><div><span>{view.run.profileId}</span><h2>{inspector === 'changes' ? t('console.changes') : t('console.rawOutput')}</h2></div><button className="plain-icon" onClick={close}><X size={16} /></button></header>
-        {inspector === 'changes' ? <div className="change-list">{!changes.length && <p>{t('console.noChanges')}</p>}{changes.map((event) => <article key={event.id}><strong>{eventSummary(event)}</strong><pre>{JSON.stringify(event.data, null, 2)}</pre></article>)}</div>
-          : <div className="raw-output">{!raw.length && <p>{t('console.noRawOutput')}</p>}{raw.map((event) => <article key={event.id}><time>{event.timestamp}</time><strong>{event.type}</strong><pre>{JSON.stringify(event.nativeEvent, null, 2)}</pre></article>)}</div>}
+        <header>
+          <div>
+            <span>{view.run.profileId}</span>
+            <h2>{inspector === 'changes' ? t('console.changes') : t('console.rawOutput')}</h2>
+          </div>
+          <button className="plain-icon" onClick={close}><X size={16} /></button>
+        </header>
+        {inspector === 'changes'
+          ? (
+            <div className="change-list">
+              {!changes.length && <p>{t('console.noChanges')}</p>}
+              {changes.map((event) => (
+                <article key={event.id}>
+                  <strong className="change-path">{eventSummary(event)}</strong>
+                  <pre>{JSON.stringify(event.data, null, 2)}</pre>
+                </article>
+              ))}
+            </div>
+          )
+          : (
+            <div className="raw-output">
+              {!raw.length && <p>{t('console.noRawOutput')}</p>}
+              {raw.map((event) => (
+                <article key={event.id}>
+                  <time>{event.timestamp}</time>
+                  <strong>{event.type}</strong>
+                  <pre>{JSON.stringify(event.nativeEvent, null, 2)}</pre>
+                </article>
+              ))}
+            </div>
+          )}
       </aside>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Workspace, empty state, app shell                                   */
+/* ------------------------------------------------------------------ */
+
+/** Minimal empty state content (docs/ui.md 22.3). */
+function EmptyStateBody({ t, hint }: { t: Translator; hint?: boolean }) {
+  return (
+    <>
+      <span className="empty-mark mark-tinted" role="img" aria-hidden="true" />
+      <h1>{hint ? t('runs.empty') : t('empty.noSessions')}</h1>
+      <p>{t('empty.useRelay')}</p>
+    </>
   )
 }
 
 function SessionWorkspace({ t }: { t: Translator }) {
-  const { snapshot, selectedSessionId, selectedRunId, selectedStepId, loading, refresh } = useAppStore()
+  const { snapshot, selectedSessionId, selectedRunId, selectedStepId, loading, refresh, onboardingOpen } = useAppStore()
   const [inspector, setInspector] = useState<Inspector>()
   const [cliInfoOpen, setCliInfoOpen] = useState(() => localStorage.getItem('relay.cli-info-open') !== 'false')
+
+  if (onboardingOpen) return <Onboarding t={t} />
+
   const session = snapshot?.sessions.find((item) => item.id === selectedSessionId)
-  const views = useMemo(() => snapshot?.runs.filter((item) => item.run.hostSessionId === selectedSessionId) ?? [], [snapshot, selectedSessionId])
-  const stepItems = views.flatMap((view) => view.steps.map((step) => ({ view, step })))
+  if (!session) {
+    return (
+      <main className="workspace empty-workspace">
+        <EmptyStateBody t={t} />
+      </main>
+    )
+  }
+
+  const views = snapshot?.runs.filter((item) => item.run.hostSessionId === selectedSessionId) ?? []
+  const stepItems: StepItem[] = views.flatMap((view) => view.steps.map((step) => ({ view, step })))
   const selectedView = views.find((view) => view.run.id === selectedRunId) ?? views[0]
   const selectedStep = selectedView?.steps.find((step) => step.id === selectedStepId) ?? selectedView?.steps[0]
-  const toggleCliInfo = () => setCliInfoOpen((current) => { const next = !current; localStorage.setItem('relay.cli-info-open', String(next)); return next })
+  const toggleCliInfo = () =>
+    setCliInfoOpen((current) => {
+      const next = !current
+      localStorage.setItem('relay.cli-info-open', String(next))
+      return next
+    })
 
-  if (!session) return <main className="workspace empty-workspace"><h1>{t('sessions.empty')}</h1><p>{t('sessions.emptyHint')}</p></main>
   return (
     <main className="workspace">
       <header className="workspace-heading">
-        <div><span>{session.displayName}</span><h1>{selectedView?.run.task ?? session.displayName}</h1><p>{session.cwd}</p></div>
-        <div className="heading-actions">{selectedView && <StatusLabel status={selectedView.run.status} t={t} />}<button className="plain-icon" title={t('common.refresh')} onClick={() => void refresh()}><RefreshCw className={loading ? 'spin' : ''} size={15} /></button></div>
+        <div>
+          <h1>{selectedView?.run.task ?? session.displayName}</h1>
+          <p>
+            {selectedView && <StatusLabel status={selectedView.run.status} t={t} />}
+            {selectedView && <span className="heading-sep">·</span>}
+            <span>{t('cliInfo.started')} {new Date(session.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          </p>
+        </div>
+        <div className="heading-actions">
+          <button className="plain-icon" title={t('common.refresh')} onClick={() => void refresh()}>
+            <RefreshCw className={loading ? 'spin' : ''} size={15} />
+          </button>
+          <SessionMenu session={session} view={selectedView} t={t} />
+        </div>
       </header>
-      {stepItems.length ? <><StepNavigator items={stepItems} t={t} />{selectedView && selectedStep && <div className={cliInfoOpen ? 'workspace-lower cli-info-open' : 'workspace-lower'}><Console view={selectedView} step={selectedStep} t={t} openInspector={setInspector} cliInfoOpen={cliInfoOpen} toggleCliInfo={toggleCliInfo} />{cliInfoOpen && <CliInfo view={selectedView} step={selectedStep} t={t} close={toggleCliInfo} />}</div>}</> : <div className="workspace-placeholder">{t('runs.empty')}</div>}
-      {inspector && selectedView && selectedStep && <InspectorSheet inspector={inspector} view={selectedView} step={selectedStep} t={t} close={() => setInspector(undefined)} />}
+
+      {stepItems.length ? (
+        <>
+          <StepNavigator items={stepItems} t={t} />
+          {selectedView && selectedStep && (
+            <div className={cliInfoOpen ? 'workspace-lower cli-info-open' : 'workspace-lower'}>
+              <Console
+                view={selectedView}
+                step={selectedStep}
+                t={t}
+                openInspector={setInspector}
+                cliInfoOpen={cliInfoOpen}
+                toggleCliInfo={toggleCliInfo}
+              />
+              {cliInfoOpen && (
+                <CliInfo
+                  view={selectedView}
+                  step={selectedStep}
+                  t={t}
+                  close={toggleCliInfo}
+                  openInspector={setInspector}
+                />
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="workspace-placeholder">
+          <EmptyStateBody t={t} hint />
+        </div>
+      )}
+
+      {inspector && selectedView && selectedStep && (
+        <InspectorSheet
+          inspector={inspector}
+          view={selectedView}
+          step={selectedStep}
+          t={t}
+          close={() => setInspector(undefined)}
+        />
+      )}
     </main>
-  )
-}
-
-function ProfileEditor({ profile, runtimes, t, close }: { profile: AgentProfile; runtimes: NonNullable<ReturnType<typeof useAppStore.getState>['snapshot']>['runtimes']; t: Translator; close(): void }) {
-  const { refresh, setNotice } = useAppStore()
-  const [draft, setDraft] = useState(profile)
-  return (
-    <div className="modal-backdrop">
-      <form className="profile-editor" onSubmit={(event) => { event.preventDefault(); void window.relay.saveProfile(draft).then(async () => { await refresh(); setNotice(t('agents.profileSaved')); close() }) }}>
-        <header><h2>{t('agents.edit')}</h2><button type="button" className="plain-icon" onClick={close}><X size={16} /></button></header>
-        <label><span>{t('agents.name')}</span><input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
-        <label><span>Runtime</span><select value={draft.runtimeId} onChange={(event) => setDraft({ ...draft, runtimeId: event.target.value })}>{runtimes.map((runtime) => <option value={runtime.id} key={runtime.id}>{runtime.adapterId} · {runtime.version ?? runtime.executablePath}</option>)}</select></label>
-        <label><span>{t('agents.description')}</span><textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
-        <label><span>{t('agents.model')}</span><input value={draft.model ?? ''} placeholder={t('agents.default')} onChange={(event) => setDraft({ ...draft, model: event.target.value.trim() || undefined })} /></label>
-        <label><span>{t('agents.reasoning')}</span><select value={draft.reasoning ?? ''} onChange={(event) => { const value = event.target.value as NonNullable<AgentProfile['reasoning']> | ''; setDraft({ ...draft, reasoning: value || undefined }) }}><option value="">{t('agents.default')}</option><option value="low">{t('agents.reasoningLow')}</option><option value="medium">{t('agents.reasoningMedium')}</option><option value="high">{t('agents.reasoningHigh')}</option></select></label>
-        <div className="capability-grid">{([['readWorkspace', 'agents.read'], ['writeWorkspace', 'agents.write'], ['executeCommands', 'agents.shell'], ['networkAccess', 'agents.network']] as const).map(([key, label]) => <label className="check-row" key={key}><input type="checkbox" checked={draft.capabilities[key]} onChange={() => setDraft({ ...draft, capabilities: { ...draft.capabilities, [key]: !draft.capabilities[key] } })} /><span>{t(label)}</span></label>)}</div>
-        <footer><button type="button" className="secondary" onClick={close}>{t('action.close')}</button><button className="primary">{t('action.save')}</button></footer>
-      </form>
-    </div>
-  )
-}
-
-function SettingsSheet({ t, theme, setTheme, fontSize, setFontSize }: { t: Translator; theme: Theme; setTheme(theme: Theme): void; fontSize: number; setFontSize(fontSize: number): void }) {
-  const { snapshot, settingsOpen, setSettingsOpen, locale, setLocale, setNotice } = useAppStore()
-  const [settings, setSettings] = useState<DesktopSettings | undefined>(snapshot?.settings)
-  const [scope, setScope] = useState('global')
-  const [section, setSection] = useState<SettingsSection>('general')
-  const [editing, setEditing] = useState<AgentProfile>()
-  const [settingsDirty, setSettingsDirty] = useState(false)
-  const latestSnapshotSettings = useRef<DesktopSettings | undefined>(undefined)
-  const saveRevision = useRef(0)
-  useEffect(() => {
-    if (snapshot?.settings === latestSnapshotSettings.current) return
-    latestSnapshotSettings.current = snapshot?.settings
-    if (!settingsDirty) setSettings(snapshot?.settings)
-  }, [snapshot?.settings, settingsDirty])
-  if (!settingsOpen || !settings || !snapshot) return null
-  const workspaces = [...new Set(snapshot.sessions.map((session) => session.cwd))]
-  const policy = scope === 'global' ? settings.policy : { ...settings.policy, ...settings.workspaceOverrides[scope] }
-  const persistSettings = (next: DesktopSettings) => {
-    const revision = ++saveRevision.current
-    setSettings(next)
-    setSettingsDirty(true)
-    void window.relay.saveSettings(next).then((saved) => {
-      if (saveRevision.current !== revision) return
-      setSettings(saved)
-      setSettingsDirty(false)
-    }).catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
-  }
-  const updatePolicy = (next: Partial<RelayPolicy>) => persistSettings(scope === 'global'
-    ? { ...settings, policy: { ...settings.policy, ...next } }
-    : { ...settings, workspaceOverrides: { ...settings.workspaceOverrides, [scope]: { ...settings.workspaceOverrides[scope], ...next } } })
-  const createProfile = () => {
-    const runtime = snapshot.runtimes[0]
-    if (!runtime) return
-    setEditing({ id: `profile-${Date.now()}`, name: runtime.adapterId, runtimeId: runtime.id, description: '', capabilities: { readWorkspace: true, writeWorkspace: false, executeCommands: false, networkAccess: false }, enabled: true })
-  }
-  const navigation: { id: SettingsSection; label: string; icon: typeof Languages }[] = [
-    { id: 'general', label: t('settings.general'), icon: Languages },
-    { id: 'agents', label: t('agents.title'), icon: Settings },
-    { id: 'workspace', label: t('settings.workspaceSection'), icon: ShieldCheck },
-    { id: 'appearance', label: t('settings.appearance'), icon: Sun },
-  ]
-  return (
-    <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}>
-      <aside className="settings-sheet" onMouseDown={(event) => event.stopPropagation()}>
-        <header><h1>{t('settings.title')}</h1><button className="plain-icon" onClick={() => setSettingsOpen(false)}><X size={16} /></button></header>
-        <div className="settings-layout"><nav className="settings-navigation">{navigation.map(({ id, label, icon: Icon }) => <button className={section === id ? 'selected' : ''} onClick={() => setSection(id)} key={id}><Icon size={14} />{label}</button>)}</nav><div className="settings-content">
-          {section === 'general' && <section><div className="setting-heading"><Languages size={16} /><div><strong>{t('settings.language')}</strong><span>English / 简体中文</span></div></div><div className="segmented"><button className={locale === 'en' ? 'selected' : ''} onClick={() => setLocale('en')}>English</button><button className={locale === 'zh-CN' ? 'selected' : ''} onClick={() => setLocale('zh-CN')}>简体中文</button></div></section>}
-          {section === 'appearance' && <section><div className="setting-heading"><Sun size={16} /><strong>{t('settings.appearance')}</strong></div><div className="segmented">{(['system', 'light', 'dark'] as Theme[]).map((value) => <button className={theme === value ? 'selected' : ''} onClick={() => setTheme(value)} key={value}>{value === 'dark' && <Moon size={12} />}{t(`settings.${value}`)}</button>)}</div><label className="appearance-setting"><div><strong>{t('settings.fontSize')}</strong><span>{t('settings.fontSizeHint')}</span></div><select value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))}>{Array.from({ length: MAX_FONT_SIZE - DEFAULT_FONT_SIZE + 1 }, (_, index) => DEFAULT_FONT_SIZE + index).map((value) => <option value={value} key={value}>{value} px</option>)}</select></label></section>}
-          {section === 'agents' && <section><div className="setting-heading section-action"><div><strong>{t('settings.profiles')}</strong><span>{snapshot.runtimes.length} runtimes · {snapshot.profiles.length} profiles</span></div><button className="secondary" onClick={createProfile} disabled={!snapshot.runtimes.length}><Plus size={12} />{t('agents.create')}</button></div><div className="profile-list">{snapshot.profiles.map((profile) => { const runtime = snapshot.runtimes.find((item) => item.id === profile.runtimeId); return <button key={profile.id} onClick={() => setEditing(profile)}><div className="profile-list-item"><ProviderIcon name={profile.name} adapterId={runtime?.adapterId} /><div><strong>{profile.name}</strong><span>{[runtime?.adapterId, profile.model, profile.reasoning].filter(Boolean).join(' · ') || t('common.notAvailable')}</span></div></div><ChevronRight size={14} /></button> })}</div></section>}
-          {section === 'workspace' && <section><div className="setting-heading"><ShieldCheck size={16} /><div><strong>{t('settings.policy')}</strong><span>{scope === 'global' ? t('settings.global') : t('settings.workspace')}</span></div></div><label className="setting-row"><span>{t('settings.scope')}</span><select value={scope} onChange={(event) => setScope(event.target.value)}><option value="global">{t('settings.global')}</option>{workspaces.map((workspace) => <option value={workspace} key={workspace}>{workspace}</option>)}</select></label><label className="setting-row"><span>{t('settings.maxRuns')}</span><input type="number" min="1" max="16" value={policy.maxConcurrentRuns} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePolicy({ maxConcurrentRuns: value }) }} /></label><label className="setting-row"><span>{t('settings.maxWriters')}</span><input type="number" min="1" max="8" value={policy.maxConcurrentWriters} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePolicy({ maxConcurrentWriters: value }) }} /></label>{([['requireWorktreeForParallelWriters', 'settings.requireWorktree'], ['allowWrite', 'settings.allowWrite'], ['allowCommands', 'settings.allowCommands'], ['allowNetwork', 'settings.allowNetwork']] as const).map(([key, label]) => <label className="setting-row" key={key}><span>{t(label)}</span><input type="checkbox" checked={policy[key]} onChange={() => updatePolicy({ [key]: !policy[key] })} /></label>)}</section>}
-        </div></div>
-      </aside>
-      {editing && <ProfileEditor profile={editing} runtimes={snapshot.runtimes} t={t} close={() => setEditing(undefined)} />}
-    </div>
   )
 }
 
@@ -353,15 +559,27 @@ export function App() {
   const [fontSize, setFontSizeState] = useState(storedFontSize)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('relay.sidebar-collapsed') === 'true')
   const t = createTranslator(locale)
+
   const setTheme = (next: Theme) => { localStorage.setItem('relay.theme', next); setThemeState(next) }
-  const toggleSidebar = () => setSidebarCollapsed((current) => { const next = !current; localStorage.setItem('relay.sidebar-collapsed', String(next)); return next })
+  const toggleSidebar = () =>
+    setSidebarCollapsed((current) => {
+      const next = !current
+      localStorage.setItem('relay.sidebar-collapsed', String(next))
+      return next
+    })
   const setFontSize = (next: number) => {
-    const value = Math.min(MAX_FONT_SIZE, Math.max(DEFAULT_FONT_SIZE, Math.round(next)))
+    const value = Math.min(20, Math.max(14, Math.round(next)))
     localStorage.setItem('relay.font-size', String(value))
     setFontSizeState(value)
   }
-  useEffect(() => { document.documentElement.dataset.theme = theme; if (theme === 'system') document.documentElement.removeAttribute('data-theme') }, [theme])
-  useEffect(() => { document.documentElement.style.setProperty('--relay-font-scale', String(fontSize / DEFAULT_FONT_SIZE)) }, [fontSize])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    if (theme === 'system') document.documentElement.removeAttribute('data-theme')
+  }, [theme])
+  useEffect(() => {
+    document.documentElement.style.setProperty('--relay-font-scale', String(fontSize / 14))
+  }, [fontSize])
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
@@ -372,7 +590,44 @@ export function App() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   })
-  useEffect(() => { void refresh(); const timer = window.setInterval(() => void refresh(), 2_000); return () => window.clearInterval(timer) }, [refresh])
-  useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(undefined), 3_500); return () => window.clearTimeout(timer) }, [notice, setNotice])
-  return <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}><AppToolbar t={t} sidebarCollapsed={sidebarCollapsed} toggleSidebar={toggleSidebar} /><div className="app-main"><Sidebar t={t} /><SessionWorkspace t={t} /></div><SettingsSheet t={t} theme={theme} setTheme={setTheme} fontSize={fontSize} setFontSize={setFontSize} />{error && <div className="toast error"><CircleAlert size={14} />{error}</div>}{notice && <div className="toast"><Check size={14} />{notice}</div>}</div>
+  useEffect(() => {
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 2_000)
+    return () => window.clearInterval(timer)
+  }, [refresh])
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(undefined), 3_500)
+    return () => window.clearTimeout(timer)
+  }, [notice, setNotice])
+
+  const sidebarLabel = sidebarCollapsed ? t('action.showSidebar') : t('action.hideSidebar')
+  const macOS = navigator.userAgent.includes('Macintosh')
+
+  return (
+    <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
+      {/* Compact sidebar toggle beside the window chrome (docs/ui.md 5) */}
+      <header className={macOS ? 'app-toolbar macos' : 'app-toolbar'}>
+        <div className="toolbar-leading">
+          <button
+            className="plain-icon"
+            aria-label={sidebarLabel}
+            title={sidebarLabel}
+            aria-expanded={!sidebarCollapsed}
+            onClick={toggleSidebar}
+          >
+            <PanelLeft size={16} />
+          </button>
+        </div>
+        <div className="toolbar-drag" />
+      </header>
+      <div className="app-main">
+        <Sidebar t={t} />
+        <SessionWorkspace t={t} />
+      </div>
+      <SettingsSheet t={t} theme={theme} setTheme={setTheme} fontSize={fontSize} setFontSize={setFontSize} />
+      {error && <div className="toast error"><CircleAlert size={14} />{error}</div>}
+      {notice && <div className="toast"><Check size={14} />{notice}</div>}
+    </div>
+  )
 }

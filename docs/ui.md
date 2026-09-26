@@ -620,6 +620,67 @@ Reasoning may include:
 
 Do not put model/reasoning selectors inside Step nodes.
 
+#### Where the choices come from
+
+The model list and the reasoning levels are the **runtime's own**, read from the
+CLI, not a list Relay defines:
+
+- an adapter probes its CLI's `--help` and reports the models and reasoning
+  levels that CLI advertises (`reportOptions`)
+- `AdapterCapabilities.modelSelection` is true only when the CLI actually
+  advertises a model flag, so the UI can tell "this CLI has no models" apart
+  from "selection is unsupported here"
+- Relay never invents a model name, a reasoning label, or a fallback list. When
+  a CLI publishes neither, the profile stores nothing for that field and the
+  runtime's own default applies
+- the number of reasoning stops follows the CLI: a CLI with four levels gets
+  four stops, not a forced three
+- a stored reasoning value is an opaque CLI token, so it is not restricted to
+  low/medium/high
+- the chosen value is passed to the CLI only through the flag that CLI
+  advertised, so a runtime without model support is never handed an argument it
+  does not understand
+
+##### When the CLI publishes nothing
+
+Some CLIs expose no model flag at all (the DeepSeek Harness CLI is one). Relay
+then asks the provider's official HTTP API, and caches the answer:
+
+```text
+CLI --help reports models?
+  ├─ yes -> use them
+  └─ no  -> official API (needs that provider's key in the environment)
+             ├─ answered -> cache on disk for 24h, source = "api"
+             └─ no key   -> cache briefly, ask the user to set the key
+```
+
+- Endpoints and credentials come from each provider's own documentation:
+  DeepSeek `GET https://api.deepseek.com/models` (`DEEPSEEK_API_KEY`),
+  Kimi `GET https://api.moonshot.ai/v1/models` (`MOONSHOT_API_KEY`),
+  Gemini `GET https://generativelanguage.googleapis.com/v1beta/models`
+  (`GEMINI_API_KEY`, passed as a query parameter),
+  Grok `GET https://api.x.ai/v1/models` (`XAI_API_KEY`).
+- A provider whose response shape has not been verified is left out rather than
+  guessed at, and says so in the UI.
+- DeepSeek's models endpoint declares `effort.supported_levels`, so it can also
+  supply the reasoning slider. Providers that do not declare levels contribute
+  models only.
+- The API key is read from the environment, never written to disk, never sent to
+  the renderer, and redacted from any diagnostic.
+- Cached results record whether they were produced without a credential, so
+  setting a key later invalidates the cache immediately instead of leaving the
+  user stuck on a stale "no models" answer.
+
+Field order inside an agent editor:
+
+```text
+Runtime
+Model
+Reasoning
+Permissions
+Description
+```
+
 ### 16.2 Session Overrides
 
 CLI Info may optionally allow temporary session-level overrides:
@@ -874,9 +935,223 @@ Visual direction:
 - neutral color treatment
 - not cyberpunk
 
+### 21.1 Icon assets and build
+
+The icon masters live in `assets/appicon`, supplied by design and edited by hand:
+
+- `svg/relay-icon.svg` - the mark, dark glyph for light surfaces
+- `svg/relay-icon-dark.svg` - the mark, light glyph for dark surfaces
+- `png/light/**`, `png/dark/**` - designer exports, reference only
+
+Run `pnpm icons` (`tools/build-icons.sh`) after changing them. It regenerates
+`assets/app-icon/build`, which holds the sized PNGs, `appicon.icns`,
+`appicon.ico`, `relay-mark.png`, and the provider marks. Never edit a generated
+PNG; the previous tiled icon is kept in `assets/app-icon/legacy` for reference.
+
+Rules the build depends on:
+
+- The mark is a bare glyph: transparent background, no card, no ring, no shadow,
+  no gradient. It fills 81% of the canvas, centred, at an alpha aspect of 1.32:1.
+  Do not reintroduce an outer tile without a deliberate decision: on macOS a
+  tile-less icon renders in the Dock at the glyph's own size, which is smaller
+  and flatter than the rounded-square icons around it.
+- One SVG serves every size. The mark's strokes are thick and its geometry is
+  simple enough to stay legible at 16px, so it needs no separate small-size
+  optical variant, and the `.icns` asserts exact pixel sizes (`icon_16x16@2x.png`
+  is 32px).
+- In-app marks are tinted from the PNG's **alpha channel** through a CSS mask
+  (`.mark-tinted`), so they follow the surface's text colour in either theme.
+  The light master is not rasterised: an `<img>` cannot inherit `currentColor`,
+  and swapping two pre-coloured files depends on a `prefers-color-scheme` /
+  `data-theme` cascade that is easy to get subtly wrong.
+- The renderer serves these files at `/app-icon/build/...`; the main process
+  reads them from disk for the Dock and window icons.
+- Provider marks are copied from `assets/providers` into the same build output so
+  the renderer loads every icon from one directory.
+- Keep provider marks legible at the size they are drawn (14-15px). A mark that
+  looks correct at 128px can be an unreadable smudge at 15px, and some rasterisers
+  fail on certain vendor paths even though they render in Chromium.
+
 ---
 
-## 22. Explicit Non-Goals
+## 22. First-Run Onboarding
+
+Relay needs a first-run onboarding state because a new user may have no sessions and no configured subagents.
+
+This is not a marketing welcome page and not a separate Home screen. Keep the normal app shell visible so the user immediately learns the real product structure.
+
+The first-run state should appear in the main content area while the sidebar still shows:
+
+```text
+Relay
+
+Sessions
+No sessions yet
+
+Settings
+```
+
+### 22.1 Intro
+
+Use a compact centered onboarding card.
+
+Suggested copy:
+
+```text
+[Relay icon]
+
+Connect Codex to your coding agents
+
+Relay lets Codex delegate work to external CLI agents while Codex stays in control of planning and final review.
+
+[ Set up Relay ]
+```
+
+Keep this concise. Do not add slogans, feature carousels, testimonials, or marketing copy.
+
+### 22.2 Setup Flow
+
+Use a short three-step flow inside the same centered card:
+
+```text
+1  Connect Codex   ───  2  Add Agents   ───  3  Ready
+```
+
+#### Connect Codex
+
+Check the Codex integration and show real status. The CLI is still named
+`codex`, but it is not always on `PATH`: the VS Code extension and the desktop
+app each bundle their own copy, and for most users that bundled copy is the only
+one installed. Detection therefore checks `PATH` first and then the known bundle
+and install locations under `$CODEX_HOME`, `~/.local/bin`, `~/.npm-global/bin`,
+`/usr/local/bin`, `/opt/homebrew/bin`, and the `openai.chatgpt-*` VS Code
+extension folders, reporting which executable it used so a failure is
+diagnosable. Relay must never report "not found" on a machine where a bundled
+Codex is running.
+
+```text
+Connect Codex
+
+✓ Codex detected
+✓ Relay MCP configured
+✓ Relay skill installed
+
+[ Continue ]
+```
+
+Automate setup where possible. Avoid making the user manually copy configuration unless automatic configuration is unavailable.
+
+#### Add Agents
+
+This is the most important onboarding step.
+
+Relay should scan the machine for compatible installed runtimes / CLIs and show detected options before asking the user to fill in configuration manually.
+
+Example:
+
+```text
+Add your coding agents
+
+Detected on this computer
+
+DeepSeek Harness     Detected      [ Add ]
+Gemini CLI           Detected      [ Add ]
+Kimi Code            Not installed
+GLM                   Not installed
+Grok                  Not installed
+
++ Add another agent
+```
+
+Use recognizable provider icons for DeepSeek, GLM, Gemini, Grok, and Kimi.
+
+The onboarding goal is **not** to configure every provider. The user only needs at least one usable worker to finish setup.
+
+When adding a detected agent, keep the form minimal and prefill sensible defaults:
+
+```text
+DeepSeek Code
+
+Runtime
+DeepSeek Harness
+
+Model
+DeepSeek Pro
+
+Reasoning
+High
+
+Permissions
+Read / Write / Shell
+
+[ Add Agent ]
+```
+
+The same model/reasoning rules from Settings apply here. Onboarding simply creates the initial profile.
+
+#### Ready
+
+Finish by showing exactly how to use Relay from Codex:
+
+```text
+Ready
+
+Relay is connected to Codex.
+2 agents available.
+
+DeepSeek Code
+Gemini Research
+
+Relay MCP      <status>
+Relay skill    <status>
+
+[ Done ]
+```
+
+This step shows the two remaining integration checks rather than a command to
+copy. Relay has no standalone invocation string: it attaches to Codex as an MCP
+server (`mcp_servers.relay`) plus a skill that Codex loads from its skills
+folder, and once both are installed Codex calls the Relay tools
+(`list_agents`, `run_agent`, `wait_agent`, `get_agent_status`, `cancel_agent`)
+on its own when a task should be delegated. Showing a `$relay ...` trigger would
+promise a syntax Relay never installs, so the step reports real status and says
+what to do instead.
+
+### 22.3 After Onboarding
+
+After setup, do not show the onboarding again during normal launches.
+
+If the user has no Relay sessions yet, use a minimal empty state instead:
+
+```text
+[Relay icon]
+
+No Relay sessions yet
+
+Ask Codex to delegate a task and it will appear here.
+```
+
+Do not show a New Session button because Relay sessions originate from Codex.
+
+### 22.4 Launch Behavior
+
+```text
+Launch
+  ↓
+Relay configured?
+  ├─ no  → First-run onboarding
+  └─ yes
+       ↓
+Has Relay sessions?
+  ├─ yes → Restore last viewed session
+  └─ no  → Minimal empty state
+```
+
+The onboarding and empty state must use the same Codex-like light visual language as the rest of the app.
+
+---
+
+## 23. Explicit Non-Goals
 
 Do not add these unless explicitly requested later:
 
@@ -905,7 +1180,7 @@ Do not add these unless explicitly requested later:
 
 ---
 
-## 23. Canonical Workspace
+## 24. Canonical Workspace
 
 ```text
 ┌──────────────────────┬────────────────────────────────────────────────────┐
@@ -933,7 +1208,7 @@ Do not add these unless explicitly requested later:
 
 ---
 
-## 24. Canonical Focus Mode
+## 25. Canonical Focus Mode
 
 When the sidebar is hidden:
 
@@ -964,7 +1239,7 @@ Step + Console
 
 ---
 
-## 25. Design Summary
+## 26. Design Summary
 
 Relay should visually and behaviorally feel close to Codex.
 
