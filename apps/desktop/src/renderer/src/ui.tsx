@@ -309,20 +309,20 @@ export function ConsoleRows({ rows, t }: { rows: ConsoleRow[]; t: Translator }) 
     <>
       {rows.map((row) => (
         <div
-          className={`grid min-h-[31px] grid-cols-[70px_76px_minmax(0,1fr)] items-baseline gap-2 border-l-2 border-l-transparent px-4 py-[7px] hover:bg-surface-subtle ${CONSOLE_ACCENT[row.kind] ?? ''}`}
+          className={`grid min-h-[36px] grid-cols-[72px_84px_minmax(0,1fr)] items-baseline gap-2 border-l-2 border-l-transparent px-4 py-2 hover:bg-surface-subtle ${CONSOLE_ACCENT[row.kind] ?? ''}`}
           key={row.id}
         >
-          <time className="text-[9px] text-faint">
+          <time className="text-[11px] text-faint">
             {new Date(row.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </time>
-          <span className="text-[9px] font-bold uppercase tracking-[0.04em] text-muted">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.03em] text-muted">
             {t(`console.${row.kind}`)}
           </span>
-          <code className="whitespace-pre-wrap break-words text-[10px] leading-[1.55] text-text">
+          <code className="whitespace-pre-wrap break-words text-[12px] leading-[1.55] text-text">
             {row.label}
-            {row.count ? <i className="text-[9px] not-italic text-faint"> {row.count} {t('console.files')}</i> : null}
+            {row.count ? <i className="text-[11px] not-italic text-faint"> {row.count} {t('console.files')}</i> : null}
             {row.additions !== undefined || row.deletions !== undefined ? (
-              <i className="text-[9px] not-italic text-faint tabular-nums">
+              <i className="text-[11px] not-italic text-faint tabular-nums">
                 {row.additions ? ` +${row.additions}` : ''}
                 {row.deletions ? ` -${row.deletions}` : ''}
               </i>
@@ -405,4 +405,3 @@ export function useRuntimeOptions(runtimeId: string | undefined): {
 
   return { options, loading }
 }
-

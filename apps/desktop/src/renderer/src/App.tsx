@@ -353,12 +353,12 @@ function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
       className="step-strip"
     >
       <div className="step-strip-label">{t('steps.title')}</div>
-      <TabsList className="step-scroll" aria-label={t('steps.title')}>
+      <TabsList variant="line" className="step-scroll" aria-label={t('steps.title')}>
         {groups.map((group) => {
           if (group.items.length === 1) {
             const item = group.items[0]!
             return (
-              <TabsTrigger key={group.key} value={valueOf(item)} className={`step-node ${item.step.status}${stepIsActive(item.step) ? ' current' : ''}`}>
+              <TabsTrigger key={group.key} value={valueOf(item)} className={`step-node h-auto flex-none whitespace-normal ${item.step.status}${stepIsActive(item.step) ? ' current' : ''}`}>
                 <StepNodeBody item={item} t={t} />
               </TabsTrigger>
             )
@@ -368,7 +368,7 @@ function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
             <TabsTrigger
               key={group.key}
               value={valueOf(group.items[0]!)}
-              className="step-node step-parallel"
+              className="step-node step-parallel h-auto flex-none whitespace-normal"
             >
               <span className="step-parallel-head">
                 <i className="step-glyph running" aria-hidden="true">{statusGlyph('running')}</i>
@@ -805,9 +805,8 @@ export function App() {
     if (theme === 'system') document.documentElement.removeAttribute('data-theme')
   }, [theme])
   useEffect(() => {
-    document.documentElement.style.setProperty('--relay-font-scale', String(fontSize / 14))
-    // Tailwind/shadcn use rem, so changing the root size keeps framework
-    // components and Relay-owned layout in the same typography system.
+    // One root setting scales shadcn controls and Relay's rem-based typography
+    // together. Do not add a second custom multiplier here.
     document.documentElement.style.fontSize = `${fontSize}px`
   }, [fontSize])
   useEffect(() => {
