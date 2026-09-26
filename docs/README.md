@@ -4,7 +4,7 @@ Relay 是一个面向 Codex 等主开发 Agent 的本地 **Subagent Controller**
 
 核心原则只有一句：
 
-> Codex 决定“为什么、何时、把什么任务交给谁”；Relay 负责“有哪些 worker、如何安全启动、如何记录和停止它们”。
+> Codex owns intelligence. Relay owns worker lifecycle, session binding, observability and transport. Native CLIs own their internal agent behavior.
 
 ## 产品定位
 
@@ -33,7 +33,7 @@ Relay 是：
 - Agent Tool Registry：管理 Codex 当前可调用的 Agent Profile。
 - Runtime Controller：管理 CLI 发现、进程、会话、取消与恢复。
 - Policy Enforcement Point：落实权限、并发与 workspace 隔离规则。
-- Activity Console：按 Host Session 展示 Run、WorkerSession 和事件日志。
+- Activity Console：按 Host Session 展示 Step、WorkerSession 和可观察事件。
 
 Relay 不是：
 
@@ -47,13 +47,13 @@ Relay 不是：
 
 用户主入口保持为 Codex。Relay 的桌面端是可选控制台，大部分时间可以驻留在菜单栏或系统托盘。
 
-Relay 不画复杂 Agent 拓扑图。主界面围绕真实工作展开：
+Relay 不画复杂 Agent 拓扑图，也不把自己包装成另一个 AI 工作台。桌面端采用本地 macOS 工具的克制信息架构：
 
-1. Sessions：当前和历史 Codex 会话。
-2. Runs：每次委派的任务。
-3. Live Logs：worker 正在做什么。
-4. Agents：Runtime 检测与 Profile 配置。
-5. Routing / Settings：全局、workspace、session 范围的策略。
+1. 左侧只有按最近使用排序的 Codex Sessions，名称与 Codex 完全一致。
+2. 主区域以横向 Step 导航和占据大部分空间的 Console 为核心。
+3. Console 只展示 Read、Search、Edit、Command、Test、Result、Error、Status 等可观察动作。
+4. Changes 与 Raw Output 是按需打开的检查器，不是常驻顶级页面。
+5. Runtime、Profile、Policy 与语言统一收进齿轮入口的 Settings。
 
 ## 文档导航
 
@@ -67,7 +67,7 @@ Relay 不画复杂 Agent 拓扑图。主界面围绕真实工作展开：
 ```text
 Codex
   ├─ Hooks：提供可信的 Host Session identity
-  └─ stdio MCP：list/run/send/wait/cancel
+  └─ stdio MCP：list/run/resume/accept/send/wait/cancel
                  ↓
               Relay Core
        Registry · Policy · Runtime · Event Store

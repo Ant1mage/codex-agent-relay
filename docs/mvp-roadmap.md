@@ -22,9 +22,9 @@
 - Runtime 扫描：路径、版本、可执行、认证/健康状态、能力矩阵。
 - Agent Profile：name、runtime、description、capabilities、instructions（可选）。
 - DeepSeek Harness Adapter 的完整垂直切片。
-- HostSession → Run → WorkerSession → Event 数据链路。
+- HostSession → TaskRun → Step → WorkerSession → Event 数据链路。
 - SQLite append-only Event Store 和基础 projection。
-- Sessions、Run 列表、Live Log、Agents、Settings 五个最小页面。
+- 极简 Sessions 侧栏、横向 Step 导航、Console，以及 Settings 内的 Runtime/Profile/Policy 配置。
 - 英语与简体中文界面；默认跟随系统语言，并允许用户切换后持久化。
 - Global / Workspace policy；Session 临时 override 可做最小版本。
 - Read-only 与 write capability；并行 writer 的保守冲突保护。
@@ -88,17 +88,17 @@ relay/
 
 ### Phase 0：契约先行
 
-- 固化术语：HostSession、Runtime、Profile、Run、WorkerSession、Event。
+- 固化术语：HostSession、Runtime、Profile、TaskRun、Step、WorkerSession、Event。
 - 定义 Zod schema、状态机、错误码与 capability matrix。
 - 定义 Adapter contract 和 native-event fixture 测试方式。
 - 明确 Core 不依赖任何具体 provider。
 
-完成标准：用 fake adapter 在内存中跑通一个 Run 和事件序列。
+完成标准：用 fake adapter 在内存中跑通一个 TaskRun、初始 Step 和事件序列。
 
 ### Phase 1：Core 垂直切片
 
 - SQLite schema 与 append-only Event Store。
-- Run lifecycle、projection、cancel。
+- TaskRun/Step lifecycle、projection、cancel；worker 完成后进入 `awaiting_host`。
 - Registry 与 Global/Workspace/Session policy resolver。
 - 并发和 write-conflict 的保守规则。
 
@@ -125,12 +125,12 @@ relay/
 ### Phase 4：最小 GUI
 
 - Sessions 列表和 HostSession 详情。
-- Run 卡片、状态、耗时、worker tree。
-- 实时 event timeline、错误和取消按钮。
-- Agents 页面：扫描 Runtime、创建/编辑 Profile。
-- Settings：默认 policy 与 workspace override。
+- 最近使用的 Codex Session 纯文本列表，名称必须与 Codex 完全一致。
+- 当前优先的横向 Step 导航与占据主区域的 Console。
+- Console 只展示归一化可观察动作；Changes/Raw Output 作为检查器。
+- Settings：Runtime/Profile、语言、默认 policy 与 workspace override。
 
-完成标准：GUI 对运行态的展示完全来自 projection，不解析原厂 stdout。
+完成标准：GUI 对运行态的展示完全来自 projection，不解析原厂 stdout，不展示隐藏推理或虚假进度。
 
 ### Phase 5：第二、第三 Adapter
 

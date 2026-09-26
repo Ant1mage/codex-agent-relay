@@ -2,7 +2,7 @@
 
 ## 1. 概念模型
 
-Relay 必须从第一天分清 `Runtime`、`Agent Profile`、`Run` 与 `WorkerSession`。它们不是同一个概念。
+Relay 必须分清 `Runtime`、`Agent Profile`、`TaskRun`、`Step` 与 `WorkerSession`。它们不是同一个概念。
 
 ### Runtime
 
@@ -39,7 +39,7 @@ type AgentProfile = {
 
 ### Worker
 
-Worker 是某次 Run 中实际启动的执行者/进程。它是运行态对象，不是长期配置对象。原厂 Harness 内部自行创建的 child agent 也属于 worker 树的一部分，只用于观察和控制，不进入 Relay 的长期 Profile 配置。
+Worker 是某个 Step 中实际启动的执行者/进程。它是运行态对象，不是长期配置对象。原厂 Harness 内部自行创建的 child agent 属于 Runtime 内部行为，只作为弱元数据或原始事件保留，不提升为 Relay 的顶层 Step。
 
 ### Subagent
 
@@ -48,20 +48,24 @@ Worker 是某次 Run 中实际启动的执行者/进程。它是运行态对象�
 ```text
 Codex：能力编排
   ↓ Agent Profile
-Relay：路由、约束、生命周期、记录
+Relay：约束、生命周期、Session 绑定、记录与传输
   ↓ WorkerSession
 原厂 Harness：具体执行，必要时内部多 Agent
 ```
 
-## 2. Session / Run / WorkerSession / Event
+Relay 不负责选择 Profile、拆解计划、验收结果或自动重试；这些智能决策始终由 Codex 完成。
 
-建议采用四层模型：
+## 2. Session / TaskRun / Step / WorkerSession / Event
+
+建议采用五层模型：
 
 ```text
 HostSession
-└── Run
-    └── WorkerSession
-        └── Event[]
+└── TaskRun
+    ├── Step 1
+    │   └── WorkerSession · iteration 1..n
+    └── Step 2
+        └── WorkerSession · iteration 1..n
 ```
 
 ### HostSession
@@ -83,21 +87,38 @@ type HostSession = {
 }
 ```
 
-### Run
+### TaskRun
 
-每次 Codex 调用 `run_agent` 都创建一个 Run。Run 是 Relay 面向 Host 的任务生命周期。
+TaskRun 是 Relay 面向 Host 的任务生命周期。worker 报告完成时，TaskRun 进入 `awaiting_host`，而不是自动变成已完成；只有 Codex review 后调用 accept，任务才完成。worker completion 不等于 task completion。
 
 ```ts
 type Run = {
   id: string
   hostSessionId: string
+  title: string
+  cwd: string
+  status: 'queued' | 'running' | 'awaiting_host' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'orphaned'
+  createdAt: string
+  updatedAt: string
+}
+```
+
+### Step
+
+Step 是一次顶层 Codex → Relay 委派，是主界面横向导航的最小单位。同一个 worker 被 Codex 驳回后继续执行，仍属于同一个 Step，只增加 `iteration`；切换 Profile/Runtime 或创建新的并行委派才是新 Step。Runtime 内部 tool call 或 child agent 不是 Step。
+
+```ts
+type Step = {
+  id: string
+  runId: string
   profileId: string
   task: string
-  cwd: string
   accessMode: 'read_only' | 'propose' | 'write'
   isolation: 'shared' | 'worktree'
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'handed_off'
+  status: 'queued' | 'starting' | 'running' | 'awaiting_host' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'orphaned'
+  iteration: number
   createdAt: string
+  updatedAt: string
 }
 ```
 
@@ -109,17 +130,19 @@ type Run = {
 type WorkerSession = {
   id: string
   runId: string
+  stepId: string
+  iteration: number
   runtimeId: string
   nativeSessionId?: string
   parentWorkerSessionId?: string
   processId?: number
-  status: 'starting' | 'running' | 'completed' | 'failed' | 'cancelled'
+  status: 'starting' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'orphaned'
   startedAt: string
   endedAt?: string
 }
 ```
 
-一个 Run 通常对应一个顶层 WorkerSession；如果原厂 Harness 暴露 child/subagent 事件，则用 `parentWorkerSessionId` 形成树。
+一个 Step 的每次 iteration 对应一个顶层 WorkerSession。Relay 可以记录原厂 Harness 暴露的 child/subagent 数量或原始事件，但不建立需要跨 provider 保持一致的 child tree。
 
 ### Event
 
@@ -134,9 +157,13 @@ type RelayEvent = {
   timestamp: string
   type:
     | 'run/created'
+    | 'run/awaiting_host'
+    | 'run/accepted'
+    | 'step/created'
+    | 'step/iteration_started'
     | 'worker/started'
     | 'worker/message'
-    | 'worker/reasoning'
+    | 'worker/status'
     | 'tool/read'
     | 'tool/search'
     | 'tool/edit'
@@ -148,25 +175,31 @@ type RelayEvent = {
     | 'worker/completed'
     | 'worker/failed'
     | 'worker/cancelled'
+    | 'worker/interrupted'
+    | 'worker/orphaned'
   data: unknown
 }
 ```
 
-最低约束：同一 Run 内 `seq` 单调递增；保留原始 provider event 便于排障，同时生成稳定的 normalized event 供 GUI 使用。
+最低约束：同一 TaskRun 内 `seq` 单调递增；原始 provider event 以有界、可截断形式保留供排障，同时生成稳定的 normalized event 供 GUI 使用。Raw Output 指 stdout、stderr 和结构化 native event 等完整可观察输出，不包含隐藏思维链。
 
 ## 3. 生命周期
 
 ```text
-queued → starting → running
-                      ├─ completed
+queued → starting → running → awaiting_host → completed
+                      │             └─ Codex reject/resume → next iteration
                       ├─ failed
                       ├─ cancelled
-                      └─ handed_off
+                      ├─ interrupted
+                      └─ orphaned
 ```
 
 - `cancel`：立即停止，不承诺生成进度摘要。
-- `handoff`：请求 worker 总结已完成、未完成、改动文件与风险，然后停止并交回 Codex。
-- `detach` 可后置；MVP 中可先用 handoff/cancel 覆盖主要需求。
+- `awaiting_host`：worker 已交回可观察结果，等待 Codex 验收。
+- `accept`：Codex 验收通过，TaskRun 才进入 `completed`。
+- `resume`：Codex 给同一 worker 反馈，Step 的 iteration 加一；不支持原生 resume 时采用显式降级并记录新 native session。
+- `interrupted`：进程、连接或 Host 非正常中断，仍可能恢复。
+- `orphaned`：Relay 重启后无法重新绑定仍在运行或状态未知的进程。
 
 关闭某个 Profile 只禁止新 Run，不自动杀掉已经运行的 worker。停止运行中任务必须是独立动作。
 
@@ -213,23 +246,19 @@ Relay 不提供 peer-to-peer Agent chat。需要把 A 的信息交给 B 时，�
 GUI 是 Subagent Activity Monitor，不是开发工作台。默认信息架构：
 
 ```text
-Sessions
-  └─ Runs
-      └─ Worker tree + event timeline
-
-Agents
-  └─ Runtime detection + Profile configuration
-
-Routing / Settings
+Relay + Settings gear
+Sessions (exact Codex names, most recently used first)
+  └─ Task title
+      ├─ horizontal Step navigator
+      └─ Console
+          ├─ Changes inspector
+          └─ Raw Output inspector
 ```
 
-单个 Run 的视图应直接回答：谁在做什么、已经多久、改了什么、测试怎样、是否需要处理。
+单个 Step 的视图应直接回答：谁在做什么、已经多久、改了什么、测试怎样、是否需要 Codex 处理。
 
 ```text
-DeepSeek Code · RUNNING · 03:21
-  ├─ analyze callsites        DONE
-  ├─ update service           RUNNING
-  └─ update tests             WAITING
+Step 2 · DeepSeek Code · RUNNING · iteration 1 · 03:21
 
 00:18  Read       AuthManager.swift
 00:31  Edit       OAuthService.swift
@@ -237,7 +266,7 @@ DeepSeek Code · RUNNING · 03:21
 00:58  Test       42 passed, 2 failed
 ```
 
-GUI 所有状态来自 Event projection。Renderer 不直接读取 worker stdout，也不包含 Runtime 业务逻辑。
+GUI 所有状态来自 Event projection。Renderer 不直接读取 worker stdout，也不包含 Runtime 业务逻辑。界面不显示虚假百分比进度、隐藏推理、工作流图或垂直 agent 树；浅色主题优先，深色主题使用同一套语义 token。
 
 ## 6. 进程边界
 
