@@ -2,20 +2,24 @@ import type { RunStatus, WorkerStatus } from './models.js'
 
 const runTransitions: Readonly<Record<RunStatus, readonly RunStatus[]>> = {
   queued: ['starting', 'cancelled'],
-  starting: ['running', 'failed', 'cancelled'],
-  running: ['completed', 'failed', 'cancelled', 'handed_off'],
+  starting: ['running', 'failed', 'cancelled', 'interrupted', 'orphaned'],
+  running: ['awaiting_host', 'failed', 'cancelled', 'interrupted', 'orphaned'],
+  awaiting_host: ['running', 'completed', 'cancelled'],
   completed: [],
   failed: [],
   cancelled: [],
-  handed_off: [],
+  interrupted: ['running', 'failed', 'cancelled', 'orphaned'],
+  orphaned: [],
 }
 
 const workerTransitions: Readonly<Record<WorkerStatus, readonly WorkerStatus[]>> = {
-  starting: ['running', 'failed', 'cancelled'],
-  running: ['completed', 'failed', 'cancelled'],
+  starting: ['running', 'failed', 'cancelled', 'interrupted', 'orphaned'],
+  running: ['completed', 'failed', 'cancelled', 'interrupted', 'orphaned'],
   completed: [],
   failed: [],
   cancelled: [],
+  interrupted: ['running', 'failed', 'cancelled', 'orphaned'],
+  orphaned: [],
 }
 
 export function canTransitionRun(from: RunStatus, to: RunStatus): boolean {
@@ -37,4 +41,3 @@ export function assertWorkerTransition(from: WorkerStatus, to: WorkerStatus): vo
     throw new Error(`Invalid worker transition: ${from} -> ${to}`)
   }
 }
-

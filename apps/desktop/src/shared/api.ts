@@ -6,11 +6,13 @@ import type {
   RelayPolicyOverride,
   Run,
   Runtime,
+  Step,
   WorkerSession,
 } from '@relay/protocol'
 
 export interface DesktopRunView {
   run: Run
+  steps: Step[]
   workers: WorkerSession[]
   events: RelayEvent[]
 }

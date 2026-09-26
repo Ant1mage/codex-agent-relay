@@ -53,17 +53,25 @@ describe('phase 0 contracts', () => {
     })
     await active.completion
 
-    expect(active.run.status).toBe('completed')
+    expect(active.run.status).toBe('awaiting_host')
+    expect(active.step.status).toBe('awaiting_host')
     expect(active.worker.status).toBe('completed')
     const events = store.list(active.run.id)
     expect(events.map((event) => event.type)).toEqual([
       'run/created',
+      'step/created',
       'worker/started',
       'worker/message',
       'tool/read',
       'worker/completed',
+      'run/awaiting_host',
     ])
-    expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5])
+    expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7])
+
+    const accepted = await controller.accept(active.run.id)
+    expect(accepted.run.status).toBe('completed')
+    expect(accepted.steps[0]?.status).toBe('completed')
+    expect(store.list(active.run.id).at(-1)?.type).toBe('run/accepted')
   })
 
   it('provides a reusable adapter conformance exercise', async () => {
@@ -82,4 +90,3 @@ describe('phase 0 contracts', () => {
     })
   })
 })
-

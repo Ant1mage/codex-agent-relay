@@ -10,6 +10,7 @@ import {
   type Run,
   type RunRequest,
   type Runtime,
+  type Step,
   type WorkerSession,
 } from '@relay/protocol'
 import type { EventStore } from './memory-event-store.js'
@@ -19,12 +20,14 @@ import { AdapterRegistry, ProfileRegistry, RuntimeRegistry } from './registry.js
 
 export interface ActiveRun {
   run: Run
+  step: Step
   worker: WorkerSession
   completion: Promise<void>
 }
 
 interface InternalRun {
   run: Run
+  step: Step
   worker: WorkerSession
   adapter: AgentAdapter
   handle?: WorkerSessionHandle
@@ -35,6 +38,7 @@ interface InternalRun {
     data: unknown,
     nativeEvent?: unknown,
     includeWorker?: boolean,
+    includeStep?: boolean,
   ): Promise<void>
 }
 
@@ -125,6 +129,34 @@ export class RunController {
     await this.cancel(active.run.id)
   }
 
+  async accept(runId: string): Promise<RunProjection> {
+    const events = await this.eventStore.list(runId)
+    if (events.length === 0) throw new RelayError('RUN_NOT_FOUND', `Unknown run ${runId}`)
+    const projection = projectRun(events)
+    if (projection.run.status !== 'awaiting_host') {
+      throw new RelayError(
+        'INVALID_STATE',
+        `Run ${runId} cannot be accepted from ${projection.run.status}`,
+      )
+    }
+    const timestamp = new Date().toISOString()
+    await this.eventStore.append({
+      id: randomUUID(),
+      runId,
+      seq: events.length + 1,
+      timestamp,
+      type: 'run/accepted',
+      data: { acceptedBy: 'host' },
+    })
+    return this.get(runId)
+  }
+
+  async acceptWorker(workerSessionId: string): Promise<RunProjection> {
+    const runId = await this.eventStore.findRunIdByWorker(workerSessionId)
+    if (!runId) throw new RelayError('WORKER_NOT_FOUND', `Unknown worker ${workerSessionId}`)
+    return this.accept(runId)
+  }
+
   async start(input: RunRequest): Promise<ActiveRun> {
     const request = runRequestSchema.parse(input)
     const profile = this.profiles.require(request.profileId)
@@ -154,10 +186,25 @@ export class RunController {
       ...request,
       status: 'queued',
       createdAt: now,
+      updatedAt: now,
+    }
+    const step: Step = {
+      id: randomUUID(),
+      runId: run.id,
+      profileId: request.profileId,
+      task: request.task,
+      accessMode: request.accessMode,
+      isolation: request.isolation,
+      status: 'queued',
+      iteration: 1,
+      createdAt: now,
+      updatedAt: now,
     }
     const worker: WorkerSession = {
       id: randomUUID(),
       runId: run.id,
+      stepId: step.id,
+      iteration: step.iteration,
       runtimeId: runtime.id,
       status: 'starting',
       startedAt: now,
@@ -169,26 +216,33 @@ export class RunController {
       data,
       nativeEvent,
       includeWorker = true,
+      includeStep = true,
     ) => {
       seq += 1
       const event: RelayEvent = {
         id: randomUUID(),
         runId: run.id,
+        ...(includeStep ? { stepId: step.id } : {}),
         ...(includeWorker ? { workerSessionId: worker.id } : {}),
         seq,
         timestamp: new Date().toISOString(),
         type,
         data,
-        ...(nativeEvent === undefined ? {} : { nativeEvent }),
+        ...(nativeEvent === undefined ? {} : { nativeEvent: boundNativeEvent(nativeEvent) }),
       }
       writeChain = writeChain.then(async () => this.eventStore.append(event))
       return writeChain
     }
 
-    await append('run/created', { run }, undefined, false)
+    await append('run/created', { run }, undefined, false, false)
+    await append('step/created', { step }, undefined, false)
     run.status = 'starting'
+    run.updatedAt = new Date().toISOString()
+    step.status = 'starting'
+    step.updatedAt = run.updatedAt
     const internal: InternalRun = {
       run,
+      step,
       worker,
       adapter,
       cancelRequested: false,
@@ -200,7 +254,7 @@ export class RunController {
     const completion = this.#execute(internal, profile).finally(() => {
       this.#active.delete(run.id)
     })
-    return { run, worker, completion }
+    return { run, step, worker, completion }
   }
 
   async cancel(runId: string): Promise<void> {
@@ -223,7 +277,7 @@ export class RunController {
   }
 
   async #execute(active: InternalRun, profile: AgentProfile): Promise<void> {
-    const { adapter, run, worker } = active
+    const { adapter, run, step, worker } = active
     try {
       const handle = await adapter.start({
         runId: run.id,
@@ -245,6 +299,9 @@ export class RunController {
 
       worker.status = 'running'
       run.status = 'running'
+      run.updatedAt = new Date().toISOString()
+      step.status = 'running'
+      step.updatedAt = run.updatedAt
       await active.append('worker/started', { worker })
 
       for await (const event of handle.events) {
@@ -283,10 +340,17 @@ export class RunController {
     if (active.terminal) return
     active.terminal = true
     const status = type.slice('worker/'.length) as 'completed' | 'failed' | 'cancelled'
+    const now = new Date().toISOString()
     active.worker.status = status
-    active.run.status = status
-    active.worker.endedAt = new Date().toISOString()
+    active.step.status = status === 'completed' ? 'awaiting_host' : status
+    active.step.updatedAt = now
+    active.run.status = status === 'completed' ? 'awaiting_host' : status
+    active.run.updatedAt = now
+    active.worker.endedAt = now
     await active.append(type, data, nativeEvent)
+    if (status === 'completed') {
+      await active.append('run/awaiting_host', { stepId: active.step.id }, undefined, false, false)
+    }
   }
 
   #assertConcurrency(request: RunRequest, maxRuns: number, maxWriters: number): void {
@@ -316,5 +380,21 @@ export class RunController {
         `Run ${conflicting.run.id} is already writing to ${workspace}`,
       )
     }
+  }
+}
+
+const MAX_NATIVE_EVENT_BYTES = 128 * 1024
+
+function boundNativeEvent(nativeEvent: unknown): unknown {
+  try {
+    const serialized = JSON.stringify(nativeEvent)
+    if (serialized.length <= MAX_NATIVE_EVENT_BYTES) return nativeEvent
+    return {
+      truncated: true,
+      originalBytes: serialized.length,
+      preview: serialized.slice(0, MAX_NATIVE_EVENT_BYTES),
+    }
+  } catch {
+    return { truncated: true, preview: String(nativeEvent) }
   }
 }

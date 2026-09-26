@@ -15,7 +15,15 @@ export interface DetectionResult {
 }
 
 export interface AdapterEvent {
-  type: Exclude<RelayEventType, 'run/created' | 'worker/started'>
+  type: Exclude<
+    RelayEventType,
+    | 'run/created'
+    | 'run/awaiting_host'
+    | 'run/accepted'
+    | 'step/created'
+    | 'step/iteration_started'
+    | 'worker/started'
+  >
   data: unknown
   nativeEvent?: unknown
 }

@@ -84,4 +84,8 @@ export class RelayService {
   async cancel(workerSessionId: string): Promise<void> {
     await this.controller.cancelWorker(workerSessionId)
   }
+
+  async accept(workerSessionId: string): Promise<RunProjection> {
+    return this.controller.acceptWorker(workerSessionId)
+  }
 }
