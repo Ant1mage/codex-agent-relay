@@ -4,23 +4,6 @@ html { font-size: 14px; }
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 body { background: var(--bg); color: var(--text); }
 
-.window-chrome { position: fixed; inset: 0 0 auto; z-index: 20; height: var(--titlebar-height); pointer-events: none; -webkit-app-region: drag; }
-.window-chrome .sidebar-toggle { position: absolute; top: 7px; left: 78px; pointer-events: auto; -webkit-app-region: no-drag; }
-.window-chrome .env-chip { position: absolute; top: 7px; right: 12px; pointer-events: auto; -webkit-app-region: no-drag; }
-.app-shell:not(.macos) .window-chrome { display: none; }
-
-.app-shell { height: 100%; background: var(--bg); }
-.app-main { display: grid; grid-template-columns: 236px minmax(0, 1fr); height: 100%; min-height: 0; transition: grid-template-columns 160ms ease; }
-.sidebar-collapsed .app-main { grid-template-columns: 0 minmax(0, 1fr); }
-.sidebar { display: flex; min-width: 0; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border); background: var(--sidebar); }
-.sidebar-collapsed .sidebar { border-right: 0; }
-.app-shell.macos .sidebar { padding-top: var(--titlebar-height); }
-.sidebar-top { display: flex; align-items: center; height: 32px; margin: 0 12px 8px; }
-.sidebar-brand { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; padding: 0 4px; }
-.sidebar-brand strong { font-size: .928571rem; font-weight: 650; letter-spacing: -.015em; }
-.sidebar-mark { width: 18px; height: 14px; color: var(--text); }
-.sidebar-section-title { padding: 8px 16px; color: var(--muted); font-size: .785714rem; font-weight: 600; }
-
 .workspace { display: grid; height: 100%; min-width: 0; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; background: var(--surface); }
 .workspace-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--border); }
 .app-shell.macos .workspace-heading { padding-top: calc(16px + (var(--titlebar-height) - 24px) / 2); }
