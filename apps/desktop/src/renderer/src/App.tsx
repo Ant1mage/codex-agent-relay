@@ -7,6 +7,7 @@ import {
   Languages,
   Moon,
   PanelLeft,
+  PanelRight,
   Plus,
   RefreshCw,
   Settings,
@@ -145,7 +146,7 @@ function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
   )
 }
 
-function Console({ view, step, t, openInspector }: { view: DesktopRunView; step: Step; t: Translator; openInspector(inspector: Exclude<Inspector, undefined>): void }) {
+function Console({ view, step, t, openInspector, cliInfoOpen, toggleCliInfo }: { view: DesktopRunView; step: Step; t: Translator; openInspector(inspector: Exclude<Inspector, undefined>): void; cliInfoOpen: boolean; toggleCliInfo(): void }) {
   const { setNotice } = useAppStore()
   const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
   const events = view.events.filter((event) => (!event.stepId || event.stepId === step.id) && eventKind(event) !== undefined)
@@ -157,6 +158,7 @@ function Console({ view, step, t, openInspector }: { view: DesktopRunView; step:
       <header className="console-header">
         <div><strong>{t('console.title')} · {view.run.profileId}</strong><span>{t('steps.iteration')} {step.iteration} · {elapsed(step.createdAt, worker?.endedAt)}</span></div>
         <div className="console-actions">
+          <button className={cliInfoOpen ? 'selected' : ''} onClick={toggleCliInfo}><PanelRight size={13} />{t('cliInfo.title')}</button>
           {changeCount > 0 && <button onClick={() => openInspector('changes')}><FileDiff size={13} />{t('console.changes')} <b>{changeCount}</b></button>}
           <button onClick={() => openInspector('raw')}>{t('console.rawOutput')} <b>{rawCount}</b></button>
           {(step.status === 'running' || step.status === 'starting') && worker && (
@@ -178,6 +180,26 @@ function Console({ view, step, t, openInspector }: { view: DesktopRunView; step:
   )
 }
 
+function CliInfo({ view, step, t, close }: { view: DesktopRunView; step: Step; t: Translator; close(): void }) {
+  const { snapshot } = useAppStore()
+  const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
+  const profile = snapshot?.profiles.find((candidate) => candidate.id === view.run.profileId)
+  const runtime = snapshot?.runtimes.find((candidate) => candidate.id === worker?.runtimeId)
+  const changeCount = view.events.filter((event) => (!event.stepId || event.stepId === step.id) && event.type === 'tool/edit').length
+  return (
+    <aside className="cli-info">
+      <header><div><span>{profile?.name ?? view.run.profileId}</span><h2>{t('cliInfo.title')}</h2></div><button className="plain-icon" aria-label={t('cliInfo.hide')} title={t('cliInfo.hide')} onClick={close}><X size={15} /></button></header>
+      <dl>
+        <div><dt>{t('cliInfo.status')}</dt><dd><StatusLabel status={step.status} t={t} /></dd></div>
+        <div><dt>{t('cliInfo.runtime')}</dt><dd>{runtime?.adapterId ?? worker?.runtimeId ?? t('common.notAvailable')}</dd></div>
+        <div><dt>{t('cliInfo.workingDirectory')}</dt><dd title={view.run.cwd}>{view.run.cwd}</dd></div>
+        <div><dt>{t('cliInfo.started')}</dt><dd>{new Date(step.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</dd></div>
+        <div><dt>{t('cliInfo.changes')}</dt><dd>{changeCount}</dd></div>
+      </dl>
+    </aside>
+  )
+}
+
 function InspectorSheet({ inspector, view, step, t, close }: { inspector: Exclude<Inspector, undefined>; view: DesktopRunView; step: Step; t: Translator; close(): void }) {
   const events = view.events.filter((event) => !event.stepId || event.stepId === step.id)
   const changes = events.filter((event) => event.type === 'tool/edit')
@@ -196,11 +218,13 @@ function InspectorSheet({ inspector, view, step, t, close }: { inspector: Exclud
 function SessionWorkspace({ t }: { t: Translator }) {
   const { snapshot, selectedSessionId, selectedRunId, selectedStepId, loading, refresh } = useAppStore()
   const [inspector, setInspector] = useState<Inspector>()
+  const [cliInfoOpen, setCliInfoOpen] = useState(() => localStorage.getItem('relay.cli-info-open') !== 'false')
   const session = snapshot?.sessions.find((item) => item.id === selectedSessionId)
   const views = useMemo(() => snapshot?.runs.filter((item) => item.run.hostSessionId === selectedSessionId) ?? [], [snapshot, selectedSessionId])
   const stepItems = views.flatMap((view) => view.steps.map((step) => ({ view, step })))
   const selectedView = views.find((view) => view.run.id === selectedRunId) ?? views[0]
   const selectedStep = selectedView?.steps.find((step) => step.id === selectedStepId) ?? selectedView?.steps[0]
+  const toggleCliInfo = () => setCliInfoOpen((current) => { const next = !current; localStorage.setItem('relay.cli-info-open', String(next)); return next })
 
   if (!session) return <main className="workspace empty-workspace"><h1>{t('sessions.empty')}</h1><p>{t('sessions.emptyHint')}</p></main>
   return (
@@ -209,7 +233,7 @@ function SessionWorkspace({ t }: { t: Translator }) {
         <div><span>{session.displayName}</span><h1>{selectedView?.run.task ?? session.displayName}</h1><p>{session.cwd}</p></div>
         <div className="heading-actions">{selectedView && <StatusLabel status={selectedView.run.status} t={t} />}<button className="plain-icon" title={t('common.refresh')} onClick={() => void refresh()}><RefreshCw className={loading ? 'spin' : ''} size={15} /></button></div>
       </header>
-      {stepItems.length ? <><StepNavigator items={stepItems} t={t} />{selectedView && selectedStep && <Console view={selectedView} step={selectedStep} t={t} openInspector={setInspector} />}</> : <div className="workspace-placeholder">{t('runs.empty')}</div>}
+      {stepItems.length ? <><StepNavigator items={stepItems} t={t} />{selectedView && selectedStep && <div className={cliInfoOpen ? 'workspace-lower cli-info-open' : 'workspace-lower'}><Console view={selectedView} step={selectedStep} t={t} openInspector={setInspector} cliInfoOpen={cliInfoOpen} toggleCliInfo={toggleCliInfo} />{cliInfoOpen && <CliInfo view={selectedView} step={selectedStep} t={t} close={toggleCliInfo} />}</div>}</> : <div className="workspace-placeholder">{t('runs.empty')}</div>}
       {inspector && selectedView && selectedStep && <InspectorSheet inspector={inspector} view={selectedView} step={selectedStep} t={t} close={() => setInspector(undefined)} />}
     </main>
   )
