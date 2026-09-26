@@ -16,6 +16,7 @@ Codex MCP   → Agent 控制命令
 ```text
 list_agents()
 run_agent(agent_id, task, options?)
+accept_agent(worker_session_id)
 send_agent(worker_session_id, message)
 get_agent_status(worker_session_id)
 wait_agent(worker_session_id)
@@ -23,6 +24,8 @@ cancel_agent(worker_session_id)
 ```
 
 `list_agents()` 返回当前 scope 下可用的 Profile、描述与 capabilities，Codex 据此自行编排。一个 Profile 被禁用时，`run_agent` 仍需在服务端再次校验，不能只信任工具发现结果。
+
+worker 给出结果后，`wait_agent` 返回 `awaiting_host`。Codex review 后调用 `accept_agent`；若要继续同一 Step，后续由 `resume_agent` 走运行时能力探测后的降级路径，而不是由 Relay 自行重试。
 
 插件结构建议：
 
@@ -153,6 +156,8 @@ Relay（执行、约束、记录）
 | P0 | DeepSeek Harness | 核心 Coding / Research worker | 与产品起点一致；原生 session/event 与内部 subagent 能力可验证事件和 child tree 设计 |
 | P0 | Antigravity CLI | Research、large-context、第二意见 | headless + structured stream，conversation/session 与 tool/subagent 事件适合日志归一化 |
 | P0 | Kimi Code | 通用 Coding / Research | 非交互、结构化流、session/resume，国内用户认证与使用路径友好 |
+| P0 | Gemini CLI | 通用 Coding / Research | 官方 headless JSONL 事件与原生 session resume；Relay 不默认开启 `--yolo` |
+| P1 | GLM / Z.ai CLI | GLM 第二意见与限定分析 | 官方 `zai-cli chat` 默认 JSON 输出，当前作为无 workspace 写权限的 structured worker |
 | P1 | MiniMax Code | 第四个通用 Coding worker | headless、ACP、resume、subagent 等控制能力完整，适合作为 Adapter 可扩展性验证 |
 | P2 | GLM / ZCode | 后续补充 | 有完整 runtime，但第三方控制契约优先级低于前三个，不阻塞 MVP |
 | P2 | Qwen Code | 后续通用 Harness | 能力强但与 Relay 编排面有部分重叠，认证路径也不是首版核心 |
@@ -162,5 +167,4 @@ MVP 不是“支持尽可能多的模型”，而是用三个差异明显的原�
 
 > Relay 能否把不同厂商的 Coding Harness 稳定地标准化为 Codex 可编排的 Agent Profiles。
 
-首个垂直切片应只接 DeepSeek Harness；等协议、事件和生命周期稳定后，再并行补 Antigravity 与 Kimi。MiniMax 作为第 4 个 Adapter 开发，不阻塞 MVP 发布。
-
+首个垂直切片只用 DeepSeek Harness 做真实端到端验证。Kimi、Antigravity、Gemini 与 GLM / Z.ai 的 CLI 接入可以先通过 detection、编译和离线 parser 完成；未配置账号或 key 时不得在测试中发起真实运行。

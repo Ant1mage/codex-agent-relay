@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
-import type { AgentAdapter, Disposable, WorkerSessionHandle } from '@relay/adapter-sdk'
+import type { AgentAdapter, Disposable, ResumeInput, WorkerSessionHandle } from '@relay/adapter-sdk'
 import {
   RelayError,
   runRequestSchema,
@@ -30,6 +30,7 @@ interface InternalRun {
   step: Step
   worker: WorkerSession
   adapter: AgentAdapter
+  resumeInput?: ResumeInput
   handle?: WorkerSessionHandle
   cancelRequested: boolean
   terminal: boolean
@@ -157,6 +158,105 @@ export class RunController {
     return this.accept(runId)
   }
 
+  async resume(workerSessionId: string, feedback: string): Promise<ActiveRun> {
+    const task = feedback.trim()
+    if (!task) throw new RelayError('INVALID_REQUEST', 'Resume feedback must not be empty')
+    const runId = await this.eventStore.findRunIdByWorker(workerSessionId)
+    if (!runId) throw new RelayError('WORKER_NOT_FOUND', `Unknown worker ${workerSessionId}`)
+    if (this.#active.has(runId)) throw new RelayError('INVALID_STATE', `Run ${runId} is already active`)
+    const events = await this.eventStore.list(runId)
+    const projection = projectRun(events)
+    if (projection.run.status !== 'awaiting_host') {
+      throw new RelayError('INVALID_STATE', `Run ${runId} cannot resume from ${projection.run.status}`)
+    }
+    const previousWorker = projection.workers.find((worker) => worker.id === workerSessionId)
+    if (!previousWorker) throw new RelayError('WORKER_NOT_FOUND', `Unknown worker ${workerSessionId}`)
+    const previousStep = projection.steps.find((step) => step.id === previousWorker.stepId)
+    if (!previousStep) throw new RelayError('INVALID_STATE', `Worker ${workerSessionId} has no Step`)
+    const profile = this.profiles.require(previousStep.profileId)
+    const runtime = this.runtimes.require(profile.runtimeId)
+    const adapter = this.adapters.get(runtime.adapterId)
+    if (!runtime.capabilities.resume || !adapter?.resume || !previousWorker.nativeSessionId) {
+      throw new RelayError(
+        'OPERATION_UNSUPPORTED',
+        `Runtime ${runtime.id} cannot resume this worker; start a new Step instead`,
+      )
+    }
+    const request: RunRequest = {
+      hostSessionId: projection.run.hostSessionId,
+      profileId: previousStep.profileId,
+      task: previousStep.task,
+      cwd: projection.run.cwd,
+      accessMode: previousStep.accessMode,
+      isolation: previousStep.isolation,
+    }
+    const policy = this.policies.resolve({ workspace: request.cwd, hostSessionId: request.hostSessionId })
+    assertPolicyAllows(policy, request, profile)
+    this.#assertConcurrency(request, policy.maxConcurrentRuns, policy.maxConcurrentWriters)
+    this.#assertWorkspaceIsolation(request, policy.requireWorktreeForParallelWriters)
+
+    const now = new Date().toISOString()
+    const run: Run = { ...projection.run, status: 'starting', updatedAt: now }
+    const step: Step = {
+      ...previousStep,
+      iteration: previousStep.iteration + 1,
+      status: 'starting',
+      updatedAt: now,
+    }
+    const worker: WorkerSession = {
+      id: randomUUID(),
+      runId,
+      stepId: step.id,
+      iteration: step.iteration,
+      runtimeId: runtime.id,
+      status: 'starting',
+      startedAt: now,
+    }
+    let seq = events.at(-1)?.seq ?? 0
+    let writeChain = Promise.resolve()
+    const append: InternalRun['append'] = (
+      type,
+      data,
+      nativeEvent,
+      includeWorker = true,
+      includeStep = true,
+    ) => {
+      seq += 1
+      const event: RelayEvent = {
+        id: randomUUID(),
+        runId,
+        ...(includeStep ? { stepId: step.id } : {}),
+        ...(includeWorker ? { workerSessionId: worker.id } : {}),
+        seq,
+        timestamp: new Date().toISOString(),
+        type,
+        data,
+        ...(nativeEvent === undefined ? {} : { nativeEvent: boundNativeEvent(nativeEvent) }),
+      }
+      writeChain = writeChain.then(async () => this.eventStore.append(event))
+      return writeChain
+    }
+    await append('step/iteration_started', { step }, undefined, false)
+    const internal: InternalRun = {
+      run, step, worker, adapter,
+      resumeInput: {
+        runId,
+        workerSessionId: worker.id,
+        nativeSessionId: previousWorker.nativeSessionId,
+        task,
+        cwd: run.cwd,
+        accessMode: step.accessMode,
+        ...(profile.instructions ? { instructions: profile.instructions } : {}),
+      },
+      cancelRequested: false,
+      terminal: false,
+      append,
+    }
+    this.#active.set(runId, internal)
+    const completion = this.#execute(internal, profile).finally(() => this.#active.delete(runId))
+    return { run, step, worker, completion }
+  }
+
   async start(input: RunRequest): Promise<ActiveRun> {
     const request = runRequestSchema.parse(input)
     const profile = this.profiles.require(request.profileId)
@@ -279,14 +379,16 @@ export class RunController {
   async #execute(active: InternalRun, profile: AgentProfile): Promise<void> {
     const { adapter, run, step, worker } = active
     try {
-      const handle = await adapter.start({
-        runId: run.id,
-        workerSessionId: worker.id,
-        task: run.task,
-        cwd: run.cwd,
-        accessMode: run.accessMode,
-        ...(profile.instructions ? { instructions: profile.instructions } : {}),
-      })
+      const handle = active.resumeInput
+        ? await adapter.resume!(active.resumeInput)
+        : await adapter.start({
+            runId: run.id,
+            workerSessionId: worker.id,
+            task: run.task,
+            cwd: run.cwd,
+            accessMode: run.accessMode,
+            ...(profile.instructions ? { instructions: profile.instructions } : {}),
+          })
       active.handle = handle
       if (handle.nativeSessionId) worker.nativeSessionId = handle.nativeSessionId
       if (handle.processId) worker.processId = handle.processId

@@ -63,6 +63,7 @@ describe('SqliteEventStore', () => {
     expect(projection.steps).toHaveLength(1)
     expect(projection.workers).toHaveLength(1)
     expect(projection.workers[0]?.status).toBe('completed')
+    expect(projection.workers[0]?.stepId).toBe(projection.steps[0]?.id)
     reopenedStore.close()
   })
 })

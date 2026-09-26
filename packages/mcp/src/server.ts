@@ -27,7 +27,7 @@ export function createRelayMcpServer(service: RelayService): McpServer {
     { name: 'relay', version: '0.0.0' },
     {
       instructions:
-        'List agents before delegation. Give run_agent a bounded task. Use wait_agent before reviewing the result.',
+        'List agents before delegation. Give run_agent a bounded task. Use wait_agent before reviewing the result, then accept_agent or resume_agent after Codex review.',
     },
   )
 
@@ -130,6 +130,21 @@ export function createRelayMcpServer(service: RelayService): McpServer {
     async ({ worker_session_id }) => {
       try {
         return result(await service.accept(worker_session_id))
+      } catch (error) {
+        return failure(error)
+      }
+    },
+  )
+  server.registerTool(
+    'resume_agent',
+    {
+      description:
+        'Resume the same Relay Step after review feedback when its Runtime supports native session resume.',
+      inputSchema: workerSchema.extend({ feedback: z.string().min(1) }),
+    },
+    async ({ worker_session_id, feedback }) => {
+      try {
+        return result(await service.resume(worker_session_id, feedback))
       } catch (error) {
         return failure(error)
       }

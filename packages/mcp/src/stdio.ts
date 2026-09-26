@@ -3,7 +3,13 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { DeepSeekAdapter } from '@relay/adapter-deepseek'
+import { AntigravityAdapter } from '@relay/adapter-antigravity'
+import { GeminiAdapter } from '@relay/adapter-gemini'
+import { KimiAdapter } from '@relay/adapter-kimi'
+import { ZaiAdapter } from '@relay/adapter-zai'
+import type { AgentAdapter } from '@relay/adapter-sdk'
 import {
+  defaultProfiles,
   RunController,
   SqliteControlQueue,
   SqliteEventStore,
@@ -13,7 +19,6 @@ import {
   agentProfileSchema,
   relayPolicyOverrideSchema,
   relayPolicySchema,
-  type AgentProfile,
 } from '@relay/protocol'
 import { CodexAppServerThreadResolver } from '@relay/integration-codex'
 import { createRelayMcpServer } from './server.js'
@@ -55,56 +60,28 @@ async function createRuntime(): Promise<RelayRuntime> {
   mkdirSync(dirname(databasePath), { recursive: true })
   const controller = new RunController(new SqliteEventStore(databasePath))
   applyPolicySettings(controller, settingsPath)
-  const adapter = new DeepSeekAdapter()
-  controller.registerAdapter(adapter)
-  const detection = await adapter.detect()
-  for (const diagnostic of detection.diagnostics) process.stderr.write(`[relay] ${diagnostic}\n`)
-  const runtime = detection.runtimes[0]
-  if (runtime) {
-    controller.registerRuntime(runtime)
-    const defaults: AgentProfile[] = [
-      {
-        id: 'deepseek-code',
-        name: 'DeepSeek Code',
-        runtimeId: runtime.id,
-        description: 'Read and write code, execute commands, and run tests with DeepSeek Harness.',
-        capabilities: {
-          readWorkspace: true,
-          writeWorkspace: true,
-          executeCommands: true,
-          networkAccess: false,
-        },
-        enabled: true,
-      },
-      {
-        id: 'deepseek-research',
-        name: 'DeepSeek Research',
-        runtimeId: runtime.id,
-        description: 'Inspect the workspace and research without writing files.',
-        capabilities: {
-          readWorkspace: true,
-          writeWorkspace: false,
-          executeCommands: false,
-          networkAccess: true,
-        },
-        enabled: true,
-      },
-    ]
-    let profiles = defaults
-    if (existsSync(profilesPath)) {
-      try {
-        profiles = agentProfileSchema
-          .array()
-          .parse(JSON.parse(readFileSync(profilesPath, 'utf8')))
-          .map((profile) => ({ ...profile, runtimeId: runtime.id }))
-      } catch (error) {
-        process.stderr.write(
-          `[relay] Ignoring invalid profiles: ${error instanceof Error ? error.message : String(error)}\n`,
-        )
-      }
+  const adapters: AgentAdapter[] = [
+    new DeepSeekAdapter(), new AntigravityAdapter(), new KimiAdapter(), new GeminiAdapter(), new ZaiAdapter(),
+  ]
+  for (const adapter of adapters) controller.registerAdapter(adapter)
+  const detections = await Promise.all(adapters.map((adapter) => adapter.detect()))
+  for (const detection of detections) for (const diagnostic of detection.diagnostics) process.stderr.write(`[relay] ${diagnostic}\n`)
+  const runtimes = detections.flatMap((detection) => detection.runtimes)
+  for (const runtime of runtimes) controller.registerRuntime(runtime)
+  const defaults = defaultProfiles(runtimes)
+  let profiles = defaults
+  if (existsSync(profilesPath)) {
+    try {
+      const availableRuntimeIds = new Set(runtimes.map((runtime) => runtime.id))
+      const stored = agentProfileSchema.array().parse(JSON.parse(readFileSync(profilesPath, 'utf8')))
+      const storedById = new Map(stored.filter((profile) => availableRuntimeIds.has(profile.runtimeId)).map((profile) => [profile.id, profile]))
+      profiles = defaults.map((profile) => storedById.get(profile.id) ?? profile)
+      for (const profile of storedById.values()) if (!profiles.some((candidate) => candidate.id === profile.id)) profiles.push(profile)
+    } catch (error) {
+      process.stderr.write(`[relay] Ignoring invalid profiles: ${error instanceof Error ? error.message : String(error)}\n`)
     }
-    for (const profile of profiles) controller.registerProfile(profile)
   }
+  for (const profile of profiles) controller.registerProfile(profile)
   return {
     service: new RelayService(
       controller,
