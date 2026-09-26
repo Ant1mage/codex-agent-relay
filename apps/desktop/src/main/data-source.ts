@@ -10,13 +10,19 @@ import {
   relayPolicyOverrideSchema,
   relayPolicySchema,
 } from '@relay/protocol'
+import type { AgentAdapter } from '@relay/adapter-sdk'
+import { AntigravityAdapter } from '@relay/adapter-antigravity'
 import { DeepSeekAdapter } from '@relay/adapter-deepseek'
-import { defaultPolicy, projectRun } from '@relay/core'
+import { GeminiAdapter } from '@relay/adapter-gemini'
+import { KimiAdapter } from '@relay/adapter-kimi'
+import { ZaiAdapter } from '@relay/adapter-zai'
+import { defaultPolicy, defaultProfiles, projectRun } from '@relay/core'
 import type { DesktopSettings, DesktopSnapshot } from '../shared/api.js'
 
 interface EventRow {
   id: string
   run_id: string
+  step_id: string | null
   worker_session_id: string | null
   seq: number
   timestamp: string
@@ -29,7 +35,13 @@ export class DesktopDataSource {
   readonly #database: DatabaseSync
   readonly #settingsPath: string
   readonly #profilesPath: string
-  readonly #adapter = new DeepSeekAdapter()
+  readonly #adapters: AgentAdapter[] = [
+    new DeepSeekAdapter(),
+    new AntigravityAdapter(),
+    new KimiAdapter(),
+    new GeminiAdapter(),
+    new ZaiAdapter(),
+  ]
   #runtimes: Runtime[] = []
   #profiles: AgentProfile[] = []
   #diagnostics: string[] = []
@@ -41,6 +53,7 @@ export class DesktopDataSource {
       CREATE TABLE IF NOT EXISTS relay_events (
         id TEXT NOT NULL UNIQUE,
         run_id TEXT NOT NULL,
+        step_id TEXT,
         worker_session_id TEXT,
         seq INTEGER NOT NULL CHECK (seq > 0),
         timestamp TEXT NOT NULL,
@@ -69,46 +82,22 @@ export class DesktopDataSource {
       CREATE INDEX IF NOT EXISTS relay_control_pending_idx
         ON relay_control_commands(status, created_at);
     `)
+    const eventColumns = this.#database
+      .prepare('PRAGMA table_info(relay_events)')
+      .all() as Array<{ name: string }>
+    if (!eventColumns.some((column) => column.name === 'step_id')) {
+      this.#database.exec('ALTER TABLE relay_events ADD COLUMN step_id TEXT;')
+    }
     this.#settingsPath = settingsPath
     this.#profilesPath = join(dirname(settingsPath), 'profiles.json')
   }
 
   async initialize(): Promise<void> {
-    const detection = await this.#adapter.detect()
-    this.#runtimes = detection.runtimes
-    this.#diagnostics = detection.diagnostics
-    const runtime = detection.runtimes[0]
-    const defaults: AgentProfile[] = runtime
-      ? [
-          {
-            id: 'deepseek-code',
-            name: 'DeepSeek Code',
-            runtimeId: runtime.id,
-            description: 'Coding worker with workspace write and command capabilities.',
-            capabilities: {
-              readWorkspace: true,
-              writeWorkspace: true,
-              executeCommands: true,
-              networkAccess: false,
-            },
-            enabled: true,
-          },
-          {
-            id: 'deepseek-research',
-            name: 'DeepSeek Research',
-            runtimeId: runtime.id,
-            description: 'Read-only research worker with network access.',
-            capabilities: {
-              readWorkspace: true,
-              writeWorkspace: false,
-              executeCommands: false,
-              networkAccess: true,
-            },
-            enabled: true,
-          },
-        ]
-      : []
-    if (!runtime || !existsSync(this.#profilesPath)) {
+    const detections = await Promise.all(this.#adapters.map((adapter) => adapter.detect()))
+    this.#runtimes = detections.flatMap((detection) => detection.runtimes)
+    this.#diagnostics = detections.flatMap((detection) => detection.diagnostics)
+    const defaults = defaultProfiles(this.#runtimes)
+    if (!existsSync(this.#profilesPath)) {
       this.#profiles = defaults
       return
     }
@@ -116,7 +105,14 @@ export class DesktopDataSource {
       const stored = agentProfileSchema.array().parse(
         JSON.parse(readFileSync(this.#profilesPath, 'utf8')),
       )
-      this.#profiles = stored.map((profile) => ({ ...profile, runtimeId: runtime.id }))
+      const availableRuntimeIds = new Set(this.#runtimes.map((runtime) => runtime.id))
+      const storedById = new Map(
+        stored.filter((profile) => availableRuntimeIds.has(profile.runtimeId)).map((profile) => [profile.id, profile]),
+      )
+      this.#profiles = defaults.map((profile) => storedById.get(profile.id) ?? profile)
+      for (const profile of storedById.values()) {
+        if (!this.#profiles.some((candidate) => candidate.id === profile.id)) this.#profiles.push(profile)
+      }
     } catch {
       this.#profiles = defaults
       this.#diagnostics.push('Invalid profiles.json; using built-in profiles.')
@@ -181,6 +177,7 @@ export class DesktopDataSource {
         relayEventSchema.parse({
           id: row.id,
           runId: row.run_id,
+          ...(row.step_id ? { stepId: row.step_id } : {}),
           ...(row.worker_session_id ? { workerSessionId: row.worker_session_id } : {}),
           seq: row.seq,
           timestamp: row.timestamp,
@@ -223,6 +220,6 @@ export class DesktopDataSource {
 
   close(): void {
     this.#database.close()
-    void this.#adapter.dispose()
+    for (const adapter of this.#adapters) void adapter.dispose()
   }
 }

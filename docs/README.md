@@ -72,5 +72,5 @@ Codex
               Relay Core
        Registry · Policy · Runtime · Event Store
                  ↓
-        DeepSeek / Antigravity / Kimi CLI
+        DeepSeek / Antigravity / Kimi / Gemini / GLM CLI
 ```

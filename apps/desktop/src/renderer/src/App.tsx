@@ -24,18 +24,6 @@ type Inspector = 'changes' | 'raw' | undefined
 type Theme = 'system' | 'light' | 'dark'
 type ConsoleKind = 'read' | 'search' | 'edit' | 'command' | 'test' | 'result' | 'error' | 'status'
 
-const statusOrder: Record<RunStatus, number> = {
-  running: 0,
-  starting: 1,
-  queued: 2,
-  awaiting_host: 3,
-  interrupted: 4,
-  failed: 5,
-  orphaned: 6,
-  cancelled: 7,
-  completed: 8,
-}
-
 function elapsed(start: string, end?: string): string {
   const total = Math.max(0, new Date(end ?? Date.now()).getTime() - new Date(start).getTime())
   const seconds = Math.floor(total / 1_000)
@@ -111,10 +99,10 @@ interface StepItem { view: DesktopRunView; step: Step }
 function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
   const { selectedRunId, selectedStepId, selectStep } = useAppStore()
   const currentRef = useRef<HTMLButtonElement>(null)
-  const ordered = useMemo(() => [...items].sort((left, right) => {
-    const byStatus = statusOrder[left.view.run.status] - statusOrder[right.view.run.status]
-    return byStatus || right.step.updatedAt.localeCompare(left.step.updatedAt)
-  }), [items])
+  const ordered = useMemo(
+    () => [...items].sort((left, right) => left.step.createdAt.localeCompare(right.step.createdAt)),
+    [items],
+  )
 
   useEffect(() => {
     currentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
@@ -130,7 +118,7 @@ function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
             <div className="step-link" key={step.id}>
               {index > 0 && <ChevronRight size={13} />}
               <button ref={selected ? currentRef : undefined} className={selected ? 'step-node selected' : `step-node ${step.status}`} onClick={() => selectStep(view.run.id, step.id)}>
-                <span>{t('steps.step')} {ordered.length - index}</span>
+                <span>{t('steps.step')} {index + 1}</span>
                 <strong>{view.run.profileId}</strong>
                 <i />
               </button>

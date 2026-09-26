@@ -132,13 +132,13 @@ relay/
 
 完成标准：GUI 对运行态的展示完全来自 projection，不解析原厂 stdout，不展示隐藏推理或虚假进度。
 
-### Phase 5：第二、第三 Adapter
+### Phase 5：附加 CLI Adapter
 
-- Antigravity 与 Kimi Adapter。
-- 用同一 Adapter conformance suite 验证 detect/start/event/cancel/resume。
-- 补齐 provider-specific capability 降级逻辑。
+- Antigravity、Kimi、Gemini 与 GLM / Z.ai CLI Adapter。
+- 检测、启动参数、事件归一化、取消和 provider-specific capability 降级。
+- 只有 DeepSeek Harness 做真实端到端验证；没有配置账号或 key 的 CLI 不发起真实运行。
 
-完成标准：新增 Adapter 不修改 Core 数据模型、Policy 或 GUI 主流程。
+完成标准：新增 Adapter 不修改 Core 数据模型、Policy 或 GUI 主流程，且不会在无凭证环境触发认证或消耗额度。
 
 ### Phase 6：可靠性与发布
 

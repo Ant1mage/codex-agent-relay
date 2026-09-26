@@ -26,9 +26,24 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@relay/adapter-antigravity':
+        specifier: workspace:*
+        version: link:../../packages/adapters/antigravity
       '@relay/adapter-deepseek':
         specifier: workspace:*
         version: link:../../packages/adapters/deepseek
+      '@relay/adapter-gemini':
+        specifier: workspace:*
+        version: link:../../packages/adapters/gemini
+      '@relay/adapter-kimi':
+        specifier: workspace:*
+        version: link:../../packages/adapters/kimi
+      '@relay/adapter-sdk':
+        specifier: workspace:*
+        version: link:../../packages/adapter-sdk
+      '@relay/adapter-zai':
+        specifier: workspace:*
+        version: link:../../packages/adapters/zai
       '@relay/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -82,7 +97,43 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
+  packages/adapters/antigravity:
+    dependencies:
+      '@relay/adapter-sdk':
+        specifier: workspace:*
+        version: link:../../adapter-sdk
+      '@relay/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
+
   packages/adapters/deepseek:
+    dependencies:
+      '@relay/adapter-sdk':
+        specifier: workspace:*
+        version: link:../../adapter-sdk
+      '@relay/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
+
+  packages/adapters/gemini:
+    dependencies:
+      '@relay/adapter-sdk':
+        specifier: workspace:*
+        version: link:../../adapter-sdk
+      '@relay/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
+
+  packages/adapters/kimi:
+    dependencies:
+      '@relay/adapter-sdk':
+        specifier: workspace:*
+        version: link:../../adapter-sdk
+      '@relay/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
+
+  packages/adapters/zai:
     dependencies:
       '@relay/adapter-sdk':
         specifier: workspace:*
@@ -114,9 +165,24 @@ importers:
       '@modelcontextprotocol/server':
         specifier: ^2.1.0
         version: 2.1.0
+      '@relay/adapter-antigravity':
+        specifier: workspace:*
+        version: link:../adapters/antigravity
       '@relay/adapter-deepseek':
         specifier: workspace:*
         version: link:../adapters/deepseek
+      '@relay/adapter-gemini':
+        specifier: workspace:*
+        version: link:../adapters/gemini
+      '@relay/adapter-kimi':
+        specifier: workspace:*
+        version: link:../adapters/kimi
+      '@relay/adapter-sdk':
+        specifier: workspace:*
+        version: link:../adapter-sdk
+      '@relay/adapter-zai':
+        specifier: workspace:*
+        version: link:../adapters/zai
       '@relay/core':
         specifier: workspace:*
         version: link:../core

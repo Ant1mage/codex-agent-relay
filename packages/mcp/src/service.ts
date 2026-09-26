@@ -88,4 +88,12 @@ export class RelayService {
   async accept(workerSessionId: string): Promise<RunProjection> {
     return this.controller.acceptWorker(workerSessionId)
   }
+
+  async resume(workerSessionId: string, feedback: string): Promise<{
+    runId: string
+    workerSessionId: string
+  }> {
+    const active = await this.controller.resume(workerSessionId, feedback)
+    return { runId: active.run.id, workerSessionId: active.worker.id }
+  }
 }

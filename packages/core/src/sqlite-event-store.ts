@@ -5,6 +5,7 @@ import type { EventStore } from './memory-event-store.js'
 interface EventRow {
   id: string
   run_id: string
+  step_id: string | null
   worker_session_id: string | null
   seq: number
   timestamp: string
@@ -25,12 +26,13 @@ export class SqliteEventStore implements EventStore {
 
   #migrate(): void {
     const version = this.#database.pragma('user_version', { simple: true }) as number
-    if (version > 1) throw new Error(`Unsupported Relay database version ${version}`)
+    if (version > 2) throw new Error(`Unsupported Relay database version ${version}`)
     if (version === 0) {
       this.#database.exec(`
         CREATE TABLE relay_events (
           id TEXT NOT NULL UNIQUE,
           run_id TEXT NOT NULL,
+          step_id TEXT,
           worker_session_id TEXT,
           seq INTEGER NOT NULL CHECK (seq > 0),
           timestamp TEXT NOT NULL,
@@ -40,7 +42,13 @@ export class SqliteEventStore implements EventStore {
           PRIMARY KEY (run_id, seq)
         );
         CREATE INDEX relay_events_timestamp_idx ON relay_events(timestamp);
-        PRAGMA user_version = 1;
+        PRAGMA user_version = 2;
+      `)
+    }
+    if (version === 1) {
+      this.#database.exec(`
+        ALTER TABLE relay_events ADD COLUMN step_id TEXT;
+        PRAGMA user_version = 2;
       `)
     }
   }
@@ -61,12 +69,13 @@ export class SqliteEventStore implements EventStore {
       this.#database
         .prepare(`
           INSERT INTO relay_events (
-            id, run_id, worker_session_id, seq, timestamp, type, data_json, native_event_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            id, run_id, step_id, worker_session_id, seq, timestamp, type, data_json, native_event_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           event.id,
           event.runId,
+          event.stepId ?? null,
           event.workerSessionId ?? null,
           event.seq,
           event.timestamp,
@@ -86,6 +95,7 @@ export class SqliteEventStore implements EventStore {
       relayEventSchema.parse({
         id: row.id,
         runId: row.run_id,
+        ...(row.step_id ? { stepId: row.step_id } : {}),
         ...(row.worker_session_id ? { workerSessionId: row.worker_session_id } : {}),
         seq: row.seq,
         timestamp: row.timestamp,

@@ -50,6 +50,12 @@ export function projectRun(events: RelayEvent[]): RunProjection {
       steps.set(step.id, step)
       continue
     }
+    if (event.type === 'step/iteration_started') {
+      const step = stepSchema.parse((event.data as { step?: unknown }).step)
+      steps.set(step.id, step)
+      run.status = 'starting'
+      continue
+    }
     if (event.type === 'worker/started') {
       const rawWorker = (event.data as { worker?: Record<string, unknown> }).worker
       const step = event.stepId ? steps.get(event.stepId) : legacyStep()
