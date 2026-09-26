@@ -91,7 +91,7 @@ function Sidebar({ t }: { t: Translator }) {
       <div className="session-list">
         {snapshot?.sessions.map((session) => (
           <button className={session.id === selectedSessionId ? 'session-name selected' : 'session-name'} key={session.id} onClick={() => selectSession(session.id)} title={session.displayName}>
-            {session.displayName}
+            <strong>{session.displayName}</strong><span>{t(`common.${session.status}`)} · {elapsed(session.updatedAt)}</span>
           </button>
         ))}
         {!snapshot?.sessions.length && <p className="sidebar-empty">{t('sessions.empty')}</p>}
