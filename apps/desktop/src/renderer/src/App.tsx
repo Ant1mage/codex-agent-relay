@@ -6,6 +6,7 @@ import {
   FileDiff,
   Languages,
   Moon,
+  PanelLeft,
   Plus,
   RefreshCw,
   Settings,
@@ -80,14 +81,9 @@ function StatusLabel({ status, t }: { status: RunStatus; t: Translator }) {
 }
 
 function Sidebar({ t }: { t: Translator }) {
-  const { snapshot, selectedSessionId, selectSession, setSettingsOpen } = useAppStore()
+  const { snapshot, selectedSessionId, selectSession } = useAppStore()
   return (
     <aside className="sidebar">
-      <div className="window-drag" />
-      <div className="sidebar-brand">
-        <strong>Relay</strong>
-        <button className="plain-icon" aria-label={t('settings.title')} onClick={() => setSettingsOpen(true)}><Settings size={15} /></button>
-      </div>
       <div className="sidebar-section-title">{t('sessions.title')}</div>
       <div className="session-list">
         {snapshot?.sessions.map((session) => (
@@ -98,6 +94,18 @@ function Sidebar({ t }: { t: Translator }) {
         {!snapshot?.sessions.length && <p className="sidebar-empty">{t('sessions.empty')}</p>}
       </div>
     </aside>
+  )
+}
+
+function AppToolbar({ t, sidebarCollapsed, toggleSidebar }: { t: Translator; sidebarCollapsed: boolean; toggleSidebar(): void }) {
+  const { setSettingsOpen } = useAppStore()
+  const sidebarLabel = sidebarCollapsed ? t('action.showSidebar') : t('action.hideSidebar')
+  return (
+    <header className="app-toolbar">
+      <div className="toolbar-leading"><button className="plain-icon" aria-label={sidebarLabel} title={sidebarLabel} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}><PanelLeft size={16} /></button><strong>Relay</strong></div>
+      <div className="toolbar-drag" />
+      <div className="toolbar-actions"><button className="plain-icon" aria-label={t('settings.title')} title={t('settings.title')} onClick={() => setSettingsOpen(true)}><Settings size={16} /></button></div>
+    </header>
   )
 }
 
@@ -264,8 +272,10 @@ export function App() {
   const { locale, refresh, error, notice, setNotice } = useAppStore()
   const [theme, setThemeState] = useState<Theme>(() => (localStorage.getItem('relay.theme') as Theme | null) ?? 'system')
   const [fontSize, setFontSizeState] = useState(storedFontSize)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('relay.sidebar-collapsed') === 'true')
   const t = createTranslator(locale)
   const setTheme = (next: Theme) => { localStorage.setItem('relay.theme', next); setThemeState(next) }
+  const toggleSidebar = () => setSidebarCollapsed((current) => { const next = !current; localStorage.setItem('relay.sidebar-collapsed', String(next)); return next })
   const setFontSize = (next: number) => {
     const value = Math.min(MAX_FONT_SIZE, Math.max(DEFAULT_FONT_SIZE, Math.round(next)))
     localStorage.setItem('relay.font-size', String(value))
@@ -273,7 +283,17 @@ export function App() {
   }
   useEffect(() => { document.documentElement.dataset.theme = theme; if (theme === 'system') document.documentElement.removeAttribute('data-theme') }, [theme])
   useEffect(() => { document.documentElement.style.setProperty('--relay-font-scale', String(fontSize / DEFAULT_FONT_SIZE)) }, [fontSize])
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
+        event.preventDefault()
+        toggleSidebar()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  })
   useEffect(() => { void refresh(); const timer = window.setInterval(() => void refresh(), 2_000); return () => window.clearInterval(timer) }, [refresh])
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(undefined), 3_500); return () => window.clearTimeout(timer) }, [notice, setNotice])
-  return <div className="app-shell"><Sidebar t={t} /><SessionWorkspace t={t} /><SettingsSheet t={t} theme={theme} setTheme={setTheme} fontSize={fontSize} setFontSize={setFontSize} />{error && <div className="toast error"><CircleAlert size={14} />{error}</div>}{notice && <div className="toast"><Check size={14} />{notice}</div>}</div>
+  return <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}><AppToolbar t={t} sidebarCollapsed={sidebarCollapsed} toggleSidebar={toggleSidebar} /><div className="app-main"><Sidebar t={t} /><SessionWorkspace t={t} /></div><SettingsSheet t={t} theme={theme} setTheme={setTheme} fontSize={fontSize} setFontSize={setFontSize} />{error && <div className="toast error"><CircleAlert size={14} />{error}</div>}{notice && <div className="toast"><Check size={14} />{notice}</div>}</div>
 }
