@@ -308,14 +308,21 @@ export function ConsoleRows({ rows, t }: { rows: ConsoleRow[]; t: Translator }) 
   return (
     <>
       {rows.map((row) => (
-        <div className={`console-row ${row.kind}`} key={row.id}>
-          <time>{new Date(row.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
-          <span className="console-kind">{t(`console.${row.kind}`)}</span>
-          <code>
+        <div
+          className={`grid min-h-[31px] grid-cols-[70px_76px_minmax(0,1fr)] items-baseline gap-2 border-l-2 border-l-transparent px-4 py-[7px] hover:bg-surface-subtle ${CONSOLE_ACCENT[row.kind] ?? ''}`}
+          key={row.id}
+        >
+          <time className="text-[9px] text-faint">
+            {new Date(row.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </time>
+          <span className="text-[9px] font-bold uppercase tracking-[0.04em] text-muted">
+            {t(`console.${row.kind}`)}
+          </span>
+          <code className="whitespace-pre-wrap break-words text-[10px] leading-[1.55] text-text">
             {row.label}
-            {row.count ? <i className="console-count"> {row.count} {t('console.files')}</i> : null}
+            {row.count ? <i className="text-[9px] not-italic text-faint"> {row.count} {t('console.files')}</i> : null}
             {row.additions !== undefined || row.deletions !== undefined ? (
-              <i className="console-stat">
+              <i className="text-[9px] not-italic text-faint tabular-nums">
                 {row.additions ? ` +${row.additions}` : ''}
                 {row.deletions ? ` -${row.deletions}` : ''}
               </i>
@@ -325,6 +332,15 @@ export function ConsoleRows({ rows, t }: { rows: ConsoleRow[]; t: Translator }) 
       ))}
     </>
   )
+}
+
+/** Left accent per Console category (docs/ui.md 12.2). */
+const CONSOLE_ACCENT: Partial<Record<ConsoleKind, string>> = {
+  edit: 'border-l-warn',
+  test: 'border-l-ok',
+  result: 'border-l-ok',
+  warning: 'border-l-warn',
+  error: 'border-l-danger',
 }
 
 /** Provider rows shared by onboarding step 2 (docs/ui.md 22.2 "Add Agents"). */

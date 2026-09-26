@@ -4,6 +4,8 @@ import type { AgentProfile } from '@relay/protocol'
 import type { CodexIntegrationStatus } from '../../shared/api.js'
 import { useAppStore } from './store.js'
 import { ProfileFields } from './profile-editor.js'
+import { Button } from './components/ui/button.js'
+import { Card, CardContent } from './components/ui/card.js'
 import {
   providerMetadata,
   providerOrder,
@@ -83,7 +85,8 @@ export function Onboarding({ t }: { t: Translator }) {
 
   return (
     <main className="onboarding">
-      <div className="onboarding-pane">
+      <Card className="onboarding-card">
+        <CardContent className="flex flex-col gap-4">
         <div className="onboarding-meta">
           <span>{t('onboarding.setup')}</span>
           <span>{pageIndex + 1} {t('onboarding.of')} {PAGES.length}</span>
@@ -109,8 +112,8 @@ export function Onboarding({ t }: { t: Translator }) {
               <p className="onboarding-note">{t('onboarding.installIntegration')}</p>
             )}
             <div className="onboarding-actions">
-              <button className="link-action" onClick={loadCodexStatus}>{t('onboarding.checkRetry')}</button>
-              <button className="primary" onClick={() => setPage('agents')}>{t('onboarding.continue')}</button>
+              <Button variant="link" size="sm" onClick={loadCodexStatus}>{t('onboarding.checkRetry')}</Button>
+              <Button onClick={() => setPage('agents')}>{t('onboarding.continue')}</Button>
             </div>
           </>
         )}
@@ -132,9 +135,9 @@ export function Onboarding({ t }: { t: Translator }) {
                     </em>
                     {runtime
                       ? (
-                        <button className="outline" onClick={() => addProfile(provider, runtime.id)}>
+                        <Button variant="outline" size="sm" onClick={() => addProfile(provider, runtime.id)}>
                           <Plus size={11} />{t('agents.add')}
-                        </button>
+                        </Button>
                       )
                       : <span className="onboarding-row-spacer" />}
                   </div>
@@ -155,10 +158,10 @@ export function Onboarding({ t }: { t: Translator }) {
               </>
             )}
             <div className="onboarding-actions">
-              <button className="link-action" onClick={() => setPage('codex')}>{t('onboarding.back')}</button>
-              <button className="primary" disabled={!usableAgents.length} onClick={() => setPage('ready')}>
+              <Button variant="link" size="sm" onClick={() => setPage('codex')}>{t('onboarding.back')}</Button>
+              <Button disabled={!usableAgents.length} onClick={() => setPage('ready')}>
                 {t('onboarding.continue')}
-              </button>
+              </Button>
             </div>
           </>
         )}
@@ -180,17 +183,17 @@ export function Onboarding({ t }: { t: Translator }) {
                 runtimes={runtimes}
                 t={t}
                 onChange={setDraft}
-                layout="rows"
+               
                 hideRuntime
               />
               {!draftLoading && draftOptions && !draftOptions.models.length && !draftOptions.levels.length && (
                 <p className="onboarding-note">{t('agents.noModelList')}</p>
               )}
               <div className="onboarding-actions">
-                <button type="button" className="link-action" onClick={() => setDraft(undefined)}>
+                <Button type="button" variant="link" size="sm" onClick={() => setDraft(undefined)}>
                   {t('action.cancel')}
-                </button>
-                <button className="primary" disabled={!draft.name.trim()}>{t('onboarding.addAgent')}</button>
+                </Button>
+                <Button disabled={!draft.name.trim()}>{t('onboarding.addAgent')}</Button>
               </div>
             </form>
           </>
@@ -222,18 +225,18 @@ export function Onboarding({ t }: { t: Translator }) {
             </div>
             <p className="onboarding-note">{t('onboarding.askCodex')}</p>
             <div className="onboarding-actions">
-              <button className="link-action" onClick={() => setPage('agents')}>{t('onboarding.back')}</button>
-              <button
-                className="primary"
+              <Button variant="link" size="sm" onClick={() => setPage('agents')}>{t('onboarding.back')}</Button>
+              <Button
                 onClick={() => void finish().catch((error: unknown) =>
                   setNotice(error instanceof Error ? error.message : String(error)))}
               >
                 {t('onboarding.done')}
-              </button>
+              </Button>
             </div>
           </>
         )}
-      </div>
+        </CardContent>
+      </Card>
     </main>
   )
 }

@@ -5,6 +5,9 @@ export const supportedLocales: readonly Locale[] = ['en', 'zh-CN']
 
 const en = {
   'app.name': 'Relay',
+  'env.ready': 'Relay ready',
+  'env.needsSetup': 'Setup needed',
+  'env.none': 'No runtime detected',
   'nav.sessions': 'Sessions',
   'nav.agents': 'Agents',
   'nav.settings': 'Settings',
@@ -137,6 +140,7 @@ const en = {
   'settings.title': 'Settings',
   'settings.subtitle': 'Language and conservative routing defaults',
   'settings.general': 'General',
+  'settings.appearanceHint': 'Theme and text size',
   'settings.policy': 'Routing policy',
   'settings.maxRuns': 'Maximum concurrent runs',
   'settings.maxWriters': 'Maximum concurrent writers',
@@ -173,6 +177,8 @@ const en = {
   'settings.fontSize': 'UI font size',
   'settings.fontSizeHint': 'Adjust the base size used for the Relay UI',
   'settings.profiles': 'Profiles & runtimes',
+  'settings.profilesHeading': 'Profiles',
+  'settings.profilesSuffix': 'profiles',
   'settings.light': 'Light',
   'settings.dark': 'Dark',
   'settings.system': 'System',
@@ -194,6 +200,9 @@ type Messages = Record<MessageKey, string>
 
 const zhCN: Messages = {
   'app.name': 'Relay',
+  'env.ready': 'Relay 就绪',
+  'env.needsSetup': '需要配置',
+  'env.none': '未检测到运行时',
   'nav.sessions': '会话',
   'nav.agents': '智能体',
   'nav.settings': '设置',
@@ -324,6 +333,7 @@ const zhCN: Messages = {
   'settings.title': '设置',
   'settings.subtitle': '语言与保守的路由默认值',
   'settings.general': '通用',
+  'settings.appearanceHint': '主题与字号',
   'settings.policy': '路由策略',
   'settings.maxRuns': '最大并发任务数',
   'settings.maxWriters': '最大并发写入数',
@@ -360,6 +370,8 @@ const zhCN: Messages = {
   'settings.fontSize': '界面字号',
   'settings.fontSizeHint': '调整 Relay 界面的基础字号',
   'settings.profiles': 'Profile 与 Runtime',
+  'settings.profilesHeading': 'Profile',
+  'settings.profilesSuffix': '个 Profile',
   'settings.light': '浅色',
   'settings.dark': '深色',
   'settings.system': '跟随系统',

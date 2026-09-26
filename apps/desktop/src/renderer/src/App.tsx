@@ -12,7 +12,27 @@ import {
 } from 'lucide-react'
 import type { HostSession, Step, StepStatus } from '@relay/protocol'
 import type { DesktopRunView } from '../../shared/api.js'
+import type { CodexIntegrationStatus } from '../../shared/api.js'
 import { useAppStore } from './store.js'
+import { Badge } from './components/ui/badge.js'
+import { Item, ItemContent, ItemGroup, ItemMedia, ItemTitle } from './components/ui/item.js'
+import { ScrollArea } from './components/ui/scroll-area.js'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './components/ui/select.js'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from './components/ui/sheet.js'
+import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs.js'
+import { Button } from './components/ui/button.js'
 import { createTranslator } from '@relay/i18n'
 import { Onboarding } from './onboarding.js'
 import { SettingsSheet } from './settings.js'
@@ -36,6 +56,42 @@ import {
 /* Sidebar (docs/ui.md 4-5)                                            */
 /* ------------------------------------------------------------------ */
 
+
+/**
+ * Relay's environment at a glance, in the window chrome beside the sidebar
+ * control. It reports what was actually detected rather than a decorative
+ * status, and doubles as the way back into setup once onboarding is done.
+ */
+function EnvironmentChip({ t }: { t: Translator }) {
+  const { snapshot, openOnboarding } = useAppStore()
+  const [codex, setCodex] = useState<CodexIntegrationStatus>()
+
+  // Same checks the first-run flow performs, so the chip and setup agree.
+  useEffect(() => { void window.relay.codexStatus().then(setCodex) }, [])
+
+  const failed = (codex?.checks ?? []).filter((check) => !check.ok)
+  const ready = Boolean(codex?.configured)
+  const detail = (codex?.checks ?? [])
+    .map((check) => `${check.ok ? '✓' : '✗'} ${t(`onboarding.check.${check.id}`)}${check.ok ? '' : ` — ${check.detail}`}`)
+    .join('\n')
+
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      className="env-chip"
+      title={detail}
+      // Always the setup surface: this reports Codex integration state, and the
+      // first-run flow is the only place that explains or fixes it.
+      onClick={openOnboarding}
+    >
+      <span className={ready ? 'size-1.5 rounded-full bg-[var(--green)]' : 'size-1.5 rounded-full bg-[var(--amber)]'} aria-hidden="true" />
+      <span>{ready ? t('env.ready') : t('env.needsSetup')}</span>
+      {failed.length > 0 && <Badge variant="secondary" className="h-4 px-1.5 text-[9px]">{failed.length}</Badge>}
+    </Button>
+  )
+}
+
 function Sidebar({ t }: { t: Translator }) {
   const { snapshot, selectedSessionId, selectSession, setSettingsOpen } = useAppStore()
   const sessions = snapshot?.sessions ?? []
@@ -48,24 +104,40 @@ function Sidebar({ t }: { t: Translator }) {
         </div>
       </div>
       <div className="sidebar-section-title">{t('sessions.title')}</div>
-      <div className="session-list">
+      <ItemGroup className="min-h-0 flex-1 gap-0 overflow-auto px-2 pb-4">
         {/* Text-first rows, no per-session icons (docs/ui.md 4.3) */}
         {sessions.map((session) => (
-          <button
-            className={session.id === selectedSessionId ? 'session-name selected' : 'session-name'}
+          <Item
+            asChild
             key={session.id}
-            onClick={() => selectSession(session.id)}
-            title={session.displayName}
+            size="sm"
+            className={`rounded-md px-2 py-1.5 ${
+              session.id === selectedSessionId ? 'bg-[color-mix(in_srgb,var(--text)_9%,transparent)]' : ''
+            }`}
           >
-            <strong>{session.displayName}</strong>
-            <span>{relativeTime(session.updatedAt, session.status, t)}</span>
-          </button>
+            <button
+              type="button"
+              className="w-full text-left"
+              onClick={() => selectSession(session.id)}
+              title={session.displayName}
+            >
+              <ItemContent className="gap-0.5">
+                <ItemTitle className="text-xs font-medium">{session.displayName}</ItemTitle>
+                <span className="truncate text-[9px] text-faint">
+                  {relativeTime(session.updatedAt, session.status, t)}
+                </span>
+              </ItemContent>
+            </button>
+          </Item>
         ))}
-        {!sessions.length && <p className="sidebar-empty">{t('sessions.empty')}</p>}
-      </div>
-      <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}>
-        <SettingsIcon size={15} />{t('settings.title')}
-      </button>
+        {!sessions.length && <p className="px-2 text-[11px] leading-snug text-faint">{t('sessions.empty')}</p>}
+      </ItemGroup>
+      <Item asChild size="sm" className="m-2 rounded-md">
+        <button type="button" className="w-full text-left text-[11px] text-muted" onClick={() => setSettingsOpen(true)}>
+          <ItemMedia><SettingsIcon size={15} /></ItemMedia>
+          <ItemContent><ItemTitle className="text-[11px] font-normal">{t('settings.title')}</ItemTitle></ItemContent>
+        </button>
+      </Item>
     </aside>
   )
 }
@@ -266,58 +338,87 @@ function StepGroupNode({
   )
 }
 
+/**
+ * Step is a horizontal navigator over the top-level workers of one run, which is
+ * exactly a scrollable tab strip — so it uses Tabs rather than a hand-built row
+ * of buttons (docs/ui.md 7.4, 20.1). TabsList keeps the selected trigger
+ * scrolled into view and gives the pattern correct keyboard behaviour for free.
+ */
 function StepNavigator({ items, t }: { items: StepItem[]; t: Translator }) {
-  const { selectedRunId, selectedStepId } = useAppStore()
-  const currentRef = useRef<HTMLButtonElement>(null)
+  const { selectedRunId, selectedStepId, selectStep } = useAppStore()
   const groups = useMemo(() => groupSteps(items), [items])
 
-  // Selection and current execution are different concepts. Auto-scroll follows
-  // the running worker so it stays discoverable; selecting an older node never
-  // scrolls the active worker out of view (docs/ui.md 7.4).
-  const activeStep = items.find((item) => stepIsActive(item.step))
-  const activeRunId = activeStep?.view.run.id
-  const activeStepId = activeStep?.step.id
-  useEffect(() => {
-    currentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
-  }, [activeRunId, activeStepId])
-
-  const selectedGroup = groups.find((group) =>
-    group.items.some((item) => item.view.run.id === selectedRunId && item.step.id === selectedStepId))
+  // Tab values must be unique across runs; a step id alone can repeat.
+  const valueOf = (item: StepItem) => `${item.view.run.id}:${item.step.id}`
+  const current = items.find(
+    (item) => item.view.run.id === selectedRunId && item.step.id === selectedStepId,
+  )
+  const value = current ? valueOf(current) : ''
 
   return (
-    <section className="step-strip" aria-label={t('steps.title')}>
+    <Tabs
+      value={value}
+      onValueChange={(next) => {
+        const target = items.find((item) => valueOf(item) === next)
+        if (target) selectStep(target.view.run.id, target.step.id)
+      }}
+      className="step-strip"
+    >
       <div className="step-strip-label">{t('steps.title')}</div>
-      <div className="step-scroll">
+      <TabsList className="step-scroll" aria-label={t('steps.title')}>
         {groups.map((group) => {
-          const isActiveGroup = group.items.some((item) => item.step.id === activeStepId && item.view.run.id === activeRunId)
           if (group.items.length === 1) {
             const item = group.items[0]!
             return (
-              <div className="step-link" key={group.key}>
-                <StepNode
-                  item={item}
-                  selected={selectedGroup === group}
-                  active={stepIsActive(item.step)}
-                  t={t}
-                  registerRef={(element) => { if (isActiveGroup) currentRef.current = element }}
-                />
-              </div>
+              <TabsTrigger key={group.key} value={valueOf(item)} className={`step-node ${item.step.status}${stepIsActive(item.step) ? ' current' : ''}`}>
+                <StepNodeBody item={item} t={t} />
+              </TabsTrigger>
             )
           }
+          // Concurrent workers read as one bounded unit (docs/ui.md 10).
           return (
-            <div className="step-link" key={group.key}>
-              <StepGroupNode
-                group={group}
-                t={t}
-                selectedKey={selectedStepId}
-                activeKey={isActiveGroup ? group.key : undefined}
-                registerRef={(element) => { if (isActiveGroup) currentRef.current = element }}
-              />
-            </div>
+            <TabsTrigger
+              key={group.key}
+              value={valueOf(group.items[0]!)}
+              className="step-node step-parallel"
+            >
+              <span className="step-parallel-head">
+                <i className="step-glyph running" aria-hidden="true">{statusGlyph('running')}</i>
+                <strong>
+                  {t('steps.parallel')} · {group.items.filter((i) => stepIsActive(i.step)).length || group.items.length}
+                </strong>
+              </span>
+              <span className="step-parallel-members">
+                {group.items.map((item) => (
+                  <span key={item.step.id} className="step-parallel-member">
+                    <StepNodeBody item={item} t={t} />
+                  </span>
+                ))}
+              </span>
+            </TabsTrigger>
           )
         })}
-      </div>
-    </section>
+      </TabsList>
+    </Tabs>
+  )
+}
+
+/** The inner content of a Step node: status glyph, provider, name, timing. */
+function StepNodeBody({ item, t }: { item: StepItem; t: Translator }) {
+  const { snapshot } = useAppStore()
+  const { view, step } = item
+  const profile = snapshot?.profiles.find((candidate) => candidate.id === view.run.profileId)
+  const runtime = snapshot?.runtimes.find((candidate) => candidate.id === profile?.runtimeId)
+  const worker = [...view.workers].reverse().find((candidate) => candidate.stepId === step.id)
+  return (
+    <>
+      <span className="step-node-head">
+        <i className={`step-glyph ${step.status}`} aria-hidden="true">{statusGlyph(step.status)}</i>
+        <ProviderIcon name={profile?.name ?? view.run.profileId} adapterId={runtime?.adapterId} />
+        <strong>{profile?.name ?? view.run.profileId}</strong>
+      </span>
+      <em>{t(`run.status.${step.status}`)} · {elapsed(step.createdAt, worker?.endedAt)}</em>
+    </>
   )
 }
 
@@ -380,10 +481,10 @@ function Console({
           </button>
         </div>
       </header>
-      <div className="console-body">
+      <ScrollArea className="console-body min-h-0 h-full">
         {!rows.length && <div className="console-empty">{t('console.empty')}</div>}
         <ConsoleRows rows={rows} t={t} />
-      </div>
+      </ScrollArea>
     </section>
   )
 }
@@ -462,16 +563,15 @@ function CliInfo({ view, step, t, close, openInspector }: {
           <dd>
             {/* Session-level override; applies to the next run (docs/ui.md 16.2) */}
             {options?.models.length ? (
-              <select
-                aria-label={t('agents.model')}
-                value={override.model ?? ''}
-                onChange={(event) => applyOverride('model', event.target.value)}
-              >
-                <option value="">{profile?.model ?? t('agents.runtimeDefault')}</option>
-                {options.models.map((model) => (
-                  <option value={model.value} key={model.value}>{model.label ?? model.value}</option>
-                ))}
-              </select>
+              <Select value={override.model ?? ''} onValueChange={(next) => applyOverride('model', next)}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">{profile?.model ?? t('agents.runtimeDefault')}</SelectItem>
+                  {options.models.map((model) => (
+                    <SelectItem value={model.value} key={model.value}>{model.label ?? model.value}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : (
               <span className="field-note">{t('agents.noModelList')}</span>
             )}
@@ -481,16 +581,18 @@ function CliInfo({ view, step, t, close, openInspector }: {
           <dt>{t('agents.reasoning')}</dt>
           <dd>
             {options?.levels.length ? (
-              <select
-                aria-label={t('agents.reasoning')}
+              <Select
                 value={override.reasoning ?? profile?.reasoning ?? ''}
-                onChange={(event) => applyOverride('reasoning', event.target.value)}
+                onValueChange={(next) => applyOverride('reasoning', next)}
               >
-                <option value="">{reasoningLabel(profile?.reasoning)}</option>
-                {options.levels.map((level) => (
-                  <option value={level.value} key={level.value}>{level.label}</option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">{reasoningLabel(profile?.reasoning)}</SelectItem>
+                  {options.levels.map((level) => (
+                    <SelectItem value={level.value} key={level.value}>{level.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             ) : (
               <span className="field-note">{t('agents.noReasoningLevels')}</span>
             )}
@@ -521,6 +623,10 @@ function CliInfo({ view, step, t, close, openInspector }: {
 /* Drill-down sheets (docs/ui.md 14, 18)                               */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Raw Output and Changes are drill-downs over the workspace, not permanent
+ * regions — a Sheet is the framework's answer for exactly that (docs/ui.md 14).
+ */
 function InspectorSheet({ inspector, view, step, t, close }: {
   inspector: Exclude<Inspector, undefined>
   view: DesktopRunView
@@ -531,42 +637,43 @@ function InspectorSheet({ inspector, view, step, t, close }: {
   const events = view.events.filter((event) => !event.stepId || event.stepId === step.id)
   const changes = events.filter((event) => event.type === 'tool/edit')
   const raw = events.filter((event) => event.nativeEvent !== undefined)
+  const title = inspector === 'changes' ? t('console.changes') : t('console.rawOutput')
+
   return (
-    <div className="sheet-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}>
-      <aside className="inspector-sheet">
-        <header>
-          <div>
-            <span>{view.run.profileId}</span>
-            <h2>{inspector === 'changes' ? t('console.changes') : t('console.rawOutput')}</h2>
-          </div>
-          <button className="plain-icon" onClick={close}><X size={16} /></button>
-        </header>
-        {inspector === 'changes'
-          ? (
-            <div className="change-list">
-              {!changes.length && <p>{t('console.noChanges')}</p>}
-              {changes.map((event) => (
-                <article key={event.id}>
-                  <strong className="change-path">{eventSummary(event)}</strong>
-                  <pre>{JSON.stringify(event.data, null, 2)}</pre>
-                </article>
-              ))}
-            </div>
-          )
-          : (
-            <div className="raw-output">
-              {!raw.length && <p>{t('console.noRawOutput')}</p>}
-              {raw.map((event) => (
-                <article key={event.id}>
-                  <time>{event.timestamp}</time>
-                  <strong>{event.type}</strong>
-                  <pre>{JSON.stringify(event.nativeEvent, null, 2)}</pre>
-                </article>
-              ))}
-            </div>
-          )}
-      </aside>
-    </div>
+    <Sheet open onOpenChange={(next) => { if (!next) close() }}>
+      <SheetContent side="right" className="inspector-sheet w-full max-w-[520px] gap-0">
+        <SheetHeader>
+          <SheetTitle>{title}</SheetTitle>
+          <SheetDescription>{view.run.profileId}</SheetDescription>
+        </SheetHeader>
+        <ScrollArea className="min-h-0 flex-1">
+          {inspector === 'changes'
+            ? (
+              <div className="change-list">
+                {!changes.length && <p>{t('console.noChanges')}</p>}
+                {changes.map((event) => (
+                  <article key={event.id}>
+                    <strong className="change-path">{eventSummary(event)}</strong>
+                    <pre>{JSON.stringify(event.data, null, 2)}</pre>
+                  </article>
+                ))}
+              </div>
+            )
+            : (
+              <div className="raw-output">
+                {!raw.length && <p>{t('console.noRawOutput')}</p>}
+                {raw.map((event) => (
+                  <article key={event.id}>
+                    <time>{event.timestamp}</time>
+                    <strong>{event.type}</strong>
+                    <pre>{JSON.stringify(event.nativeEvent, null, 2)}</pre>
+                  </article>
+                ))}
+              </div>
+            )}
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -733,19 +840,24 @@ export function App() {
 
   return (
     <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}${macOS ? ' macos' : ''}`}>
+      {/* Transparent chrome plane over the content: the sidebar control sits
+          beside the native traffic lights, the environment chip reports what
+          Relay detected. An overlay, not a layout row. */}
+      <div className="window-chrome">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="sidebar-toggle"
+          aria-label={sidebarLabel}
+          title={`${sidebarLabel} (\u2318B)`}
+          aria-expanded={!sidebarCollapsed}
+          onClick={toggleSidebar}
+        >
+          <PanelLeft />
+        </Button>
+        <EnvironmentChip t={t} />
+      </div>
       <div className="app-main">
-        {/* Kept outside the sidebar so collapsing it cannot clip the control. */}
-        <div className="sidebar-rail">
-          <button
-            className="plain-icon sidebar-toggle"
-            aria-label={sidebarLabel}
-            title={`${sidebarLabel} (\u2318B)`}
-            aria-expanded={!sidebarCollapsed}
-            onClick={toggleSidebar}
-          >
-            <PanelLeft size={15} />
-          </button>
-        </div>
         <Sidebar t={t} />
         <SessionWorkspace t={t} />
       </div>

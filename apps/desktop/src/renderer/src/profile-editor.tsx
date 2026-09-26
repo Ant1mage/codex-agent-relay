@@ -1,8 +1,42 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { Button } from './components/ui/button.js'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from './components/ui/dialog.js'
+import { Checkbox } from './components/ui/checkbox.js'
+import { Field, FieldLabel, FieldLegend, FieldSet } from './components/ui/field.js'
+import { Input } from './components/ui/input.js'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './components/ui/select.js'
+import { Switch } from './components/ui/switch.js'
+import { Textarea } from './components/ui/textarea.js'
 import { X } from 'lucide-react'
 import type { AgentProfile, Runtime } from '@relay/protocol'
 import { useAppStore } from './store.js'
 import { useRuntimeOptions, type Translator } from './ui.js'
+
+/**
+ * One agent field: a fixed label column so every control starts at the same X,
+ * and a control column that shares one width. Previously each surface set its
+ * own widths, which is why the fields did not line up.
+ */
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid min-h-[38px] grid-cols-[132px_minmax(0,1fr)] items-center gap-3 border-t border-line py-1.5 text-[11px] first:border-t-0">
+      <span className="text-muted">{label}</span>
+      <span className="flex min-w-0 items-center gap-2">{children}</span>
+    </div>
+  )
+}
 
 const capabilityRows = [
   ['readWorkspace', 'agents.read'],
@@ -22,14 +56,12 @@ export function ProfileFields({
   runtimes,
   t,
   onChange,
-  layout = 'stacked',
   hideRuntime = false,
 }: {
   profile: AgentProfile
   runtimes: Runtime[]
   t: Translator
   onChange(next: AgentProfile): void
-  layout?: 'stacked' | 'rows'
   /** Onboarding picks the runtime from the provider row, so it is not re-asked. */
   hideRuntime?: boolean
 }) {
@@ -42,86 +74,70 @@ export function ProfileFields({
   const unsupported = !loading && options !== undefined && !models.length && !levels.length
 
   const runtimeRow = (
-    <label className={layout === 'rows' ? 'setting-row' : undefined}>
-      <span>{t('cliInfo.runtime')}</span>
-      <select value={profile.runtimeId} onChange={(event) => update({ runtimeId: event.target.value, model: undefined, reasoning: undefined })}>
-        {runtimes.map((runtime) => (
-          <option value={runtime.id} key={runtime.id}>
-            {runtime.adapterId} · {runtime.version ?? runtime.executablePath}
-          </option>
-        ))}
-      </select>
-    </label>
+    <Row label={t('cliInfo.runtime')}>
+      <Select
+        value={profile.runtimeId}
+        onValueChange={(next) => update({ runtimeId: next, model: undefined, reasoning: undefined })}
+      >
+        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {runtimes.map((runtime) => (
+            <SelectItem value={runtime.id} key={runtime.id}>
+              {runtime.adapterId} · {runtime.version ?? runtime.executablePath}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Row>
   )
 
   const modelRow = (
-    <label className={layout === 'rows' ? 'setting-row' : undefined}>
-      <span>{t('agents.model')}</span>
+    <Row label={t('agents.model')}>
       {models.length ? (
-        <select
+        <Select
           value={profile.model ?? ''}
-          onChange={(event) => update({ model: event.target.value || undefined })}
+          onValueChange={(next) => update({ model: next || undefined })}
         >
-          {/* Empty means "whatever the CLI defaults to", not a Relay choice. */}
-          <option value="">{t('agents.runtimeDefault')}</option>
-          {models.map((model) => (
-            <option value={model.value} key={model.value}>{model.label ?? model.value}</option>
-          ))}
-        </select>
+          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {/* Empty means "whatever the CLI defaults to", not a Relay choice. */}
+            <SelectItem value="">{t('agents.runtimeDefault')}</SelectItem>
+            {models.map((model) => (
+              <SelectItem value={model.value} key={model.value}>{model.label ?? model.value}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       ) : (
         <span className="field-note">
           {loading ? t('agents.readingRuntime') : t('agents.noModelList')}
         </span>
       )}
-    </label>
+    </Row>
   )
 
   // Reasoning is a discrete CLI-defined token, so it uses the same select as the
   // model field rather than a slider (docs/ui.md 16.1). Options come from the CLI.
   const reasoningRow = (
-    <label className={layout === 'rows' ? 'setting-row' : undefined}>
-      <span>{t('agents.reasoning')}</span>
+    <Row label={t('agents.reasoning')}>
       {levels.length ? (
-        <select
+        <Select
           value={profile.reasoning ?? ''}
-          onChange={(event) => update({ reasoning: event.target.value || undefined })}
+          onValueChange={(next) => update({ reasoning: next || undefined })}
         >
-          <option value="">{t('agents.runtimeDefault')}</option>
-          {levels.map((level) => (
-            <option value={level.value} key={level.value}>{level.label}</option>
-          ))}
-        </select>
+          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">{t('agents.runtimeDefault')}</SelectItem>
+            {levels.map((level) => (
+              <SelectItem value={level.value} key={level.value}>{level.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       ) : (
         <span className="field-note">
           {loading ? t('agents.readingRuntime') : t('agents.noReasoningLevels')}
         </span>
       )}
-    </label>
-  )
-
-  const permissions = (
-    <>
-      <div className="setting-heading"><strong>{t('agents.permissions')}</strong></div>
-      <div className="capability-grid">
-        {capabilityRows.map(([key, label]) => (
-          <label className="check-row" key={key}>
-            <input
-              type="checkbox"
-              checked={capabilities[key]}
-              onChange={() => update({ capabilities: { ...capabilities, [key]: !capabilities[key] } })}
-            />
-            <span>{t(label)}</span>
-          </label>
-        ))}
-      </div>
-    </>
-  )
-
-  const description = (
-    <label className={layout === 'rows' ? 'setting-row setting-row-block' : undefined}>
-      <span>{t('agents.description')}</span>
-      <textarea value={profile.description} onChange={(event) => update({ description: event.target.value })} />
-    </label>
+    </Row>
   )
 
   // Say where the list came from: the CLI, or the provider's official API.
@@ -132,92 +148,44 @@ export function ProfileFields({
     <p className="field-note">{options.diagnostics.join(' ')}</p>
   ) : null
 
-  if (layout === 'rows') {
-    return (
-      <>
-        <label className="setting-row">
-          <span>{t('agents.enabled')}</span>
-          <input type="checkbox" checked={profile.enabled} onChange={() => update({ enabled: !profile.enabled })} />
-        </label>
-        <label className="setting-row">
-          <span>{t('agents.name')}</span>
-          <input required value={profile.name} onChange={(event) => update({ name: event.target.value })} />
-        </label>
-        {!hideRuntime && runtimeRow}
-        {modelRow}
-        {reasoningRow}
-        {provenance}
-        {unsupported && diagnostics}
-        {permissions}
-        {description}
-      </>
-    )
-  }
+  const permissions = (
+    <FieldSet className="mt-4">
+      <FieldLegend className="mb-2 text-[11px] font-semibold">{t('agents.permissions')}</FieldLegend>
+      <div className="grid grid-cols-2 gap-2">
+        {capabilityRows.map(([key, label]) => (
+          <Field key={key} orientation="horizontal">
+            <Checkbox
+              id={`cap-${key}`}
+              checked={capabilities[key]}
+              onCheckedChange={() => update({ capabilities: { ...capabilities, [key]: !capabilities[key] } })}
+            />
+            <FieldLabel htmlFor={`cap-${key}`} className="text-[11px] font-normal">{t(label)}</FieldLabel>
+          </Field>
+        ))}
+      </div>
+    </FieldSet>
+  )
 
   return (
-    <>
-      <label>
-        <span>{t('agents.name')}</span>
-        <input required value={profile.name} onChange={(event) => update({ name: event.target.value })} />
-      </label>
+    <div className="flex flex-col">
+      <Row label={t('agents.enabled')}>
+        <Switch
+          checked={profile.enabled}
+          onCheckedChange={(next) => update({ enabled: next })}
+        />
+      </Row>
+      <Row label={t('agents.name')}>
+        <Input required value={profile.name} onChange={(event) => update({ name: event.target.value })} />
+      </Row>
       {!hideRuntime && runtimeRow}
       {modelRow}
       {reasoningRow}
       {provenance}
       {unsupported && diagnostics}
-      <label className="check-row">
-        <input type="checkbox" checked={profile.enabled} onChange={() => update({ enabled: !profile.enabled })} />
-        <span>{t('agents.enabled')}</span>
-      </label>
+      <Row label={t('agents.description')}>
+        <Textarea value={profile.description} onChange={(event) => update({ description: event.target.value })} />
+      </Row>
       {permissions}
-      {description}
-    </>
-  )
-}
-
-/**
- * Agent editor modal. Used from Settings and from the onboarding "Add Agents"
- * step, which keeps the form minimal and prefilled (docs/ui.md 22.2).
- */
-export function ProfileEditor({
-  profile,
-  runtimes,
-  t,
-  close,
-}: {
-  profile: AgentProfile
-  runtimes: Runtime[]
-  t: Translator
-  close(): void
-}) {
-  const { refresh, setNotice } = useAppStore()
-  const [draft, setDraft] = useState(profile)
-  return (
-    <div className="modal-backdrop">
-      <form
-        className="profile-editor"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void window.relay
-            .saveProfile(draft)
-            .then(async () => {
-              await refresh()
-              setNotice(t('agents.profileSaved'))
-              close()
-            })
-            .catch((error: unknown) => setNotice(error instanceof Error ? error.message : String(error)))
-        }}
-      >
-        <header>
-          <h2>{t('agents.edit')}</h2>
-          <button type="button" className="plain-icon" onClick={close}><X size={16} /></button>
-        </header>
-        <ProfileFields profile={draft} runtimes={runtimes} t={t} onChange={setDraft} />
-        <footer>
-          <button type="button" className="secondary" onClick={close}>{t('action.close')}</button>
-          <button className="primary">{t('action.save')}</button>
-        </footer>
-      </form>
     </div>
   )
 }

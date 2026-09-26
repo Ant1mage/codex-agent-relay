@@ -19,6 +19,8 @@ interface AppState {
   selectedStepId: string | undefined
   settingsOpen: boolean
   onboardingOpen: boolean
+  /** First settings value seen; `undefined` until the first snapshot lands. */
+  knownOnboardingCompletedAt: string | undefined
   loading: boolean
   error: string | undefined
   notice: string | undefined
@@ -47,6 +49,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedStepId: undefined,
   settingsOpen: false,
   onboardingOpen: false,
+  knownOnboardingCompletedAt: undefined,
   loading: true,
   error: undefined,
   notice: undefined,
@@ -94,15 +97,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       const stepId = (currentStepId && selectedRun?.steps.some((step) => step.id === currentStepId)
         ? currentStepId
         : undefined) ?? preferredStepId(selectedRun?.steps)
-      // First-run onboarding is a one-time gate; afterwards an empty workspace
-      // shows the minimal empty state instead (docs/ui.md 22.3/22.4).
+      /*
+       * The first-run gate is decided once, when the settings document first
+       * arrives. Later polls must not recompute it: they run every two seconds
+       * and would immediately close a setup screen the user reopened from the
+       * toolbar (docs/ui.md 22.3/22.4).
+       */
+      const completedAt = snapshot.settings.onboardingCompletedAt
+      const firstSnapshot = get().knownOnboardingCompletedAt === undefined
       set({
         snapshot,
         selectedSessionId: sessionId,
         selectedRunId: runId,
         selectedStepId: stepId,
         loading: false,
-        onboardingOpen: !snapshot.settings.onboardingCompletedAt,
+        knownOnboardingCompletedAt: completedAt,
+        ...(firstSnapshot ? { onboardingOpen: !completedAt } : {}),
       })
     } catch (error) {
       set({
