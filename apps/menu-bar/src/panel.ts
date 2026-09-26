@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { BrowserWindow, screen, type Tray } from 'electron'
+import { BrowserWindow, nativeTheme, screen, type Tray } from 'electron'
 import {
   panelConnectionChanged,
   panelUrl,
@@ -7,6 +7,7 @@ import {
   type PanelTab,
   type PanelTarget,
 } from './panel-target.js'
+import { panelBackgroundColor } from './panel-theme.js'
 
 export { panelUrl, type PanelIntent, type PanelTab, type PanelTarget } from './panel-target.js'
 
@@ -80,7 +81,7 @@ export function openPanel(tray: Tray, target: PanelTarget): void {
     fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
-    backgroundColor: '#1c1d1f',
+    backgroundColor: panelBackgroundColor(nativeTheme.shouldUseDarkColors),
     webPreferences: {
       preload: join(import.meta.dirname, 'panel-preload.cjs'),
       contextIsolation: true,
@@ -94,7 +95,12 @@ export function openPanel(tray: Tray, target: PanelTarget): void {
   panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   // The panel behaves like a popover: clicking anywhere else dismisses it.
   panel.on('blur', () => panel?.hide())
+  const syncBackgroundColor = () => {
+    if (panel && !panel.isDestroyed()) panel.setBackgroundColor(panelBackgroundColor(nativeTheme.shouldUseDarkColors))
+  }
+  nativeTheme.on('updated', syncBackgroundColor)
   panel.on('closed', () => {
+    nativeTheme.off('updated', syncBackgroundColor)
     panel = undefined
     panelTarget = undefined
   })

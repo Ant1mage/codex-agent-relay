@@ -5,7 +5,7 @@ import { Button } from '../components/ui/button.js'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js'
 import { Input } from '../components/ui/input.js'
 import { Label } from '../components/ui/label.js'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select.js'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select.js'
 import { Switch } from '../components/ui/switch.js'
 import { Field, FieldGroup, FieldLabel } from '../components/ui/field.js'
 import type { Translator } from '../lib/i18n.js'
@@ -133,11 +133,13 @@ export function PolicyView({
               <SelectValue placeholder={t('settings.workspace')} />
             </SelectTrigger>
             <SelectContent>
-              {workspaces.map((path) => (
-                <SelectItem key={path} value={path}>
-                  {path}
-                </SelectItem>
-              ))}
+              <SelectGroup>
+                {workspaces.map((path) => (
+                  <SelectItem key={path} value={path}>
+                    {path}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             </SelectContent>
           </Select>
           {workspace ? (

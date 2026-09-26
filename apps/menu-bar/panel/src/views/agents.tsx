@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import type { AgentProfile, Runtime } from '@relay/protocol'
 import type { RelayClient, RelayConfigView, RuntimeOptionsView } from '@relay/relay-api'
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
+import { ConfirmDialog } from '../components/confirm-dialog.js'
 import { Badge } from '../components/ui/badge.js'
 import { Button } from '../components/ui/button.js'
-import { Card, CardContent } from '../components/ui/card.js'
+import { Empty, EmptyDescription, EmptyHeader } from '../components/ui/empty.js'
 import { Input } from '../components/ui/input.js'
+import { Item, ItemActions, ItemContent, ItemGroup } from '../components/ui/item.js'
 import { Label } from '../components/ui/label.js'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select.js'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select.js'
 import { Switch } from '../components/ui/switch.js'
 import { Textarea } from '../components/ui/textarea.js'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '../components/ui/field.js'
@@ -60,6 +62,7 @@ export function AgentsView({
   onDelete(profileId: string): void
 }) {
   const [draft, setDraft] = useState<AgentProfile>()
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [options, setOptions] = useState<RuntimeOptionsView>()
   const runtimeName = (id: string) => runtimes.find((runtime) => runtime.id === id)?.adapterId ?? id
 
@@ -106,13 +109,16 @@ export function AgentsView({
   const patch = (change: Partial<AgentProfile>) => setDraft((current) => (current ? { ...current, ...change } : current))
 
   if (draft) {
+    const persisted = config.profiles.some((profile) => profile.id === draft.id)
     return (
       <div className="flex min-w-0 flex-col gap-3">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon-xs" onClick={() => setDraft(undefined)} title={t('action.cancel')}>
             <ArrowLeft />
           </Button>
-          <span className="min-w-0 flex-1 truncate text-xs font-semibold">{t('agents.edit')}</span>
+          <span className="min-w-0 flex-1 truncate text-xs font-semibold">
+            {persisted ? t('agents.edit') : t('panel.newAgent')}
+          </span>
         </div>
 
         <FieldGroup className="min-w-0 gap-3">
@@ -141,12 +147,14 @@ export function AgentsView({
                 <SelectValue placeholder={t('panel.noRuntimes')} />
               </SelectTrigger>
               <SelectContent>
-                {runtimes.map((runtime) => (
-                  <SelectItem key={runtime.id} value={runtime.id}>
-                    {runtime.adapterId}
-                    {runtime.health === 'available' ? '' : ` (${runtime.health})`}
-                  </SelectItem>
-                ))}
+                <SelectGroup>
+                  {runtimes.map((runtime) => (
+                    <SelectItem key={runtime.id} value={runtime.id}>
+                      {runtime.adapterId}
+                      {runtime.health === 'available' ? '' : ` (${runtime.health})`}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
           </Field>
@@ -160,12 +168,14 @@ export function AgentsView({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__default__">{t('panel.modelAuto')}</SelectItem>
-                {(options?.models ?? []).map((model) => (
-                  <SelectItem key={model.value} value={model.value}>
-                    {model.label ?? model.value}
-                  </SelectItem>
-                ))}
+                <SelectGroup>
+                  <SelectItem value="__default__">{t('panel.modelAuto')}</SelectItem>
+                  {(options?.models ?? []).map((model) => (
+                    <SelectItem key={model.value} value={model.value}>
+                      {model.label ?? model.value}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
             <FieldDescription className="break-words">
@@ -186,12 +196,14 @@ export function AgentsView({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__default__">{t('agents.runtimeDefault')}</SelectItem>
-                {(options?.levels ?? []).map((level) => (
-                  <SelectItem key={level.value} value={level.value}>
-                    {level.label}
-                  </SelectItem>
-                ))}
+                <SelectGroup>
+                  <SelectItem value="__default__">{t('agents.runtimeDefault')}</SelectItem>
+                  {(options?.levels ?? []).map((level) => (
+                    <SelectItem key={level.value} value={level.value}>
+                      {level.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
             {options && options.levels.length === 0 && (
@@ -250,68 +262,97 @@ export function AgentsView({
           <Button size="sm" variant="outline" onClick={() => setDraft(undefined)}>
             {t('action.cancel')}
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="shrink-0 text-destructive"
-            title={t('panel.delete')}
-            onClick={() => {
-              if (!window.confirm(t('panel.deleteConfirm'))) return
-              onDelete(draft.id)
-              setDraft(undefined)
-            }}
-          >
-            <Trash2 />
-          </Button>
+          {persisted && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="shrink-0 text-destructive hover:text-destructive"
+              title={t('panel.delete')}
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 />
+            </Button>
+          )}
         </div>
+        <ConfirmDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          title={t('panel.agent.deleteTitle')}
+          description={t('panel.deleteConfirm')}
+          cancelLabel={t('action.cancel')}
+          confirmLabel={t('panel.delete')}
+          onConfirm={() => {
+            onDelete(draft.id)
+            setDraft(undefined)
+          }}
+        />
       </div>
     )
   }
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
-      <Button size="sm" className="w-full" disabled={runtimes.length === 0} onClick={beginNew}>
-        <Plus /> {t('panel.newAgent')}
-      </Button>
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-xs font-semibold">{t('nav.agents')}</h2>
+          <p className="text-[10px] tabular-nums text-muted-foreground">
+            {config.profiles.length} {t('panel.agent.profiles')}
+          </p>
+        </div>
+        <Button size="xs" disabled={runtimes.length === 0} onClick={beginNew}>
+          <Plus /> {t('panel.newAgent')}
+        </Button>
+      </div>
 
-      {config.profiles.length === 0 && <p className="text-xs text-muted-foreground">{t('panel.agents.empty')}</p>}
+      {config.profiles.length === 0 && (
+        <Empty className="gap-2 border py-8">
+          <EmptyHeader>
+            <EmptyDescription>{t('panel.agents.empty')}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
 
-      <div className="flex min-w-0 flex-col gap-1.5">
+      <ItemGroup className="gap-1.5">
         {config.profiles.map((profile) => {
           const runtime = runtimes.find((candidate) => candidate.id === profile.runtimeId)
           const available = runtime?.health === 'available'
           return (
-            <Card key={profile.id} className="min-w-0">
-              <CardContent className="flex min-w-0 items-center gap-2 p-2.5">
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 text-left"
+            <Item key={profile.id} variant="outline" size="sm" className="min-w-0 flex-nowrap px-3 py-2.5">
+              <ItemContent className="min-w-0">
+                <Button
+                  variant="ghost"
+                  className="h-auto w-full min-w-0 justify-start whitespace-normal p-0 text-left hover:bg-transparent"
                   onClick={() => setDraft({ ...profile })}
                 >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="min-w-0 truncate text-[13px] font-medium">{profile.name}</span>
-                    {!available && (
-                      <Badge variant="destructive" className="shrink-0 text-[10px]">
-                        {runtime?.health === 'authentication_required' ? t('agents.authRequired') : t('agents.notInstalled')}
-                      </Badge>
-                    )}
+                  <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+                    <span className="flex min-w-0 max-w-full items-center gap-1.5">
+                      <span className="min-w-0 truncate text-[13px] font-medium">{profile.name}</span>
+                      {!available && (
+                        <Badge variant="destructive" className="shrink-0 text-[10px]">
+                          {runtime?.health === 'authentication_required' ? t('agents.authRequired') : t('agents.notInstalled')}
+                        </Badge>
+                      )}
+                    </span>
+                    <span className="block max-w-full truncate text-[11px] font-normal text-muted-foreground">
+                      {runtimeName(profile.runtimeId)}
+                      {profile.model ? ` · ${profile.model}` : ''}
+                      {profile.reasoning ? ` · ${profile.reasoning}` : ''}
+                    </span>
                   </span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
-                    {runtimeName(profile.runtimeId)}
-                    {profile.model ? ` · ${profile.model}` : ''}
-                    {profile.reasoning ? ` · ${profile.reasoning}` : ''}
-                  </span>
-                </button>
+                </Button>
+              </ItemContent>
+              <ItemActions className="shrink-0">
                 <Switch
                   className="shrink-0"
+                  aria-label={`${profile.name} · ${t('agents.enabled')}`}
                   checked={profile.enabled}
                   onCheckedChange={(checked: boolean) => onSave({ ...profile, enabled: checked })}
                 />
-              </CardContent>
-            </Card>
+              </ItemActions>
+            </Item>
           )
         })}
-      </div>
+      </ItemGroup>
     </div>
   )
 }

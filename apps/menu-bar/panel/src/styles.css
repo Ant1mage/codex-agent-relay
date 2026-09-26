@@ -23,3 +23,10 @@ body {
   border: 1px solid var(--border);
   border-radius: 10px;
 }
+
+/* The monochrome app mark inherits the semantic foreground colour. */
+.mark-tinted {
+  background-color: currentColor;
+  mask: url('/favicon.svg') center / contain no-repeat;
+  -webkit-mask: url('/favicon.svg') center / contain no-repeat;
+}

@@ -6,7 +6,8 @@ import { AlertTriangle, ExternalLink, RefreshCw, ScrollText, X } from 'lucide-re
 import { Badge } from './components/ui/badge.js'
 import { Button } from './components/ui/button.js'
 import { ScrollArea } from './components/ui/scroll-area.js'
-import { cn } from './lib/utils.js'
+import { Spinner } from './components/ui/spinner.js'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs.js'
 import {
   connection,
   initialIntent,
@@ -180,7 +181,14 @@ export function App() {
   ]
 
   return (
-    <div className="panel-shell">
+    <Tabs
+      value={tab}
+      onValueChange={(value) => {
+        setTab(value as PanelTab)
+        setIntent(undefined)
+      }}
+      className="panel-shell gap-0"
+    >
       <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         <span className="mark-tinted size-3.5 shrink-0 text-foreground" role="img" aria-label="Relay" />
         <span className="shrink-0 text-xs font-semibold">Relay</span>
@@ -194,7 +202,7 @@ export function App() {
             <ExternalLink />
           </Button>
           <Button variant="ghost" size="icon-xs" title={t('common.refresh')} onClick={() => void reload()}>
-            <RefreshCw className={busy ? 'spin' : undefined} />
+            {busy ? <Spinner /> : <RefreshCw />}
           </Button>
           <Button variant="ghost" size="icon-xs" title={t('panel.close')} onClick={() => window.close()}>
             <X />
@@ -202,24 +210,17 @@ export function App() {
         </span>
       </header>
 
-      <nav className="flex shrink-0 gap-1 border-b border-border px-2 py-1.5">
+      <TabsList className="h-auto w-full shrink-0 rounded-none border-b px-2 py-1.5">
         {tabs.map((item) => (
-          <button
+          <TabsTrigger
             key={item.id}
-            type="button"
-            onClick={() => {
-              setTab(item.id)
-              setIntent(undefined)
-            }}
-            className={cn(
-              'min-w-0 flex-1 truncate rounded-md px-2 py-1 text-xs transition-colors',
-              tab === item.id ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent/60',
-            )}
+            value={item.id}
+            className="min-w-0 truncate text-xs"
           >
             {item.label}
-          </button>
+          </TabsTrigger>
         ))}
-      </nav>
+      </TabsList>
 
       {config && config.warnings.length > 0 && (
         <div className="shrink-0 space-y-1 border-b border-destructive/40 bg-destructive/10 px-3 py-2">
@@ -233,51 +234,64 @@ export function App() {
       )}
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="min-w-0 p-3">
-          {error && <p className="mb-2 break-words text-xs text-destructive">{error}</p>}
-          {tab === 'agents' && config && (
-            <AgentsView
-              t={t}
-              client={conn.client}
-              config={config}
-              runtimes={snapshot?.runtimes ?? []}
-              startNew={intent === 'new-agent'}
-              editProfileId={intent === 'edit-agent' ? intentProfileId : undefined}
-              onIntentHandled={() => {
-                setIntent(undefined)
-                setIntentProfileId(undefined)
-              }}
-              onSave={saveProfile}
-              onDelete={deleteProfile}
-            />
-          )}
-          {tab === 'policy' && config && (
-            <PolicyView
-              t={t}
-              config={config}
-              workspaces={[...new Set((snapshot?.sessions ?? []).map((session) => session.session.cwd))]}
-              onSave={savePolicy}
-            />
-          )}
-          {tab === 'codex' && codex && (
-            <CodexView t={t} status={codex} onAction={runCodex} busy={busy} highlightActions={intent === 'codex-actions'} />
-          )}
-          {tab === 'runtime' && snapshot && config && (
-            <RuntimeView
-              t={t}
-              snapshot={snapshot}
-              manualRuntimes={config.manualRuntimes}
-              onRescan={rescan}
-              onSave={saveRuntime}
-              onDelete={deleteRuntime}
-              onProbe={(input) => conn.client!.probeRuntime(input)}
-              onLoadAdapters={loadAdapters}
-              startNew={intent === 'add-runtime'}
-              onIntentHandled={() => setIntent(undefined)}
-              busy={busy}
-              onOpenInspector={openInspector}
-            />
-          )}
+        <div className="min-w-0">
+          {error && <p className="break-words px-3 pt-3 text-xs text-destructive">{error}</p>}
+          <TabsContent value="agents" className="m-0 min-w-0 p-3">
+            {config && (
+              <AgentsView
+                t={t}
+                client={conn.client}
+                config={config}
+                runtimes={snapshot?.runtimes ?? []}
+                startNew={intent === 'new-agent'}
+                editProfileId={intent === 'edit-agent' ? intentProfileId : undefined}
+                onIntentHandled={() => {
+                  setIntent(undefined)
+                  setIntentProfileId(undefined)
+                }}
+                onSave={saveProfile}
+                onDelete={deleteProfile}
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="policy" className="m-0 min-w-0 p-3">
+            {config && (
+              <PolicyView
+                t={t}
+                config={config}
+                workspaces={[...new Set((snapshot?.sessions ?? []).map((session) => session.session.cwd))]}
+                onSave={savePolicy}
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="codex" className="m-0 min-w-0 p-3">
+            {codex && (
+              <CodexView
+                t={t}
+                status={codex}
+                onAction={runCodex}
+                busy={busy}
+                highlightActions={intent === 'codex-actions'}
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="runtime" className="m-0 min-w-0 p-3">
+            {snapshot && config && (
+              <RuntimeView
+                t={t}
+                snapshot={snapshot}
+                manualRuntimes={config.manualRuntimes}
+                onRescan={rescan}
+                onSave={saveRuntime}
+                onDelete={deleteRuntime}
+                onProbe={(input) => conn.client!.probeRuntime(input)}
+                onLoadAdapters={loadAdapters}
+                startNew={intent === 'add-runtime'}
+                onIntentHandled={() => setIntent(undefined)}
+                busy={busy}
+              />
+            )}
+          </TabsContent>
         </div>
       </ScrollArea>
 
@@ -287,6 +301,6 @@ export function App() {
           <span className="min-w-0 line-clamp-2 break-words">{notice}</span>
         </footer>
       )}
-    </div>
+    </Tabs>
   )
 }

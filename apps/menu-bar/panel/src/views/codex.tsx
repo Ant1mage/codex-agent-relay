@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import type { CodexStatus } from '@relay/relay-api'
 import { Download, RefreshCw, Trash2, Wrench } from 'lucide-react'
+import { ConfirmDialog } from '../components/confirm-dialog.js'
 import { Badge } from '../components/ui/badge.js'
 import { Button } from '../components/ui/button.js'
 import { Card, CardContent } from '../components/ui/card.js'
@@ -15,9 +17,9 @@ const LABELS: Record<string, string> = {
 }
 
 const TONE: Record<string, string> = {
-  ok: 'text-[var(--green)]',
-  outdated: 'text-[var(--amber)]',
-  legacy: 'text-[var(--amber)]',
+  ok: 'text-success',
+  outdated: 'text-warning',
+  legacy: 'text-warning',
   stale: 'text-destructive',
   missing: 'text-muted-foreground',
 }
@@ -41,6 +43,7 @@ export function CodexView({
   highlightActions: boolean
 }) {
   const installed = status.checks.filter((check) => check.ok).length
+  const [removeOpen, setRemoveOpen] = useState(false)
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
@@ -59,7 +62,7 @@ export function CodexView({
               </div>
               <p className="mt-0.5 break-all text-[10px] leading-snug text-muted-foreground">{check.detail}</p>
               {check.hint && (
-                <p className="mt-0.5 break-words text-[10px] leading-snug text-[var(--amber)]">{check.hint}</p>
+                <p className="mt-0.5 break-words text-[10px] leading-snug text-warning">{check.hint}</p>
               )}
             </div>
           ))}
@@ -92,14 +95,21 @@ export function CodexView({
             variant="ghost"
             className="w-full justify-start text-destructive hover:text-destructive"
             disabled={busy}
-            onClick={() => {
-              if (window.confirm(t('panel.removeConfirm'))) onAction('remove')
-            }}
+            onClick={() => setRemoveOpen(true)}
           >
             <Trash2 /> {t('panel.remove')}
           </Button>
         </div>
       </div>
+      <ConfirmDialog
+        open={removeOpen}
+        onOpenChange={setRemoveOpen}
+        title={t('panel.codex.removeTitle')}
+        description={t('panel.removeConfirm')}
+        cancelLabel={t('action.cancel')}
+        confirmLabel={t('panel.remove')}
+        onConfirm={() => onAction('remove')}
+      />
     </div>
   )
 }
