@@ -837,8 +837,19 @@ export function App() {
   }
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    if (theme === 'system') document.documentElement.removeAttribute('data-theme')
+    const root = document.documentElement
+    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)')
+    const syncTheme = () => {
+      const isDark = theme === 'dark' || (theme === 'system' && systemTheme.matches)
+      root.classList.toggle('dark', isDark)
+      root.dataset.theme = theme
+      root.style.colorScheme = isDark ? 'dark' : 'light'
+    }
+
+    syncTheme()
+    if (theme !== 'system') return
+    systemTheme.addEventListener('change', syncTheme)
+    return () => systemTheme.removeEventListener('change', syncTheme)
   }, [theme])
   useEffect(() => {
     // One root setting scales shadcn controls and Relay's rem-based typography
