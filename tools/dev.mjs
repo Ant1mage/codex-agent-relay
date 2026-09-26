@@ -35,7 +35,7 @@ function log(name, line) {
 function start(name, command, args, options = {}) {
   const child = spawn(command, args, {
     cwd: root,
-    env: { ...process.env, ...options.env },
+    env: options.env ?? process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     // Own process group: pnpm and Electron both fork, and a bare SIGTERM to the
     // wrapper would leave the real daemon running.
@@ -131,6 +131,7 @@ if (withTray) {
   // the daemon above instead of spawning the bundled one.
   const env = { ...process.env, RELAY_NO_AUTOSTART: '1' }
   delete env.ELECTRON_RUN_AS_NODE
+  log('dev', 'tray starts under Electron with ELECTRON_RUN_AS_NODE cleared')
   start('tray', 'pnpm', ['--filter', '@relay/menu-bar', 'exec', 'electron', '.'], { env })
 }
 
