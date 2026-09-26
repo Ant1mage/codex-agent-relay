@@ -23,6 +23,13 @@ type Translator = (key: TranslationKey) => string
 type Inspector = 'changes' | 'raw' | undefined
 type Theme = 'system' | 'light' | 'dark'
 type ConsoleKind = 'read' | 'search' | 'edit' | 'command' | 'test' | 'result' | 'error' | 'status'
+const DEFAULT_FONT_SIZE = 14
+const MAX_FONT_SIZE = 20
+
+function storedFontSize(): number {
+  const value = Number(localStorage.getItem('relay.font-size'))
+  return Number.isInteger(value) && value >= DEFAULT_FONT_SIZE && value <= MAX_FONT_SIZE ? value : DEFAULT_FONT_SIZE
+}
 
 function elapsed(start: string, end?: string): string {
   const total = Math.max(0, new Date(end ?? Date.now()).getTime() - new Date(start).getTime())
@@ -217,7 +224,7 @@ function ProfileEditor({ profile, runtimes, t, close }: { profile: AgentProfile;
   )
 }
 
-function SettingsSheet({ t, theme, setTheme }: { t: Translator; theme: Theme; setTheme(theme: Theme): void }) {
+function SettingsSheet({ t, theme, setTheme, fontSize, setFontSize }: { t: Translator; theme: Theme; setTheme(theme: Theme): void; fontSize: number; setFontSize(fontSize: number): void }) {
   const { snapshot, settingsOpen, setSettingsOpen, locale, setLocale, setNotice } = useAppStore()
   const [settings, setSettings] = useState<DesktopSettings | undefined>(snapshot?.settings)
   const [scope, setScope] = useState('global')
@@ -237,7 +244,7 @@ function SettingsSheet({ t, theme, setTheme }: { t: Translator; theme: Theme; se
       <aside className="settings-sheet">
         <header><h1>{t('settings.title')}</h1><button className="plain-icon" onClick={() => setSettingsOpen(false)}><X size={16} /></button></header>
         <section><div className="setting-heading"><Languages size={16} /><div><strong>{t('settings.language')}</strong><span>English / 简体中文</span></div></div><div className="segmented"><button className={locale === 'en' ? 'selected' : ''} onClick={() => setLocale('en')}>English</button><button className={locale === 'zh-CN' ? 'selected' : ''} onClick={() => setLocale('zh-CN')}>简体中文</button></div></section>
-        <section><div className="setting-heading"><Sun size={16} /><strong>{t('settings.appearance')}</strong></div><div className="segmented">{(['system', 'light', 'dark'] as Theme[]).map((value) => <button className={theme === value ? 'selected' : ''} onClick={() => setTheme(value)} key={value}>{value === 'dark' && <Moon size={12} />}{t(`settings.${value}`)}</button>)}</div></section>
+        <section><div className="setting-heading"><Sun size={16} /><strong>{t('settings.appearance')}</strong></div><div className="segmented">{(['system', 'light', 'dark'] as Theme[]).map((value) => <button className={theme === value ? 'selected' : ''} onClick={() => setTheme(value)} key={value}>{value === 'dark' && <Moon size={12} />}{t(`settings.${value}`)}</button>)}</div><label className="font-size-row"><span>{t('settings.fontSize')}</span><div><input type="range" min={DEFAULT_FONT_SIZE} max={MAX_FONT_SIZE} step="1" value={fontSize} aria-label={t('settings.fontSize')} aria-valuetext={`${fontSize}px`} onChange={(event) => setFontSize(Number(event.target.value))} /><output>{fontSize}px</output></div></label></section>
         <section><div className="setting-heading section-action"><div><strong>{t('settings.profiles')}</strong><span>{snapshot.runtimes.length} runtimes · {snapshot.profiles.length} profiles</span></div><button className="secondary" onClick={createProfile} disabled={!snapshot.runtimes.length}><Plus size={12} />{t('agents.create')}</button></div><div className="profile-list">{snapshot.profiles.map((profile) => { const runtime = snapshot.runtimes.find((item) => item.id === profile.runtimeId); return <button key={profile.id} onClick={() => setEditing(profile)}><div><strong>{profile.name}</strong><span>{runtime?.adapterId} · {runtime?.version ?? t('common.notAvailable')}</span></div><ChevronRight size={14} /></button> })}</div></section>
         <section>
           <div className="setting-heading"><ShieldCheck size={16} /><div><strong>{t('settings.policy')}</strong><span>{scope === 'global' ? t('settings.global') : t('settings.workspace')}</span></div></div>
@@ -256,10 +263,17 @@ function SettingsSheet({ t, theme, setTheme }: { t: Translator; theme: Theme; se
 export function App() {
   const { locale, refresh, error, notice, setNotice } = useAppStore()
   const [theme, setThemeState] = useState<Theme>(() => (localStorage.getItem('relay.theme') as Theme | null) ?? 'system')
+  const [fontSize, setFontSizeState] = useState(storedFontSize)
   const t = createTranslator(locale)
   const setTheme = (next: Theme) => { localStorage.setItem('relay.theme', next); setThemeState(next) }
+  const setFontSize = (next: number) => {
+    const value = Math.min(MAX_FONT_SIZE, Math.max(DEFAULT_FONT_SIZE, Math.round(next)))
+    localStorage.setItem('relay.font-size', String(value))
+    setFontSizeState(value)
+  }
   useEffect(() => { document.documentElement.dataset.theme = theme; if (theme === 'system') document.documentElement.removeAttribute('data-theme') }, [theme])
+  useEffect(() => { document.documentElement.style.setProperty('--relay-font-scale', String(fontSize / DEFAULT_FONT_SIZE)) }, [fontSize])
   useEffect(() => { void refresh(); const timer = window.setInterval(() => void refresh(), 2_000); return () => window.clearInterval(timer) }, [refresh])
   useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(undefined), 3_500); return () => window.clearTimeout(timer) }, [notice, setNotice])
-  return <div className="app-shell"><Sidebar t={t} /><SessionWorkspace t={t} /><SettingsSheet t={t} theme={theme} setTheme={setTheme} />{error && <div className="toast error"><CircleAlert size={14} />{error}</div>}{notice && <div className="toast"><Check size={14} />{notice}</div>}</div>
+  return <div className="app-shell"><Sidebar t={t} /><SessionWorkspace t={t} /><SettingsSheet t={t} theme={theme} setTheme={setTheme} fontSize={fontSize} setFontSize={setFontSize} />{error && <div className="toast error"><CircleAlert size={14} />{error}</div>}{notice && <div className="toast"><Check size={14} />{notice}</div>}</div>
 }
