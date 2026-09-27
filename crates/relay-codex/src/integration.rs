@@ -975,7 +975,7 @@ command = "ignored"
 set -eu
 state="$CODEX_HOME/.relay-fixture"
 mkdir -p "$state"
-case "$1 $2 ${3:-}" in
+case "${1:-} ${2:-} ${3:-}" in
   "--version  ") printf 'codex-cli fixture\n' ;;
   "plugin marketplace list")
     [ -f "$state/marketplace" ] && printf 'relay  %s\n' "$(cat "$state/marketplace")" || true ;;
@@ -988,12 +988,12 @@ case "$1 $2 ${3:-}" in
       printf 'relay@relay  installed, enabled  %s  %s/plugins/relay\n' "$version" "$root"
     fi ;;
   "plugin remove") rm -f "$state/plugin" ;;
-  "plugin add")
+  "plugin add relay@relay")
     root="$(cat "$state/marketplace")"
     test -f "$root/plugins/relay/plugin.json"
     printf installed > "$state/plugin" ;;
   "mcp remove") rm -f "$state/mcp" ;;
-  "mcp add")
+  "mcp add relay")
     printf '%s' "$5" > "$state/mcp"
     mkdir -p "$CODEX_HOME"
     printf '[mcp_servers.relay]\ncommand = \"%s\"\n' "$5" > "$CODEX_HOME/config.toml" ;;
