@@ -1,0 +1,27 @@
+[package]
+name = "relayd"
+description = "Relay's local daemon: configuration, runtime scan and the HTTP/SSE surface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "relayd"
+path = "src/main.rs"
+
+[dependencies]
+relay-adapters.workspace = true
+relay-api.workspace = true
+relay-codex.workspace = true
+relay-config.workspace = true
+relay-core.workspace = true
+relay-storage.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
