@@ -56,6 +56,15 @@ cargo test --workspace                  # unit tests + the delegation end-to-end
 cargo install trunk --locked
 (cd apps/relay-desktop/ui && trunk build --release)
 
+./scripts/dev.sh                       # debug session: UI + daemon + menu bar app
+```
+
+`./scripts/dev.sh` builds the Leptos UI, builds the debug binaries and starts the
+menu bar app with the daemon behind it, printing the inspector and panel URLs. It
+keeps its state in `~/.relay-dev`, so it never touches an installed Relay.
+`--daemon-only`, `--stop`, `--watch-ui` and `--no-ui` cover the rest.
+
+```bash
 cargo run -p relayd                     # the daemon alone, on 127.0.0.1:7352
 (cd apps/relay-desktop && cargo tauri dev)   # the menu bar app (starts relayd itself)
 ```

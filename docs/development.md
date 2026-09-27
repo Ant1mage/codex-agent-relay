@@ -51,15 +51,27 @@ cargo fmt --all
 
 ## Running a development session
 
+One command builds the UI, builds the debug binaries and starts the menu bar app
+with the daemon behind it:
+
 ```bash
-# 1. The daemon on its own (it prints the inspector URL and token)
-cargo run -p relayd
+./scripts/dev.sh                 # UI + debug binaries + desktop shell
+./scripts/dev.sh --daemon-only   # just relayd, then open the URLs in a browser
+./scripts/dev.sh --stop          # stop the session
+./scripts/dev.sh --watch-ui      # also rebuild the UI on change
+./scripts/dev.sh --no-ui         # skip the Trunk build (dist/ already exists)
+```
 
-# 2. The desktop shell, which starts and supervises the daemon itself
-(cd apps/relay-desktop && cargo tauri dev)
+The script prints the inspector and panel URLs with their token. A development
+session keeps its state in `~/.relay-dev` (override with `RELAY_HOME`), so it
+never touches an installed Relay, and it stops only the daemons it started.
 
-# 3. The MCP server, exactly as Codex starts it
-cargo run -p relay-mcp
+The pieces on their own:
+
+```bash
+cargo run -p relayd              # the daemon; prints the inspector URL and token
+(cd apps/relay-desktop && cargo tauri dev)   # the shell, which starts the daemon
+cargo run -p relay-mcp           # the MCP server, exactly as Codex starts it
 ```
 
 Useful environment variables (all optional):

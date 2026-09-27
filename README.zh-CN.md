@@ -53,6 +53,14 @@ cargo test --workspace                  # 单元测试 + 委派端到端测试
 cargo install trunk --locked
 (cd apps/relay-desktop/ui && trunk build --release)
 
+./scripts/dev.sh                       # 调试会话：UI + daemon + 菜单栏应用
+```
+
+`./scripts/dev.sh` 会构建 Leptos UI、构建 debug 二进制，并启动菜单栏应用（daemon
+在其后运行），同时打印 inspector 与 panel 的地址。它把状态放在 `~/.relay-dev`，
+不会碰到已安装的 Relay。其余参数：`--daemon-only`、`--stop`、`--watch-ui`、`--no-ui`。
+
+```bash
 cargo run -p relayd                     # 只启动 daemon（127.0.0.1:7352）
 (cd apps/relay-desktop && cargo tauri dev)   # 菜单栏应用（自行启动 relayd）
 ```
