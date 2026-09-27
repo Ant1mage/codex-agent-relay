@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Relay",
+  "identifier": "dev.relay.desktop",
+  "app": {
+    "macOSPrivateApi": false,
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "build": {
+    "frontendDist": "../ui/dist",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": [
+      "../../../build-resources/icon.icns",
+      "../../../assets/appicon/png/light/relay-icon-16.png",
+      "../../../assets/appicon/png/light/relay-icon-32.png",
+      "../../../assets/appicon/png/light/relay-icon-64.png",
+      "../../../assets/appicon/png/light/relay-icon-128.png",
+      "../../../assets/appicon/png/light/relay-icon-256.png",
+      "../../../assets/appicon/png/light/relay-icon-512.png"
+    ],
+    "resources": {
+      "../../../assets/appicon/png/light": "assets/appicon/png/light",
+      "../../../integrations/codex": "integrations/codex",
+      "../ui/dist": "ui",
+      "../../../target/release/relayd": "bin/relayd",
+      "../../../target/release/relay-mcp": "bin/relay-mcp"
+    },
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true,
+      "entitlements": "../../../build-resources/entitlements.mac.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/Ant1mage/relay/releases/latest/download/latest.json"],
+      "pubkey": ""
+    }
+  }
+}

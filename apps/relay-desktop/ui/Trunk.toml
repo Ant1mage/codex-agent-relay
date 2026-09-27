@@ -1,0 +1,10 @@
+# Trunk owns the wasm build; the daemon serves the result from `dist/`.
+[build]
+target = "index.html"
+dist = "dist"
+# The UI is a debug-friendly bundle even when released: the inspector is a log
+# viewer and a readable stack trace in the browser is worth more than a few kB.
+minify = "never"
+
+[watch]
+ignore = ["dist"]

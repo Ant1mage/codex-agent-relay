@@ -1,0 +1,62 @@
+[package]
+name = "relay-ui"
+description = "Relay's Leptos + Trunk UI: the read-only inspector and the control panel in one bundle."
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+# The UI is built by Trunk for wasm32 on its own. The empty workspace table keeps
+# it out of the daemon workspace so this wasm-only dependency set can never leak
+# into the server build (the root manifest also excludes this directory).
+[workspace]
+
+[dependencies]
+# The wire contract only: serde types, no axum/rusqlite/tokio. Clients validate
+# the exact document the daemon emits instead of keeping a copy of the shape.
+relay-api = { path = "../../../crates/relay-api", default-features = false }
+relay-core = { path = "../../../crates/relay-core" }
+
+leptos = { version = "0.8", features = ["csr"] }
+gloo-net = { version = "0.6", default-features = false, features = ["http", "json"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+console_error_panic_hook = "0.1"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+  "Clipboard",
+  "Document",
+  "DomTokenList",
+  "Element",
+  "Event",
+  "EventSource",
+  "EventTarget",
+  "History",
+  "HtmlDivElement",
+  "HtmlElement",
+  "HtmlInputElement",
+  "HtmlSelectElement",
+  "HtmlTextAreaElement",
+  "Location",
+  "MediaQueryList",
+  "MessageEvent",
+  "Navigator",
+  "Node",
+  "Storage",
+  "Url",
+  "UrlSearchParams",
+  "Window",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

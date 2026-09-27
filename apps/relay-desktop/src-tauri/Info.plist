@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the bundle's Info.plist by `tauri build` (Tauri looks for an
+  Info.plist next to tauri.conf.json).
+
+  LSUIElement is the declarative half of "menu bar app, no Dock icon": the shell
+  also sets ActivationPolicy::Accessory in its setup hook, but that runs after
+  launch, and an accessory app never shows a Dock tile in the first place.
+-->
+<plist version="1.0">
+<dict>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
