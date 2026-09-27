@@ -46,7 +46,7 @@ cargo clippy --workspace --all-targets
 cargo fmt --all
 
 (cd apps/relay-desktop/ui && cargo check --target wasm32-unknown-unknown)
-(cd apps/relay-desktop/ui && trunk build --release)   # → ui/dist
+(cd apps/relay-desktop/ui && env -u NO_COLOR trunk build --release)   # → ui/dist
 ```
 
 ## Running a development session
@@ -118,7 +118,12 @@ Relay.app/Contents/
 
 `relayd` and `relay-mcp` are ordinary workspace binaries copied in as bundle
 resources, which is why `cargo build --release -p relayd -p relay-mcp` must run
-before `cargo tauri build`.
+before `cargo tauri build`. The bundle lands in
+`target/aarch64-apple-darwin/release/bundle/`.
+
+A small environment note: `trunk` reads `NO_COLOR` and only accepts `true` or
+`false`, so an exported `NO_COLOR=1` aborts it. `env -u NO_COLOR trunk build` is
+the portable invocation.
 
 ## Signing and notarization
 
@@ -139,9 +144,11 @@ Required secrets: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
 
 ## Updater
 
-The Tauri updater replaces `electron-updater`. `plugins.updater.pubkey` must hold
-the public half of `TAURI_SIGNING_PRIVATE_KEY` before a release;
-`RELAY_UPDATE_FEED` overrides the endpoint at runtime for testing.
+`plugins.updater.pubkey` must hold the public half of
+`TAURI_SIGNING_PRIVATE_KEY` before a release (`cargo tauri signer generate`);
+until then the bundler logs `failed to decode pubkey` after producing the app,
+DMG and updater archive. `RELAY_UPDATE_FEED` overrides the endpoint at runtime
+for testing.
 
 ## Local state
 

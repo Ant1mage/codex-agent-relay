@@ -22,7 +22,7 @@ jobs:
       - name: Install Trunk
         run: cargo install trunk --locked
       - name: Build the UI
-        run: trunk build --release
+        run: env -u NO_COLOR trunk build --release
         working-directory: apps/relay-desktop/ui
       - name: Build the daemon and the MCP server
         # `bundle.resources` copies these two into Contents/Resources, which is
@@ -62,14 +62,14 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          APP="target/release/bundle/macos/Relay.app"
+          APP="target/aarch64-apple-darwin/release/bundle/macos/Relay.app"
           for binary in relayd relay-mcp; do
             codesign --force --options runtime --timestamp               --sign "$APPLE_SIGNING_IDENTITY" "$APP/Contents/Resources/$binary"
           done
           codesign --force --options runtime --timestamp             --sign "$APPLE_SIGNING_IDENTITY" "$APP"
       - name: Verify the signature and the bundled binaries
         run: |
-          APP="target/release/bundle/macos/Relay.app"
+          APP="target/aarch64-apple-darwin/release/bundle/macos/Relay.app"
           codesign --verify --deep --strict --verbose=2 "$APP"
           spctl --assess --type execute --verbose=2 "$APP"
           codesign --verify --strict --verbose=2 "$APP/Contents/Resources/relayd"
@@ -81,7 +81,7 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
-          APP="target/release/bundle/macos/Relay.app"
+          APP="target/aarch64-apple-darwin/release/bundle/macos/Relay.app"
           ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/Relay.zip"
           xcrun notarytool submit "$RUNNER_TEMP/Relay.zip" \
             --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
@@ -94,7 +94,7 @@ jobs:
           gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
             gh release create "${GITHUB_REF_NAME}" --title "Relay ${GITHUB_REF_NAME}" --generate-notes
           gh release upload "${GITHUB_REF_NAME}" \
-            target/release/bundle/dmg/*.dmg \
-            target/release/bundle/macos/*.app.tar.gz \
-            target/release/bundle/macos/*.app.tar.gz.sig \
-            target/release/bundle/macos/latest.json --clobber
+            target/aarch64-apple-darwin/release/bundle/dmg/*.dmg \
+            target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz \
+            target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig \
+            target/aarch64-apple-darwin/release/bundle/macos/latest.json --clobber

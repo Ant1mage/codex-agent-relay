@@ -43,14 +43,14 @@ jobs:
       - name: Install Trunk
         run: cargo install trunk --locked
       - name: Build the UI
-        run: trunk build --release
+        # Trunk reads NO_COLOR and only accepts true/false, so an exported "1"
+        # from the environment would abort it.
+        run: env -u NO_COLOR trunk build --release
         working-directory: apps/relay-desktop/ui
-      - name: Build the sidecars
-        run: |
-          cargo build --release -p relayd -p relay-mcp
-          mkdir -p apps/relay-desktop/src-tauri/binaries
-          cp target/release/relayd apps/relay-desktop/src-tauri/binaries/relayd-aarch64-apple-darwin
-          cp target/release/relay-mcp apps/relay-desktop/src-tauri/binaries/relay-mcp-aarch64-apple-darwin
+      - name: Build the daemon and the MCP server
+        # `bundle.resources` copies these two into Contents/Resources/bin, which is
+        # where the shell and the Codex integration look for them.
+        run: cargo build --release -p relayd -p relay-mcp
       - name: Build the app
         run: cargo tauri build --target aarch64-apple-darwin
         working-directory: apps/relay-desktop
@@ -61,6 +61,6 @@ jobs:
         with:
           name: Relay-macOS-arm64
           path: |
-            target/release/bundle/dmg/*.dmg
-            target/release/bundle/macos/*.app.tar.gz
-            target/release/bundle/macos/*.app.tar.gz.sig
+            target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
