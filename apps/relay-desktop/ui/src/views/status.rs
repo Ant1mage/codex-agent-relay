@@ -5,28 +5,18 @@
 //! still perform, "Copy diagnostics".
 
 use leptos::prelude::*;
-use leptos::task::spawn_local;
-use relay_api::Health;
 
 use crate::components::controls::{badge, icon};
 use crate::state::PanelStore;
 
 pub fn status_view(store: PanelStore) -> AnyView {
     let t = store.translator();
-    let health = RwSignal::new(None::<Health>);
-    let failure = RwSignal::new(None::<String>);
-
-    if let Some(client) = store.client() {
-        spawn_local(async move {
-            match client.health().await {
-                Ok(value) => health.set(Some(value)),
-                Err(error) => failure.set(Some(error.to_string())),
-            }
-        });
-    }
+    // Health lands in PanelStore, which outlives this tab: leaving Status while
+    // the request is in flight cannot write into a view that has been disposed.
+    store.load_health();
 
     let base = store.base();
-    let healthy = move || health.get().map(|value| value.ok).unwrap_or(false);
+    let healthy = move || store.health.get().map(|value| value.ok).unwrap_or(false);
 
     view! {
         <div class="stack">
@@ -43,7 +33,8 @@ pub fn status_view(store: PanelStore) -> AnyView {
                 </div>
                 {status_row(t.t("status.daemon"), base)}
                 {move || {
-                    health
+                    store
+                        .health
                         .get()
                         .map(|value| {
                             view! {
@@ -57,14 +48,22 @@ pub fn status_view(store: PanelStore) -> AnyView {
                             }
                         })
                 }}
-                {move || failure.get().map(|message| view! { <p class="probe probe-fail wrap">{message}</p> })}
+                {move || {
+                    store.health_error.get().map(|message| view! { <p class="probe probe-fail wrap">{message}</p> })
+                }}
             </div>
 
             <div class="card">
                 <h2 class="card-title">{t.t("status.counts")}</h2>
                 <div class="status-grid">
-                    {status_cell(t.t("status.sessions"), move || health.get().map(|value| value.sessions as usize).unwrap_or(0))}
-                    {status_cell(t.t("status.runs"), move || health.get().map(|value| value.runs as usize).unwrap_or(0))}
+                    {status_cell(
+                        t.t("status.sessions"),
+                        move || store.health.get().map(|value| value.sessions as usize).unwrap_or(0),
+                    )}
+                    {status_cell(
+                        t.t("status.runs"),
+                        move || store.health.get().map(|value| value.runs as usize).unwrap_or(0),
+                    )}
                     {status_cell(
                         t.t("status.runtimes"),
                         move || store.snapshot.with(|snapshot| snapshot.as_ref().map(|value| value.runtimes.len()).unwrap_or(0)),

@@ -10,7 +10,10 @@ use std::future::Future;
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use relay_api::{CodexStatus, InspectorSnapshot, InstallResult, RelayConfigView, RuntimeProbe, StreamMessage};
+use relay_api::{
+    CodexStatus, Health, InspectorSnapshot, InstallResult, RelayConfigView, RuntimeOptionsView, RuntimeProbe,
+    StreamMessage,
+};
 use relay_core::{AgentProfile, RelayEvent, RelayPolicy, RelayPolicyOverride, RunStatus};
 
 use crate::api::{self, Client, Route};
@@ -301,6 +304,47 @@ impl PanelIntent {
     }
 }
 
+/// A value the panel loads over HTTP and then keeps for the page.
+///
+/// `Loading` doubles as the in-flight marker: while it is set another request
+/// for the same key is a no-op. That is what stops a failing request from
+/// re-triggering itself, because a load is asked for by a click or by an editor
+/// opening — never by a reactive effect that watches the state it writes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Remote<T> {
+    /// Never asked for.
+    Idle,
+    Loading,
+    Ready(T),
+    Failed(String),
+}
+
+impl<T> Remote<T> {
+    pub fn ready(&self) -> Option<&T> {
+        match self {
+            Remote::Ready(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn is_loading(&self) -> bool {
+        matches!(self, Remote::Loading)
+    }
+
+    /// In flight or finished: `ensure_*` treats this as "do not ask again".
+    pub fn is_settled(&self) -> bool {
+        matches!(self, Remote::Loading | Remote::Ready(_))
+    }
+}
+
+/// One runtime's model/reasoning lists plus the request that owns them: a
+/// response whose `request` id no longer matches is stale and is dropped.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeOptionsEntry {
+    pub request: u64,
+    pub state: Remote<RuntimeOptionsView>,
+}
+
 /// The control panel's state: configuration, the environment snapshot and the
 /// Codex integration status.
 #[derive(Clone, Copy)]
@@ -320,6 +364,23 @@ pub struct PanelStore {
     /// Tray navigation: an intent opens an editor instead of the list.
     pub intent: RwSignal<Option<PanelIntent>>,
     pub intent_profile: RwSignal<Option<String>>,
+    /// Model and reasoning values per runtime id, fetched when the agent editor
+    /// opens one. Owned here so a tab switch while the request is in flight
+    /// cannot write into a branch that has been disposed.
+    pub runtime_options: RwSignal<BTreeMap<String, RuntimeOptionsEntry>>,
+    /// The adapter catalogue the runtime editor offers.
+    pub adapter_catalog: RwSignal<Remote<Vec<String>>>,
+    /// The last executable probe, and whether one is in flight right now.
+    pub probe: RwSignal<Option<RuntimeProbe>>,
+    pub probing: RwSignal<bool>,
+    /// Daemon health for the Status tab, and the error that replaced it.
+    pub health: RwSignal<Option<Health>>,
+    pub health_error: RwSignal<Option<String>>,
+    /// Request ids: a late response only writes while it still owns its request.
+    options_seq: RwSignal<u64>,
+    adapters_seq: RwSignal<u64>,
+    probe_seq: RwSignal<u64>,
+    health_seq: RwSignal<u64>,
 }
 
 impl PanelStore {
@@ -346,6 +407,16 @@ impl PanelStore {
             locale: RwSignal::new(locale),
             intent: RwSignal::new(intent),
             intent_profile: RwSignal::new(profile_id),
+            runtime_options: RwSignal::new(BTreeMap::new()),
+            adapter_catalog: RwSignal::new(Remote::Idle),
+            probe: RwSignal::new(None),
+            probing: RwSignal::new(false),
+            health: RwSignal::new(None),
+            health_error: RwSignal::new(None),
+            options_seq: RwSignal::new(0),
+            adapters_seq: RwSignal::new(0),
+            probe_seq: RwSignal::new(0),
+            health_seq: RwSignal::new(0),
         }
     }
 
@@ -523,34 +594,189 @@ impl PanelStore {
         });
     }
 
-    pub fn probe(&self, adapter_id: String, executable_path: String) -> impl Future<Output = Result<RuntimeProbe, String>> {
-        let client = self.client();
-        async move {
-            match client {
-                Some(client) => client.probe_runtime(&adapter_id, &executable_path).await.map_err(|error| error.to_string()),
-                None => Err("missing token".to_string()),
-            }
+    /// The model/reasoning values for one runtime, once the daemon answered.
+    ///
+    /// Entries are keyed by runtime id, so a response that arrives after the
+    /// editor moved on can never be shown under another runtime.
+    pub fn runtime_options_for(&self, runtime_id: &str) -> Option<RuntimeOptionsView> {
+        if runtime_id.is_empty() {
+            return None;
         }
+        self.runtime_options.with(|all| all.get(runtime_id).and_then(|entry| entry.state.ready().cloned()))
     }
 
-    pub fn load_adapters(&self) -> impl Future<Output = Result<Vec<String>, String>> {
-        let client = self.client();
-        async move {
-            match client {
-                Some(client) => client.adapters().await.map(|catalog| catalog.adapters).map_err(|error| error.to_string()),
-                None => Err("missing token".to_string()),
-            }
-        }
+    /// True while that runtime's model-options request is in flight.
+    pub fn runtime_options_loading(&self, runtime_id: &str) -> bool {
+        !runtime_id.is_empty()
+            && self
+                .runtime_options
+                .with(|all| all.get(runtime_id).map(|entry| entry.state.is_loading()).unwrap_or(false))
     }
 
-    pub fn runtime_options(&self, runtime_id: String) -> impl Future<Output = Result<relay_api::RuntimeOptionsView, String>> {
-        let client = self.client();
-        async move {
-            match client {
+    /// Asks for one runtime's model/reasoning values, at most one request at a
+    /// time: a Loading or Ready entry short-circuits, and a failed one is
+    /// retried only by the next explicit open of the editor.
+    ///
+    /// The request outlives the editor that asked for it: every write below
+    /// targets a PanelStore signal, never a view's.
+    pub fn ensure_runtime_options(&self, runtime_id: String) {
+        if runtime_id.is_empty() {
+            return;
+        }
+        let settled = self
+            .runtime_options
+            .with_untracked(|all| all.get(&runtime_id).map(|entry| entry.state.is_settled()).unwrap_or(false));
+        if settled {
+            return;
+        }
+        let request = self.options_seq.get_untracked() + 1;
+        self.options_seq.set(request);
+        let store = *self;
+        let id = runtime_id.clone();
+        store.runtime_options.update(|all| {
+            all.insert(id, RuntimeOptionsEntry { request, state: Remote::Loading });
+        });
+        spawn_local(async move {
+            let client = store.client.get_untracked();
+            let result = match client {
                 Some(client) => client.runtime_options(&runtime_id).await.map_err(|error| error.to_string()),
                 None => Err("missing token".to_string()),
+            };
+            store.finish_runtime_options(runtime_id, request, result);
+        });
+    }
+
+    /// The stale-response guard for ensure_runtime_options: only the request
+    /// that still owns the runtime's entry may write to it.
+    fn finish_runtime_options(&self, runtime_id: String, request: u64, result: Result<RuntimeOptionsView, String>) {
+        let owned = self
+            .runtime_options
+            .with_untracked(|all| all.get(&runtime_id).map(|entry| entry.request == request).unwrap_or(false));
+        if !owned {
+            return;
+        }
+        let state = match result {
+            Ok(options) => Remote::Ready(options),
+            Err(message) => Remote::Failed(message),
+        };
+        self.runtime_options.update(|all| {
+            all.insert(runtime_id, RuntimeOptionsEntry { request, state });
+        });
+    }
+
+    /// The adapter catalogue as a view closure sees it: reading through here
+    /// subscribes the view, so it re-renders when the list arrives.
+    pub fn adapters(&self) -> Option<Vec<String>> {
+        self.adapter_catalog.with(|state| state.ready().cloned())
+    }
+
+    /// The same value for event handlers, which must not subscribe.
+    pub fn adapters_cached(&self) -> Option<Vec<String>> {
+        self.adapter_catalog.with_untracked(|state| state.ready().cloned())
+    }
+
+    /// Fetches the adapter catalogue unless a request is in flight or a list is
+    /// already cached. A failure is retried only when the editor is opened
+    /// again: nothing reactive watches this state, so a daemon that is down
+    /// cannot turn a failure into a request loop.
+    pub fn ensure_adapters(&self) {
+        if self.adapter_catalog.with_untracked(|state| state.is_settled()) {
+            return;
+        }
+        let request = self.adapters_seq.get_untracked() + 1;
+        self.adapters_seq.set(request);
+        let store = *self;
+        store.adapter_catalog.set(Remote::Loading);
+        spawn_local(async move {
+            let client = store.client.get_untracked();
+            let result = match client {
+                Some(client) => client.adapters().await.map(|catalog| catalog.adapters).map_err(|error| error.to_string()),
+                None => Err("missing token".to_string()),
+            };
+            store.finish_adapters(request, result);
+        });
+    }
+
+    /// Stale-response guard for ensure_adapters: only the newest catalogue
+    /// request may write, so a slow failure cannot replace a newer list.
+    fn finish_adapters(&self, request: u64, result: Result<Vec<String>, String>) {
+        if self.adapters_seq.get_untracked() != request {
+            return;
+        }
+        match result {
+            Ok(list) => self.adapter_catalog.set(Remote::Ready(list)),
+            Err(message) => {
+                // The panel already has an error line; a catalogue the user
+                // asked for and did not get belongs there.
+                self.error.set(Some(message.clone()));
+                self.adapter_catalog.set(Remote::Failed(message));
             }
         }
+    }
+
+    /// Probes an executable for the runtime editor. The result and the in-flight
+    /// flag live here, so leaving the Runtimes tab mid-probe cannot write into
+    /// the editor that asked.
+    pub fn probe_runtime(&self, adapter_id: String, executable_path: String) {
+        let request = self.probe_seq.get_untracked() + 1;
+        self.probe_seq.set(request);
+        self.probing.set(true);
+        let store = *self;
+        spawn_local(async move {
+            let client = store.client.get_untracked();
+            let result = match client {
+                Some(client) => {
+                    client.probe_runtime(&adapter_id, &executable_path).await.map_err(|error| error.to_string())
+                }
+                None => Err("missing token".to_string()),
+            };
+            // A probe the user has already superseded (path edited, adapter
+            // changed, editor reopened) must not overwrite the newer answer.
+            if store.probe_seq.get_untracked() != request {
+                return;
+            }
+            let probe = match result {
+                Ok(probe) => probe,
+                Err(message) => RuntimeProbe { ok: false, version: None, error: Some(message) },
+            };
+            store.probe.set(Some(probe));
+            store.probing.set(false);
+        });
+    }
+
+    /// Drops a probe result as soon as the adapter or the path changes: it
+    /// described a different executable. Bumping the request id also orphans a
+    /// probe that is still in flight.
+    pub fn clear_probe(&self) {
+        self.probe_seq.set(self.probe_seq.get_untracked() + 1);
+        self.probe.set(None);
+        self.probing.set(false);
+    }
+
+    /// Daemon health for the Status tab. Cached on the store so a request that
+    /// is still in flight when the user leaves the tab has somewhere to land,
+    /// and request-id-guarded so an older answer cannot replace a newer one.
+    pub fn load_health(&self) {
+        let request = self.health_seq.get_untracked() + 1;
+        self.health_seq.set(request);
+        let store = *self;
+        spawn_local(async move {
+            let client = store.client.get_untracked();
+            let result = match client {
+                Some(client) => client.health().await.map_err(|error| error.to_string()),
+                None => Err("missing token".to_string()),
+            };
+            if store.health_seq.get_untracked() != request {
+                return;
+            }
+            match result {
+                Ok(health) => {
+                    store.health.set(Some(health));
+                    store.health_error.set(None);
+                }
+                Err(message) => store.health_error.set(Some(message)),
+            }
+        });
     }
 
     pub fn copy_diagnostics(&self) {

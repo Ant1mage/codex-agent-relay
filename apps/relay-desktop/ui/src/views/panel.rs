@@ -106,6 +106,12 @@ pub fn panel_app() -> AnyView {
 
             <div class="panel-body">
                 {move || store.error.get().map(|message| view! { <p class="panel-error wrap">{message}</p> })}
+                // Every arm below is a branch that is disposed the moment
+                // store.tab changes, so nothing created inside one may be
+                // written from an async continuation. Cross-await state — model
+                // options, the adapter catalogue, probe results, daemon health —
+                // lives in PanelStore, which is created once in App and outlives
+                // every branch; see PanelStore in state.rs.
                 {move || match store.tab.get() {
                     PanelTab::Agents => agents::agents_view(store).into_any(),
                     PanelTab::Runtimes => runtimes::runtimes_view(store).into_any(),

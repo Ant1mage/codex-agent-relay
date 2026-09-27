@@ -2,8 +2,6 @@
 //! origin is metadata, not a second visual hierarchy.
 
 use leptos::prelude::*;
-use leptos::task::spawn_local;
-use relay_api::RuntimeProbe;
 use relay_core::{ManualRuntime, Runtime, RuntimeHealth};
 
 use crate::components::controls::{badge, confirm_dialog, icon, select_input, text_input, text_input_with_class, Choice};
@@ -37,50 +35,28 @@ pub fn runtimes_view(store: PanelStore) -> AnyView {
 
     let editing = RwSignal::new(false);
     let draft = RwSignal::new(RuntimeDraft::blank(String::new()));
-    let adapters = RwSignal::new(Vec::<String>::new());
-    let probe = RwSignal::new(None::<RuntimeProbe>);
-    let checking = RwSignal::new(false);
     let delete_open = RwSignal::new(false);
     let delete_entry = RwSignal::new(None::<ManualRuntime>);
 
     // Tray intent: "Add runtime…" opens the editor directly.
     Effect::new(move |_| {
         if store.intent.get() == Some(PanelIntent::AddRuntime) {
-            let known = adapters.get_untracked();
-            draft.set(RuntimeDraft::blank(known.first().cloned().unwrap_or_default()));
-            probe.set(None);
-            editing.set(true);
+            open_editor(store, draft, editing);
             store.consume_intent();
         }
     });
 
-    // The adapter catalogue is fetched the first time the editor opens.
-    Effect::new(move |_| {
-        if !editing.get() || !adapters.get().is_empty() {
-            return;
-        }
-        let task = store.load_adapters();
-        spawn_local(async move {
-            match task.await {
-                Ok(list) => {
-                    adapters.set(list.clone());
-                    draft.update(|current| {
-                        if current.adapter_id.is_empty() {
-                            current.adapter_id = list.first().cloned().unwrap_or_default();
-                        }
-                    });
-                }
-                Err(_) => adapters.set(Vec::new()),
-            }
-        });
-    });
-
+    // The adapter catalogue used to be fetched by an effect that watched the
+    // very signal it wrote: on failure it reset the list to empty, which re-ran
+    // the effect and fired the next request forever. The catalogue now lives in
+    // PanelStore behind an in-flight marker, and ensure_adapters is only called
+    // when the editor opens, so a failed request is retried by the user.
     view! {
         {move || {
             if editing.get() {
-                runtime_editor(store, t, editing, draft, adapters, probe, checking).into_any()
+                runtime_editor(store, t, editing, draft).into_any()
             } else {
-                runtime_list(store, t, editing, draft, adapters, probe, delete_open, delete_entry).into_any()
+                runtime_list(store, t, editing, draft, delete_open, delete_entry).into_any()
             }
         }}
         {confirm_dialog(
@@ -98,6 +74,17 @@ pub fn runtimes_view(store: PanelStore) -> AnyView {
         )}
     }
     .into_any()
+}
+
+/// Opens the runtime editor: a fresh draft seeded from the catalogue when it is
+/// already cached, no stale probe, and a catalogue request that the store owns
+/// rather than this view.
+fn open_editor(store: PanelStore, draft: RwSignal<RuntimeDraft>, editing: RwSignal<bool>) {
+    let known = store.adapters_cached().unwrap_or_default();
+    draft.set(RuntimeDraft::blank(known.first().cloned().unwrap_or_default()));
+    store.clear_probe();
+    store.ensure_adapters();
+    editing.set(true);
 }
 
 /// Automatic and manual entries stay in one list, matched by id.
@@ -156,8 +143,6 @@ fn runtime_list(
     t: Translator,
     editing: RwSignal<bool>,
     draft: RwSignal<RuntimeDraft>,
-    adapters: RwSignal<Vec<String>>,
-    probe: RwSignal<Option<RuntimeProbe>>,
     delete_open: RwSignal<bool>,
     delete_entry: RwSignal<Option<ManualRuntime>>,
 ) -> impl IntoView {
@@ -183,15 +168,7 @@ fn runtime_list(
                 >
                     {icon("refresh", "icon icon-xs")}
                 </button>
-                <button
-                    class="btn btn-primary btn-xs"
-                    on:click=move |_| {
-                        let known = adapters.get_untracked();
-                        draft.set(RuntimeDraft::blank(known.first().cloned().unwrap_or_default()));
-                        probe.set(None);
-                        editing.set(true);
-                    }
-                >
+                <button class="btn btn-primary btn-xs" on:click=move |_| open_editor(store, draft, editing)>
                     {icon("plus", "icon icon-xs")}
                     <span>{t.t("panel.addRuntime")}</span>
                 </button>
@@ -265,7 +242,8 @@ fn runtime_list(
                                                         title=move || t.t("panel.runtime.edit")
                                                         on:click=move |_| {
                                                             if let Some(entry) = edit_entry.clone() {
-                                                                probe.set(None);
+                                                                store.clear_probe();
+                                                                store.ensure_adapters();
                                                                 draft.set(RuntimeDraft {
                                                                     id: entry.id,
                                                                     adapter_id: entry.adapter_id,
@@ -319,33 +297,33 @@ fn runtime_list(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn runtime_editor(
     store: PanelStore,
     t: Translator,
     editing: RwSignal<bool>,
     draft: RwSignal<RuntimeDraft>,
-    adapters: RwSignal<Vec<String>>,
-    probe: RwSignal<Option<RuntimeProbe>>,
-    checking: RwSignal<bool>,
 ) -> impl IntoView {
-    let adapter_choices = move || adapters.get().into_iter().map(Choice::same).collect::<Vec<Choice>>();
+    let adapter_choices =
+        move || store.adapters().unwrap_or_default().into_iter().map(Choice::same).collect::<Vec<Choice>>();
     let label_placeholder = {
         let current = draft.get_untracked();
         if current.adapter_id.is_empty() { t.t("cliInfo.runtime") } else { current.adapter_id }
     };
 
+    // The catalogue can arrive after the editor opened: seed the form with its
+    // first entry. This is a plain effect (no await), so it is disposed with the
+    // editor instead of writing into it from a detached task.
+    Effect::new(move |_| {
+        if draft.get_untracked().adapter_id.is_empty() {
+            if let Some(first) = store.adapters().and_then(|list| list.first().cloned()) {
+                draft.update(|current| current.adapter_id = first);
+            }
+        }
+    });
+
     let check = move |_| {
         let current = draft.get_untracked();
-        checking.set(true);
-        let task = store.probe(current.adapter_id, current.executable_path);
-        spawn_local(async move {
-            match task.await {
-                Ok(result) => probe.set(Some(result)),
-                Err(message) => probe.set(Some(RuntimeProbe { ok: false, version: None, error: Some(message) })),
-            }
-            checking.set(false);
-        });
+        store.probe_runtime(current.adapter_id, current.executable_path);
     };
 
     view! {
@@ -376,7 +354,7 @@ fn runtime_editor(
                         adapter_choices(),
                         move |value| {
                             draft.update(|draft| draft.adapter_id = value);
-                            probe.set(None);
+                            store.clear_probe();
                         },
                     )}
                 </div>
@@ -388,7 +366,7 @@ fn runtime_editor(
                         "mono",
                         move |value| {
                             draft.update(|draft| draft.executable_path = value);
-                            probe.set(None);
+                            store.clear_probe();
                         },
                     )}
                     <p class="field-hint wrap">{t.t("panel.runtime.pathHint")}</p>
@@ -396,7 +374,7 @@ fn runtime_editor(
             </div>
 
             {move || {
-                probe.get().map(|result| {
+                store.probe.get().map(|result| {
                     let (class, message) = if result.ok {
                         let suffix = result.version.map(|version| format!(" · {version}")).unwrap_or_default();
                         ("probe-ok", format!("{}{suffix}", t.t("panel.runtime.probeOk")))
@@ -412,12 +390,12 @@ fn runtime_editor(
                     class="btn btn-outline btn-sm"
                     disabled=move || {
                         let current = draft.get();
-                        current.adapter_id.is_empty() || current.executable_path.is_empty() || checking.get()
+                        current.adapter_id.is_empty() || current.executable_path.is_empty() || store.probing.get()
                     }
                     on:click=check
                 >
                     {icon("zap", "icon icon-xs")}
-                    <span>{move || if checking.get() { t.t("panel.runtime.checking") } else { t.t("panel.runtime.check") }}</span>
+                    <span>{move || if store.probing.get() { t.t("panel.runtime.checking") } else { t.t("panel.runtime.check") }}</span>
                 </button>
                 <button
                     class="btn btn-primary btn-sm grow"

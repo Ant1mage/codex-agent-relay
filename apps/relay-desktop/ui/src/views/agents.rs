@@ -5,8 +5,6 @@
 //! Nothing here creates a profile on its own — an empty list shows a button.
 
 use leptos::prelude::*;
-use leptos::task::spawn_local;
-use relay_api::RuntimeOptionsView;
 use relay_core::{AgentProfile, CapabilitySet, Runtime};
 
 use crate::components::controls::{badge, confirm_dialog, icon, select_input, switch, text_input, textarea, Choice};
@@ -86,35 +84,13 @@ pub fn agents_view(store: PanelStore) -> AnyView {
     let draft = RwSignal::new(AgentDraft::blank(String::new()));
     // Tracked on its own so typing a name does not refetch model options.
     let runtime_id = RwSignal::new(String::new());
-    let options = RwSignal::new(None::<RuntimeOptionsView>);
-    let options_for = RwSignal::new(String::new());
     let delete_open = RwSignal::new(false);
 
-    // Model and reasoning are whatever the CLI advertises, never an invented list.
-    Effect::new(move |_| {
-        let current = runtime_id.get();
-        if current.is_empty() {
-            options.set(None);
-            return;
-        }
-        options.set(None);
-        options_for.set(current.clone());
-        let task = store.runtime_options(current.clone());
-        spawn_local(async move {
-            match task.await {
-                Ok(loaded) => {
-                    if options_for.get_untracked() == loaded.runtime_id {
-                        options.set(Some(loaded));
-                    }
-                }
-                Err(_) => {
-                    if options_for.get_untracked() == current {
-                        options.set(None);
-                    }
-                }
-            }
-        });
-    });
+    // Model and reasoning are whatever the CLI advertises, never an invented
+    // list. The request is started where the runtime is chosen (select_runtime)
+    // instead of by an effect: an effect that watched the state it wrote is what
+    // turned one failed fetch into an endless request loop, and its async writes
+    // died with the tab branch. The result now lives in PanelStore.
 
     // The tray navigates the open panel with an intent instead of a reload.
     Effect::new(move |_| {
@@ -132,7 +108,7 @@ pub fn agents_view(store: PanelStore) -> AnyView {
                         .and_then(|config| config.profiles.into_iter().find(|profile| profile.id == id))
                 });
                 if let Some(profile) = profile {
-                    open_existing(editing, draft, runtime_id, &profile);
+                    open_existing(store, editing, draft, runtime_id, &profile);
                 }
                 store.consume_intent();
             }
@@ -143,9 +119,9 @@ pub fn agents_view(store: PanelStore) -> AnyView {
     view! {
         {move || {
             if editing.get() {
-                agent_editor(store, t, editing, draft, runtime_id, options, delete_open).into_any()
+                agent_editor(store, t, editing, draft, runtime_id, delete_open).into_any()
             } else {
-                agent_list(store, t, editing, draft, runtime_id, options, delete_open).into_any()
+                agent_list(store, t, editing, draft, runtime_id, delete_open).into_any()
             }
         }}
     }
@@ -158,6 +134,14 @@ fn runtimes_snapshot(store: PanelStore) -> Vec<Runtime> {
 
 fn runtime_name(runtimes: &[Runtime], id: &str) -> String {
     runtimes.iter().find(|runtime| runtime.id == id).map(|runtime| runtime.adapter_id.clone()).unwrap_or_else(|| id.to_string())
+}
+
+/// Points the editor at a runtime and asks PanelStore for that runtime's model
+/// and reasoning values. The request, and every signal it writes, belongs to the
+/// store, so closing the editor or switching tab mid-request is harmless.
+fn select_runtime(store: PanelStore, runtime_id: RwSignal<String>, value: String) {
+    runtime_id.set(value.clone());
+    store.ensure_runtime_options(value);
 }
 
 fn open_new(
@@ -173,18 +157,19 @@ fn open_new(
         .or_else(|| runtimes.first())
         .map(|runtime| runtime.id.clone())
         .unwrap_or_default();
-    runtime_id.set(preferred.clone());
+    select_runtime(store, runtime_id, preferred.clone());
     draft.set(AgentDraft::blank(preferred));
     editing.set(true);
 }
 
 fn open_existing(
+    store: PanelStore,
     editing: RwSignal<bool>,
     draft: RwSignal<AgentDraft>,
     runtime_id: RwSignal<String>,
     profile: &AgentProfile,
 ) {
-    runtime_id.set(profile.runtime_id.clone());
+    select_runtime(store, runtime_id, profile.runtime_id.clone());
     draft.set(AgentDraft::from_profile(profile));
     editing.set(true);
 }
@@ -195,7 +180,6 @@ fn agent_list(
     editing: RwSignal<bool>,
     draft: RwSignal<AgentDraft>,
     runtime_id: RwSignal<String>,
-    _options: RwSignal<Option<RuntimeOptionsView>>,
     _delete_open: RwSignal<bool>,
 ) -> impl IntoView {
     let profiles = move || store.config.with(|config| config.as_ref().map(|value| value.profiles.clone()).unwrap_or_default());
@@ -251,7 +235,7 @@ fn agent_list(
                                 <div class="item">
                                     <button
                                         class="item-main"
-                                        on:click=move |_| open_existing(editing, draft, runtime_id, &open_profile)
+                                        on:click=move |_| open_existing(store, editing, draft, runtime_id, &open_profile)
                                     >
                                         <span class="item-title-row">
                                             <span class="item-title truncate">{profile.name.clone()}</span>
@@ -295,7 +279,6 @@ fn agent_editor(
     editing: RwSignal<bool>,
     draft: RwSignal<AgentDraft>,
     runtime_id: RwSignal<String>,
-    options: RwSignal<Option<RuntimeOptionsView>>,
     delete_open: RwSignal<bool>,
 ) -> impl IntoView {
     // Read once when the editor opens: later snapshot updates must not rebuild
@@ -313,12 +296,17 @@ fn agent_editor(
         })
         .collect();
 
+    // The lists come from PanelStore, keyed by runtime: the editor only ever
+    // shows the options of the runtime it currently has selected, so a response
+    // that arrives after the selection moved on cannot land in this form.
+    let options = move || store.runtime_options_for(&runtime_id.get());
+
     let model_value = move || draft.get().model.unwrap_or_else(|| DEFAULT_MODEL.to_string());
     let reasoning_value = move || draft.get().reasoning.unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
     let model_choices = move || {
         let mut choices = vec![Choice::new(DEFAULT_MODEL, t.t("panel.modelAuto"))];
-        if let Some(loaded) = options.get() {
+        if let Some(loaded) = options() {
             for model in loaded.models {
                 let label = model.label.clone().unwrap_or_else(|| model.value.clone());
                 choices.push(Choice::new(model.value, label));
@@ -328,7 +316,7 @@ fn agent_editor(
     };
     let reasoning_choices = move || {
         let mut choices = vec![Choice::new(DEFAULT_MODEL, t.t("agents.runtimeDefault"))];
-        if let Some(loaded) = options.get() {
+        if let Some(loaded) = options() {
             for level in loaded.levels {
                 choices.push(Choice::new(level.value, level.label));
             }
@@ -377,7 +365,7 @@ fn agent_editor(
                         move || runtime_id.get(),
                         runtime_choices,
                         move |value| {
-                            runtime_id.set(value.clone());
+                            select_runtime(store, runtime_id, value.clone());
                             draft.update(|draft| draft.runtime_id = value);
                         },
                     )}
@@ -391,10 +379,11 @@ fn agent_editor(
                     })}
                     </div>
                     <p class="field-hint wrap">
-                        {move || match options.get() {
+                        {move || match options() {
                             Some(loaded) if !loaded.models.is_empty() => t.t("agents.modelHint"),
                             Some(_) => t.t("agents.noModelList"),
-                            None => t.t("agents.readingRuntime"),
+                            None if store.runtime_options_loading(&runtime_id.get()) => t.t("agents.readingRuntime"),
+                            None => t.t("agents.noModelList"),
                         }}
                     </p>
                 </div>
@@ -407,8 +396,7 @@ fn agent_editor(
                     })}
                     </div>
                     {move || {
-                        options
-                            .get()
+                        options()
                             .filter(|loaded| loaded.levels.is_empty())
                             .map(|_| view! { <p class="field-hint wrap">{t.t("agents.noReasoningLevels")}</p> })
                     }}
