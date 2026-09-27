@@ -73,9 +73,23 @@ pub type ParseFn = Arc<dyn Fn(&str) -> ParsedOutput + Send + Sync>;
 pub type TerminalFn = Arc<dyn Fn(&StreamOutcome) -> AdapterEvent + Send + Sync>;
 
 /// Tracks the processes this process started, so `cancel` can reach them.
+///
+/// One child is one registration, however many names it answers to: its worker
+/// session id from the moment it is spawned, plus its native session id once the
+/// CLI reports one. Because the aliases belong to the same registration, an
+/// exited child is forgotten completely — a leftover alias would let a later
+/// `terminate_all` signal a pid the OS has already handed to another process.
 #[derive(Default)]
 pub struct ProcessSupervisor {
-    processes: Mutex<HashMap<String, i32>>,
+    inner: Mutex<Registrations>,
+}
+
+#[derive(Default)]
+struct Registrations {
+    /// A worker session id or a native session id, mapped to its pid.
+    by_key: HashMap<String, i32>,
+    /// Every key that names a pid, so one exit clears all of them.
+    by_pid: HashMap<i32, Vec<String>>,
 }
 
 impl ProcessSupervisor {
@@ -84,47 +98,76 @@ impl ProcessSupervisor {
     }
 
     fn register(&self, key: &str, pid: i32) {
-        self.processes.lock().unwrap().insert(key.to_string(), pid);
+        let mut inner = self.inner.lock().unwrap();
+        inner.by_key.insert(key.to_string(), pid);
+        let keys = inner.by_pid.entry(pid).or_default();
+        if !keys.iter().any(|existing| existing == key) {
+            keys.push(key.to_string());
+        }
     }
 
     /// Registers the same process under a second key (its native session id),
     /// so cancellation reaches it under either name.
     fn rebind(&self, from: &str, to: &str) {
-        let mut processes = self.processes.lock().unwrap();
-        if let Some(pid) = processes.get(from).copied() {
-            processes.insert(to.to_string(), pid);
+        let pid = self.inner.lock().unwrap().by_key.get(from).copied();
+        if let Some(pid) = pid {
+            self.register(to, pid);
         }
     }
 
-    fn forget(&self, keys: &[String]) {
-        let mut processes = self.processes.lock().unwrap();
+    /// Forgets a process and every alias it had. Called when the child exits.
+    fn forget_process(&self, pid: i32) {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(keys) = inner.by_pid.remove(&pid) else {
+            return;
+        };
         for key in keys {
-            processes.remove(key);
+            inner.by_key.remove(&key);
         }
     }
 
-    /// SIGTERM to the worker's process group. A CLI that spawned children of its
-    /// own takes them with it.
+    /// SIGTERM to the worker's process group, and only while that process is
+    /// still there: a pid Relay no longer tracks is never signalled.
     pub fn terminate(&self, key: &str) -> bool {
-        let pid = self.processes.lock().unwrap().get(key).copied();
+        let pid = self.inner.lock().unwrap().by_key.get(key).copied();
         let Some(pid) = pid else {
             return false;
         };
+        if !process_alive(pid) {
+            self.forget_process(pid);
+            return false;
+        }
         terminate_pid(pid);
         true
     }
 
     pub fn terminate_all(&self) {
-        let pids: Vec<i32> = self.processes.lock().unwrap().values().copied().collect();
+        let pids: Vec<i32> = self.inner.lock().unwrap().by_pid.keys().copied().collect();
         for pid in pids {
-            terminate_pid(pid);
+            if process_alive(pid) {
+                terminate_pid(pid);
+            }
+            self.forget_process(pid);
         }
-        self.processes.lock().unwrap().clear();
     }
 
     pub fn is_tracked(&self, key: &str) -> bool {
-        self.processes.lock().unwrap().contains_key(key)
+        self.inner.lock().unwrap().by_key.contains_key(key)
     }
+
+    /// Every name Relay currently believes belongs to a live worker. Sorted, so a
+    /// test can assert on the whole set.
+    pub fn tracked_keys(&self) -> Vec<String> {
+        let inner = self.inner.lock().unwrap();
+        let mut keys: Vec<String> = inner.by_key.keys().cloned().collect();
+        keys.sort();
+        keys
+    }
+}
+
+fn process_alive(pid: i32) -> bool {
+    // Signal 0 only performs the permission/existence check.
+    unsafe { libc::kill(pid, 0) == 0 }
 }
 
 fn terminate_pid(pid: i32) {
@@ -328,9 +371,13 @@ pub async fn run_cli(
             outcome.session_id = session_for_task.lock().unwrap().clone();
         }
 
+        // The child has been reaped: drop every alias before the result is
+        // announced, so no stale pid can outlive this process.
+        if let Some(pid) = pid {
+            supervisor_for_task.forget_process(pid);
+        }
         let _ = sender.send(terminal_for_task(&outcome)).await;
         drop(sender);
-        supervisor_for_task.forget(&[key]);
     });
 
     let native_session_id = if require_session {
@@ -547,5 +594,67 @@ mod tests {
         assert_eq!(event.event_type, RelayEventType::WorkerFailed);
         // The process is gone.
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    }
+
+    /// The old bug: the worker key was dropped on exit but the native session
+    /// alias was not, so a later terminate_all could signal a reused pid.
+    #[tokio::test]
+    async fn every_alias_of_a_process_is_dropped_when_it_exits() {
+        let supervisor = Arc::new(ProcessSupervisor::new());
+        let handle = run_cli(
+            spec("printf '%s\n' '{\"type\":\"session\",\"id\":\"s-alias\"}' '{\"type\":\"text\",\"text\":\"bye\"}'"),
+            StreamMode::Lines,
+            Arc::new(parse_line),
+            Arc::new(terminal),
+            Arc::clone(&supervisor),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(handle.native_session_id.as_deref(), Some("s-alias"));
+        // Both names point at the same registration while it runs.
+        assert_eq!(
+            supervisor.tracked_keys(),
+            vec!["s-alias".to_string(), "worker:test".to_string()]
+        );
+        let pid = handle.process_id.unwrap() as i32;
+
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+
+        // The exit cleared both keys ...
+        assert!(supervisor.tracked_keys().is_empty());
+        assert!(!supervisor.is_tracked("worker:test"));
+        assert!(!supervisor.is_tracked("s-alias"));
+        // ... and neither terminate nor terminate_all can reach the old pid.
+        assert!(!supervisor.terminate("worker:test"));
+        assert!(!supervisor.terminate("s-alias"));
+        supervisor.terminate_all();
+        assert!(supervisor.tracked_keys().is_empty());
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    }
+
+    /// terminate only ever touches a process Relay still tracks.
+    #[tokio::test]
+    async fn terminate_ignores_a_process_that_already_exited() {
+        let supervisor = Arc::new(ProcessSupervisor::new());
+        let handle = run_cli(
+            spec("exit 0"),
+            StreamMode::Lines,
+            Arc::new(parse_line),
+            Arc::new(terminal),
+            Arc::clone(&supervisor),
+            false,
+        )
+        .await
+        .unwrap();
+        let pid = handle.process_id.unwrap() as i32;
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+
+        assert!(!supervisor.is_tracked("worker:test"));
+        // A zombie would still answer signal 0; the child is reaped by now.
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+        assert!(!supervisor.terminate("worker:test"));
     }
 }
