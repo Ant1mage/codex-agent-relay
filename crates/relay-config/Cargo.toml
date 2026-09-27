@@ -1,0 +1,16 @@
+[package]
+name = "relay-config"
+description = "Relay's configuration file: agent profiles, policy, manual runtimes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+relay-core.workspace = true
+serde.workspace = true
+toml.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

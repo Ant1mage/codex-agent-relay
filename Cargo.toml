@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
   "crates/relay-core",
+  "crates/relay-storage",
+  "crates/relay-config",
 ]
 exclude = ["apps/relay-desktop/ui"]
 
