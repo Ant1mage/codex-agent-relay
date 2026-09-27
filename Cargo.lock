@@ -3457,7 +3457,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "relay-adapters"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "dirs 6.0.0",
@@ -3476,7 +3476,7 @@ dependencies = [
 
 [[package]]
 name = "relay-api"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -3495,7 +3495,7 @@ dependencies = [
 
 [[package]]
 name = "relay-codex"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "relay-api",
@@ -3511,7 +3511,7 @@ dependencies = [
 
 [[package]]
 name = "relay-config"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "relay-core",
  "serde",
@@ -3522,7 +3522,7 @@ dependencies = [
 
 [[package]]
 name = "relay-core"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3537,7 +3537,7 @@ dependencies = [
 
 [[package]]
 name = "relay-desktop"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "libc",
  "relay-api",
@@ -3559,7 +3559,7 @@ dependencies = [
 
 [[package]]
 name = "relay-mcp"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -3582,7 +3582,7 @@ dependencies = [
 
 [[package]]
 name = "relay-storage"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "libc",
  "relay-core",
@@ -3595,7 +3595,7 @@ dependencies = [
 
 [[package]]
 name = "relayd"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",

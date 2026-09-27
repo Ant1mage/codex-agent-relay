@@ -413,7 +413,7 @@ mod tests {
             token: "token".into(),
             nonce: "nonce".into(),
             started_at: "2026-01-01T00:00:00.000Z".into(),
-            version: "0.2.0".into(),
+            version: "0.1.0".into(),
             database: "/tmp/relay.sqlite".into(),
         }
     }
@@ -425,7 +425,7 @@ mod tests {
             nonce: nonce.into(),
             port: 7352,
             started_at: "2026-01-01T00:00:00.000Z".into(),
-            version: "0.2.0".into(),
+            version: "0.1.0".into(),
             database: "/tmp/relay.sqlite".into(),
             sessions: 0,
             runs: 0,

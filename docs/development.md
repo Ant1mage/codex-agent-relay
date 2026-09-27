@@ -1,8 +1,5 @@
 # Development
 
-Relay is Rust only: no Node.js, npm, pnpm, yarn, Bun or Deno is involved in
-building, testing, running or packaging it.
-
 ## Requirements
 
 | Tool | Why |
@@ -46,7 +43,7 @@ cargo clippy --workspace --all-targets
 cargo fmt --all
 
 (cd apps/relay-desktop/ui && cargo check --target wasm32-unknown-unknown)
-(cd apps/relay-desktop/ui && env -u NO_COLOR trunk build --release)   # → ui/dist
+(cd apps/relay-desktop/ui && trunk build --release)   # → ui/dist
 ```
 
 ## Running a development session
@@ -92,21 +89,10 @@ Useful environment variables (all optional):
 
 ## Testing
 
-```bash
-cargo test --workspace
-```
-
-Besides the unit tests, `apps/relay-mcp/tests/delegation.rs` drives the real MCP
-stdio surface end to end with fixtures for the runtime CLI and the Codex
-app-server:
-
-```text
-initialize → tools/list → list_agents → run_agent → wait_agent (result.summary)
-  → accept_agent → completed            … plus cancel and a failing worker
-```
-
-To exercise a real CLI instead of the fixture, register it as a manual runtime in
-`~/.relay/config.toml` and delegate from Codex.
+`cargo test --workspace` runs unit tests and the MCP delegation integration
+tests. `apps/relay-mcp/tests/delegation.rs` exercises the stdio tools, run
+lifecycle, and result projection with fixture CLIs. To test a real runtime,
+register it in `~/.relay/config.toml` and delegate from Codex.
 
 ## Packaging
 
@@ -134,65 +120,24 @@ maps them from `target/release` to `bin/` inside the bundle, which is why
 `cargo tauri build`. The bundle lands in
 `target/aarch64-apple-darwin/release/bundle/`.
 
-A small environment note: `trunk` reads `NO_COLOR` and only accepts `true` or
-`false`, so an exported `NO_COLOR=1` aborts it. `env -u NO_COLOR trunk build` is
-the portable invocation.
+## Release signing and updates
 
-## Signing and notarization
+The release workflow builds and signs the app and bundled executables,
+injects the Tauri updater public key, notarizes the app, and uploads the DMG and
+update feed. Hardened runtime and entitlements are configured in the project.
 
-`bundle.macOS.hardenedRuntime` and the entitlements file are already configured.
-The release workflow:
-
-1. installs `trunk` and the Tauri CLI — the macOS runner image ships cargo
-   and rustc but neither of these — then builds the UI, the daemon and the MCP
-   server,
-2. stages the updater public key and runs `cargo tauri build --config` with
-   `APPLE_SIGNING_IDENTITY` set,
-3. signs `Contents/Resources/bin/relayd` and
-   `Contents/Resources/bin/relay-mcp` explicitly — `bin/` is where
-   `bundle.resources` puts them — then re-signs the app,
-4. fails the release unless both binaries exist, are executable and answer
-   `--version`, and unless the updater archive, its `.sig` and `latest.json`
-   are present,
-5. notarizes with `xcrun notarytool` and staples the ticket,
-6. uploads the DMG, the updater archive and `latest.json` to the GitHub release.
-
-Required secrets: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
+Required CI secrets: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
 `KEYCHAIN_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_KEY_BASE64`,
 `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, `TAURI_SIGNING_PRIVATE_KEY`,
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and `TAURI_UPDATER_PUBKEY` (the public
-half of the signing key; it is not a secret, but it must reach the bundle).
-
-## Updater
-
-A packaged app can only verify an update when it carries the *public* half of
-`TAURI_SIGNING_PRIVATE_KEY`. The repository keeps `plugins.updater.pubkey`
-empty and every release injects the `TAURI_UPDATER_PUBKEY` secret as a build
-override:
-
-```bash
-cargo tauri build --target aarch64-apple-darwin \
-  --config "$RUNNER_TEMP/updater-pubkey.json"
-# {"plugins":{"updater":{"pubkey":"…"}}} — the public half, base64
-```
-
-Two guards keep an un-updatable release from shipping again. The workflow fails
-before building when the secret is empty or is not a Tauri public key, and
-`build.rs` fails when `RELAY_REQUIRE_UPDATER_PUBKEY=1` (only the release
-workflow sets it) and the merged configuration — the `TAURI_CONFIG` overlay
-Tauri passes to the build script, else `tauri.conf.json` — has no key. Local
-builds leave the variable unset and still work with an empty key, where the
-updater honestly reports itself as unsupported. `RELAY_UPDATE_FEED` overrides
-the endpoint at runtime for testing.
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and `TAURI_UPDATER_PUBKEY`. The updater
+public key is injected for release builds; local builds without it cannot verify
+updates. Set `RELAY_UPDATE_FEED` to test a different feed.
 
 ## Local state
 
-Relay deletes and recreates its own state freely — old development databases are
-not migrated:
-
-```bash
-rm -rf ~/.relay        # event log, sessions, configuration, server record
-```
-
-The schema carries a `PRAGMA user_version`; a database written by an earlier
-implementation is reset on first open rather than migrated.
+Relay stores its configuration, run history, and session data under `~/.relay`
+by default. `./scripts/dev.sh` uses `~/.relay-dev` instead. Existing databases
+with an incompatible schema are reset rather than migrated, so back up
+`relay.sqlite` before upgrading between development versions. Use a separate
+`RELAY_HOME` for disposable test runs; do not delete the default state directory
+to troubleshoot a build.

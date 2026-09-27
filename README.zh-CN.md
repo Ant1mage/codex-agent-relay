@@ -1,124 +1,89 @@
-# Relay — 面向 OpenAI Codex 的外部 Agent 运行时
+# Relay — OpenAI Codex 本地 MCP Agent 委派运行时
 
-[English](README.md) · [简体中文](README.zh-CN.md)
+[English](README.md) · 简体中文
 
 [![CI](https://github.com/Ant1mage/codex-agent-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/Ant1mage/codex-agent-relay/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Ant1mage/codex-agent-relay?label=release)](https://github.com/Ant1mage/codex-agent-relay/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Codex 决定委派什么，Relay 负责怎么运行。**
+**Codex 决定委派什么，Relay 负责启动和监管外部 Agent。**
 
-Relay 是 Codex 的本地运行时与控制平面。Codex 把一个有边界的任务交给外部编码
-Agent，Relay 负责解析运行时、执行策略、启动并监管 worker 进程，并把结果送回同
-一个 Codex 会话。
+Relay 是面向 OpenAI Codex 的本地 MCP Agent 运行时与桌面控制面板，可将编码、
+研究和代码审查任务委派给 DeepSeek Harness 等 Agent CLI。它管理 Agent 配置、
+运行时发现、权限策略、worker 进程和结果；任务规划与后续编排仍由 Codex 负责。
 
-Relay 不是另一个 AI IDE：没有编辑器、没有聊天窗口、没有自己的 agent loop。
-规划、审查与编排始终留在 Codex。
+Relay 不是 AI IDE，也不创建第二套 Agent loop；它将 Codex 与本机已有的 Agent
+运行时连接起来。
 
-## 技术栈
+## Relay 可以做什么
 
-| 层 | 实现 |
-| --- | --- |
-| Desktop | Tauri 2（Rust），仅菜单栏 |
-| UI | Leptos + Trunk → WebAssembly |
-| Relay Core | Rust（`crates/relay-core`） |
-| 守护进程（`relayd`） | Rust + Axum（HTTP/SSE） |
-| MCP server（`relay-mcp`） | Rust + rmcp（stdio） |
-| 存储 | SQLite（`rusqlite`） |
-| 配置 | TOML（`~/.relay/config.toml`） |
-| Worker 运行时 | 外部 CLI，独立进程 |
+- 为 Codex 提供 `$relay` skill 和 MCP 工具，用于委派范围明确的任务。
+- 在本机启动并监管外部 Agent CLI。
+- 通过可复用的 Agent 配置保存模型、推理强度和能力设置。
+- 为只读、建议和写入任务应用工作区及会话策略。
+- 在本地 inspector 和控制面板中查看运行状态、worker 输出和文件变更。
 
-整个仓库不含 Node.js、Electron、Chromium、npm 或 Vite —— 运行时和构建时都没有。
+## 项目状态
 
-## 当前 MVP
+当前版本为 **v0.1.0**。已验证的端到端组合是
+**Apple 芯片 Mac + Codex + DeepSeek Harness**。Relay 使用
+Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
 
-已验证的端到端链路是 **macOS + Codex + DeepSeek**：
-
-| | |
-| --- | --- |
-| 平台 | macOS，Apple silicon |
-| Host | Codex（CLI 或 IDE 扩展） |
-| Worker 运行时 | DeepSeek Harness（`dsh`），已安装并已登录 |
-
-Kimi、Z.ai、Antigravity 的 adapter 已在仓库中并有解析 fixture，但尚未端到端验证。
-
-## 构建与运行
-
-需要：macOS Apple silicon、Rust stable，以及用于 UI 的
-[Trunk](https://trunkrs.dev)。
-
-```bash
-cargo build --workspace                 # core、daemon、MCP server、desktop
-cargo test --workspace                  # 单元测试 + 委派端到端测试
-cargo install trunk --locked
-(cd apps/relay-desktop/ui && trunk build --release)
-
-./scripts/dev.sh                       # 调试会话：UI + daemon + 菜单栏应用
-```
-
-`./scripts/dev.sh` 会构建 Leptos UI、构建 debug 二进制，并启动菜单栏应用（daemon
-在其后运行），同时打印 inspector 与 panel 的地址。它把状态放在 `~/.relay-dev`，
-不会碰到已安装的 Relay。其余参数：`--daemon-only`、`--stop`、`--watch-ui`、`--no-ui`。
-
-```bash
-cargo run -p relayd                     # 只启动 daemon（127.0.0.1:7352）
-(cd apps/relay-desktop && cargo tauri dev)   # 菜单栏应用（自行启动 relayd）
-```
-
-`cargo tauri build` 产出 `Relay.app` 与 DMG。签名、公证等完整说明见
-[docs/development.md](docs/development.md)。
+| Agent 运行时 | CLI | Adapter | 状态 |
+| --- | --- | --- | --- |
+| DeepSeek Harness | `dsh` | `deepseek-harness` | 已支持并完成端到端验证 |
+| Kimi Code | `kimi` | `kimi-code` | 实验性，尚未完成端到端验证 |
+| Antigravity CLI | `agy` | `antigravity-cli` | 实验性，尚未完成端到端验证 |
+| Z.ai / GLM | `zai-cli` | `zai-cli` | 实验性，尚未完成端到端验证 |
 
 ## 快速开始
 
-1. **启动 Relay**：菜单栏出现图标，daemon 在其后运行。`relayd` 会打印带一次性
-   token 的 inspector 地址。
-2. **检查 Runtimes**：菜单栏 → Runtimes。检测只负责*发现* CLI，不会替你创建
-   agent。若 `dsh` 不在常见位置，可在同一页手动登记可执行文件。
-3. **创建 Agent**：控制面板 → Agents → New agent。选择 runtime、选择 CLI 自己
-   公布的模型与推理档位、设置能力，然后保存。
-4. **安装到 Codex**：控制面板 → Codex → Install。Relay 会生成本地插件
-   marketplace，把 `relay` MCP server 指向自己的 Rust 二进制，并显示五项检查。
-5. **在 Codex 中委派**。
+1. 安装并登录 Codex，以及你计划运行的 Agent CLI。
+2. 启动 Relay，在 **Runtimes** 中确认 CLI 已被发现；如有需要，可手动登记可执行文件。
+3. 在 **Agents** 中创建配置，选择运行时、模型、推理强度和能力。
+4. 在 **Codex** 页面安装 Relay 插件与 MCP 集成。
+5. 告诉 Codex 委派一个边界清晰的任务：
 
-```text
-$relay 用 DeepSeek 审查当前实现并报告潜在问题。
-```
+   ```text
+   $relay 用 DeepSeek 审查当前实现并报告潜在问题。
+   ```
+
+Codex 从 Relay 读取 worker 结果并进行审查，决定是否继续编排，再向用户整理最终答复。
 
 ## 工作方式
 
 ```text
-Codex ──$relay / MCP──► relay-mcp ──► RunController ──► adapter ──► dsh
-  ▲                          │                                       │
-  └──── result.summary ──────┘◄──────── Relay 事件流 ◄───────────────┘
-
-relayd     ──► 配置、运行时扫描、Codex 集成、HTTP/SSE
-菜单栏      ──► 状态、快捷操作、配置
-inspector  ◄── 执行状态、事件、日志
+Codex + $relay skill
+        │ MCP
+        ▼
+   relay-mcp ── 本地 HTTP ──► relayd ──► runtime adapter ──► Agent CLI
+                                  │                              │
+                                  └──── 运行事件与结果 ◄─────────┘
 ```
 
-Relay 负责运行时执行、策略、生命周期与可观测性；Codex 负责规划与审查。原生 CLI
-保留自己的 agent loop，Relay 不会重新实现一个。
+Codex 负责任务规划、委派和结果审查；Relay 负责运行时执行、策略、进程生命周期与
+本地可观测性。Agent CLI 保留自己的模型调用和内部 Agent 行为。
 
-完整架构见 [docs/architecture.md](docs/architecture.md)。
+## 构建与测试
 
-## 支持的运行时
+Relay 当前面向 Apple 芯片 Mac。源码构建需要 stable Rust、
+`wasm32-unknown-unknown` target、Trunk 和 Tauri CLI。
 
-| 运行时 | CLI | Adapter | 状态 |
-| --- | --- | --- | --- |
-| DeepSeek Harness | `dsh` | `deepseek-harness` | **支持 / MVP** |
-| Kimi Code | `kimi` | `kimi-code` | 计划中 |
-| Antigravity CLI | `agy` | `antigravity-cli` | 计划中 |
-| Z.ai / GLM | `zai-cli` | `zai-cli` | 计划中 |
+```bash
+cargo build --workspace
+cargo test --workspace
+./scripts/dev.sh
+```
 
-不同 `dsh` 版本暴露的能力不同：带 `--json` 流的版本走结构化模式，不带的走有界的
-纯文本模式。Relay 会如实报告检测到的能力，而不是假设。
+完整的桌面构建、打包和发布要求见[开发文档](docs/development.md)。
 
 ## 文档
 
-- [docs/architecture.md](docs/architecture.md) — crate、进程、数据模型、事件。
-- [docs/codex-integration.md](docs/codex-integration.md) — Relay 向 Codex 安装什么、检查与修复。
-- [docs/development.md](docs/development.md) — 构建、测试、发布、签名。
+- [架构](docs/architecture.md) — 组件、委派链路、策略与安全边界。
+- [Codex 集成](docs/codex-integration.md) — 插件、MCP 工具、安装与故障排查。
+- [开发指南](docs/development.md) — 构建、测试、运行与打包。
 
 ## 许可
 
-基于 [MIT License](LICENSE) 发布。
+MIT，详见 [LICENSE](LICENSE)。

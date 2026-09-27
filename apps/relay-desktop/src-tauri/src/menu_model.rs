@@ -1186,18 +1186,18 @@ mod tests {
 
         let mut stale = view(DaemonStatus::Running, Some(empty_menu("ready")));
         stale.daemon_version_mismatch = Some(VersionMismatch {
-            running: "0.1.0".into(),
-            app: "0.2.0".into(),
+            running: "0.0.9".into(),
+            app: "0.1.0".into(),
         });
         let items = build_menu_bar_items(&stale);
         assert!(labels(&items)
-            .contains(&"Log service is version 0.1.0 (app 0.2.0) — restart it".to_string()));
+            .contains(&"Log service is version 0.0.9 (app 0.1.0) — restart it".to_string()));
 
         // A stopped daemon never shows the mismatch line.
         let mut stopped = view(DaemonStatus::Stopped, None);
         stopped.daemon_version_mismatch = Some(VersionMismatch {
-            running: "0.1.0".into(),
-            app: "0.2.0".into(),
+            running: "0.0.9".into(),
+            app: "0.1.0".into(),
         });
         assert!(!labels(&build_menu_bar_items(&stopped))
             .iter()

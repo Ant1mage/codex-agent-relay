@@ -917,9 +917,9 @@ command = "ignored"
         assert_eq!(source.as_deref(), Some("/Users/me/.relay/codex-plugin"));
 
         let current =
-            "relay@relay  installed, enabled  0.2.0+deadbeef  /Users/me/.relay/codex-plugin\n";
+            "relay@relay  installed, enabled  0.1.0+deadbeef  /Users/me/.relay/codex-plugin\n";
         let (_, version, _) = parse_installed_plugin(current).unwrap();
-        assert_eq!(version.as_deref(), Some("0.2.0+deadbeef"));
+        assert_eq!(version.as_deref(), Some("0.1.0+deadbeef"));
         assert!(parse_installed_plugin("nothing here").is_none());
     }
 

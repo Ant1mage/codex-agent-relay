@@ -236,7 +236,7 @@ mod tests {
                 nonce: "nonce".into(),
                 port: address.port(),
                 started_at: "now".into(),
-                version: "0.2.0".into(),
+                version: "0.1.0".into(),
                 database: "/tmp/relay.sqlite".into(),
                 sessions: 0,
                 runs: 0,

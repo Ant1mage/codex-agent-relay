@@ -181,11 +181,10 @@ fn segment(value: &str) -> String {
 impl RelayMcp {
     fn invocation(
         &self,
-        arguments: Option<&serde_json::Map<String, serde_json::Value>>,
+        request_context: Option<&serde_json::Value>,
     ) -> Result<context::CodexInvocationContext, McpError> {
         let environment: Vec<(String, String)> = std::env::vars().collect();
-        let metadata = arguments.map(|arguments| serde_json::Value::Object(arguments.clone()));
-        invocation_context(metadata.as_ref(), &environment)
+        invocation_context(request_context, &environment)
             .map_err(|message| McpError::invalid_params(message, None))
     }
 
@@ -198,17 +197,37 @@ impl RelayMcp {
     async fn dispatch(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> CallToolResult {
         let arguments = request.arguments.clone();
         let name = request.name.to_string();
+        // Relay does not create isolated Git worktrees. Return a successful,
+        // explicit handoff before daemon discovery so Codex can continue the
+        // original request itself without presenting this as a failed run.
+        if name == "run_agent" && argument(arguments.as_ref(), "isolation") == Some("worktree") {
+            return payload(&serde_json::json!({
+                "status": "not_dispatched",
+                "dispatched": false,
+                "fallback": "codex",
+                "reason": "Relay cannot provide the requested worktree isolation.",
+                "requestedIsolation": "worktree",
+                "message": "No Relay run was started. Codex should take over the original task and preserve the requested isolation."
+            }));
+        }
+        // Codex can attach caller identity to MCP request metadata. Keep tool
+        // arguments too, since SessionStart supplies its session_id there.
+        let invocation_metadata = serde_json::json!({
+            "arguments": arguments,
+            "params_meta": request.meta,
+            "request_meta": context.meta,
+        });
         let client = match self.client() {
             Ok(client) => client,
             Err(message) => return failure(message),
         };
         match name.as_str() {
             "list_agents" => {
-                let invocation = match self.invocation(arguments.as_ref()) {
+                let invocation = match self.invocation(Some(&invocation_metadata)) {
                     Ok(invocation) => invocation,
                     Err(error) => return failure(error.message),
                 };
@@ -225,7 +244,7 @@ impl RelayMcp {
                 }
             }
             "run_agent" => {
-                let invocation = match self.invocation(arguments.as_ref()) {
+                let invocation = match self.invocation(Some(&invocation_metadata)) {
                     Ok(invocation) => invocation,
                     Err(error) => return failure(error.message),
                 };
@@ -382,7 +401,7 @@ impl RelayMcp {
                 }
             }
             "sync_session" => {
-                let invocation = match self.invocation(arguments.as_ref()) {
+                let invocation = match self.invocation(Some(&invocation_metadata)) {
                     Ok(invocation) => invocation,
                     Err(error) => return failure(error.message),
                 };
@@ -409,7 +428,7 @@ impl RelayMcp {
                 }
             }
             "end_session" => {
-                let invocation = match self.invocation(arguments.as_ref()) {
+                let invocation = match self.invocation(Some(&invocation_metadata)) {
                     Ok(invocation) => invocation,
                     Err(error) => return failure(error.message),
                 };

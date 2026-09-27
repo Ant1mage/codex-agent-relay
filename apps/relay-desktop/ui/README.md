@@ -1,54 +1,41 @@
-# Relay UI (Leptos + Trunk)
+# Relay Web UI
 
-One wasm bundle, two surfaces. `apps/relayd` serves the built `dist/` at `/`
-(inspector) and `/panel` (control panel), with SPA fallback to `index.html`.
+The Leptos application provides two views served by `relayd`:
 
-```
-trunk build          # debug bundle into dist/
+| Route | Purpose |
+| --- | --- |
+| `/`, `/s/<session>`, `/s/<session>/r/<run>` | Inspector for sessions, runs, events, and worker output |
+| `/panel` | Control panel for agents, runtimes, policy, and Codex integration |
+
+The UI is compiled to WebAssembly and served by the local daemon. It calls the
+daemon's HTTP API for data and receives live run updates over server-sent events.
+
+## Build
+
+From this directory:
+
+```bash
+cargo check --target wasm32-unknown-unknown
+trunk build
 trunk build --release
-trunk serve          # local dev server for the UI alone
 ```
 
-There is no Node.js, npm, pnpm, React, Vite or Tailwind anywhere in this crate:
-the stylesheet is hand-written, the icons are inline SVG and the wasm bundle is
-produced by Trunk + `wasm-bindgen`.
+Trunk writes the bundle to `dist/`. For full workspace and desktop build steps,
+see [Development](../../../docs/development.md).
 
-## Surfaces
+## Structure
 
-| Path | Surface | Notes |
-| --- | --- | --- |
-| `/`, `/s/<session>`, `/s/<session>/r/<run>` | Inspector | read-only observation of the live projection |
-| `/panel?tab=…&intent=…&lang=…&profileId=…&base=…` | Control panel | Agents, Runtimes, Policy, Codex, Status |
-
-## Bootstrap contract
-
-* The token arrives as `#t=<token>` (or `?t=<token>`), is stored in
-  `localStorage` under `relay.token`, and is stripped from the address bar with
-  `history.replaceState`.
-* Every `/api/*` request sends `Authorization: Bearer <token>` *and*
-  `?token=<token>`; the SSE URL carries `?token=` because `EventSource` cannot
-  set headers.
-* No token: the inspector shows a "missing token" card, the panel shows the
-  daemon-down message.
-* The inspector takes its language from `localStorage['relay.locale']` then
-  `navigator.language`; the panel uses `?lang=en`, anything else is `zh-CN`.
-
-## Layout
-
-```
-src/main.rs            pathname routing between the two surfaces
-src/api.rs             fetch client + SSE, ported from packages/relay-api/src/client.ts
-src/dom.rs             window/history/localStorage/matchMedia/clipboard
-src/format.rs          console formatting, ported from apps/web/src/lib/format.ts
-src/i18n.rs            en + zh-CN message catalogue (same keys as packages/i18n)
-src/state.rs           the inspector store and the panel store
-src/components/        header, session rail, run strip, console pane, controls, notice
-src/views/             inspector, panel, agents, runtimes, policy, codex, status
-styles.css             hand-written; light/dark through CSS variables and `.dark`
+```text
+src/main.rs          route selection
+src/api.rs           HTTP and server-sent events client
+src/state.rs         inspector and control-panel state
+src/views/           inspector and control-panel pages
+src/components/      shared controls and layout
+src/i18n.rs          English and Simplified Chinese strings
+src/format.rs        event and console formatting
+styles.css           theme and layout
 ```
 
-## Building for wasm without Trunk
-
-`cargo check --target wasm32-unknown-unknown` and
-`cargo build --target wasm32-unknown-unknown` both work standalone; only the
-`wasm-bindgen` glue and the `dist/` layout need Trunk.
+The daemon provides the API token to the UI. Requests authenticate with that
+token; event streams use the token in their URL because `EventSource` cannot set
+request headers.

@@ -406,9 +406,9 @@ mod tests {
         assert_eq!(
             en.tv(
                 key::MENU_DAEMON_STALE,
-                &[("running", "0.1.0"), ("app", "0.2.0")]
+                &[("running", "0.0.9"), ("app", "0.1.0")]
             ),
-            "Log service is version 0.1.0 (app 0.2.0) — restart it"
+            "Log service is version 0.0.9 (app 0.1.0) — restart it"
         );
         // An unknown key renders as itself rather than panicking.
         assert_eq!(en.t("menu.unknown"), "menu.unknown");

@@ -157,7 +157,7 @@ mod tests {
             generated_at: relay_core::now(),
         };
         let report = build_diagnostics_report(&DiagnosticsInput {
-            app_version: "0.2.0",
+            app_version: "0.1.0",
             runtime_version: "1.98.1",
             platform: "macos",
             arch: "aarch64",
@@ -168,7 +168,7 @@ mod tests {
         });
         assert!(report.starts_with("Relay diagnostics\n"));
         assert!(report.contains("Generated: 2026-01-01T00:00:00.000Z"));
-        assert!(report.contains("Relay 0.2.0 · Rust 1.98.1 · macos aarch64"));
+        assert!(report.contains("Relay 0.1.0 · Rust 1.98.1 · macos aarch64"));
         assert!(report.contains("Runtimes: 0"));
         assert!(report.contains("(none detected)"));
         assert!(report.contains("- dsh was not found"));

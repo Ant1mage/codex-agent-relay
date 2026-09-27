@@ -388,6 +388,7 @@ impl RunController {
             host_session_id: Some(&request.host_session_id),
         });
         assert_policy_allows(policy, &request, &profile)?;
+        self.assert_worktree_isolation_available(&request)?;
         self.assert_concurrency(
             &request,
             policy.max_concurrent_runs,
@@ -558,6 +559,7 @@ impl RunController {
             host_session_id: Some(&request.host_session_id),
         });
         assert_policy_allows(policy, &request, &profile)?;
+        self.assert_worktree_isolation_available(&request)?;
         self.assert_concurrency(
             &request,
             policy.max_concurrent_runs,
@@ -751,10 +753,7 @@ impl RunController {
         request: &RunRequest,
         require_worktree: bool,
     ) -> Result<()> {
-        if !require_worktree
-            || !request.access_mode.is_write()
-            || request.isolation == Isolation::Worktree
-        {
+        if !require_worktree || !request.access_mode.is_write() {
             return Ok(());
         }
         let workspace = normalize_path(&request.cwd);
@@ -769,6 +768,16 @@ impl RunController {
             return Err(RelayError::new(
                 "WORKSPACE_CONFLICT",
                 format!("Run {run_id} is already writing to {workspace}"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn assert_worktree_isolation_available(&self, request: &RunRequest) -> Result<()> {
+        if request.access_mode.is_write() && request.isolation == Isolation::Worktree {
+            return Err(RelayError::new(
+                "WORKTREE_ISOLATION_UNAVAILABLE",
+                "Worktree isolation is not implemented yet; refusing to run this write in the shared workspace",
             ));
         }
         Ok(())
@@ -1120,6 +1129,27 @@ mod tests {
 
         controller.cancel(&first.run_id).await.unwrap();
         let _ = first.completion.await;
+    }
+
+    #[tokio::test]
+    async fn refuses_worktree_writes_until_real_workspace_isolation_exists() {
+        let adapter = Arc::new(FakeAdapter::new());
+        let controller = controller_with(
+            adapter.clone(),
+            fake_runtime("fake", false),
+            fake_profile("runtime:fake"),
+        );
+        let mut request = fake_request(
+            "/tmp/project",
+            AccessMode::Write,
+            "codex:worktree-isolation",
+        );
+        request.isolation = Isolation::Worktree;
+
+        let error = controller.start(request).await.unwrap_err();
+        assert_eq!(error.code(), "WORKTREE_ISOLATION_UNAVAILABLE");
+        assert!(adapter.last_start_input.lock().unwrap().is_none());
+        assert!(controller.list_active().is_empty());
     }
 
     #[tokio::test]

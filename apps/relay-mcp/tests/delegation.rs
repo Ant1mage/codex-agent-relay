@@ -96,7 +96,7 @@ impl Daemon {
             token: "test-token".to_string(),
             nonce: "test-nonce".to_string(),
             started_at: relay_core::now(),
-            version: "0.2.0".to_string(),
+            version: "0.1.0".to_string(),
             database: home.join("relay.sqlite").display().to_string(),
         };
         let state = RelayServerState::new(RelayServerOptions {
@@ -155,14 +155,24 @@ struct McpClient {
 
 impl McpClient {
     async fn start(home: &Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_relay-mcp"))
+        Self::start_with_thread_id(home, Some("test-thread")).await
+    }
+
+    async fn start_without_thread_id(home: &Path) -> Self {
+        Self::start_with_thread_id(home, None).await
+    }
+
+    async fn start_with_thread_id(home: &Path, thread_id: Option<&str>) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_relay-mcp"));
+        command
             .env("RELAY_HOME", home)
-            .env("CODEX_THREAD_ID", "test-thread")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .expect("relay-mcp must start");
+            .stderr(Stdio::inherit());
+        if let Some(thread_id) = thread_id {
+            command.env("CODEX_THREAD_ID", thread_id);
+        }
+        let mut child = command.spawn().expect("relay-mcp must start");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         let mut client = Self {
@@ -261,6 +271,32 @@ impl McpClient {
             .await;
         assert!(response.get("error").is_none(), "{name} failed: {response}");
         response["result"].clone()
+    }
+
+    async fn call_tool_with_meta(
+        &mut self,
+        name: &str,
+        arguments: serde_json::Value,
+        meta: serde_json::Value,
+    ) -> serde_json::Value {
+        let response = self
+            .send(
+                "tools/call",
+                Some(serde_json::json!({
+                    "name": name,
+                    "arguments": arguments,
+                    "_meta": meta,
+                })),
+            )
+            .await;
+        assert!(response.get("error").is_none(), "{name} failed: {response}");
+        let result = response["result"].clone();
+        assert_ne!(
+            result.get("isError").and_then(|value| value.as_bool()),
+            Some(true),
+            "{name} returned an error: {result}"
+        );
+        result["structuredContent"]["result"].clone()
     }
 
     async fn kill(mut self) {
@@ -426,6 +462,152 @@ async fn codex_can_delegate_wait_and_accept_over_mcp() {
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].display_name, "Fixture session");
     assert_eq!(stored[0].cwd, workspace.path().display().to_string());
+}
+
+/// A bounded search-then-write delegation over MCP: the fixture's search and
+/// write calls map to `tool/search` and `tool/edit` in order, the write really
+/// lands in the run's working directory, and the reviewed result is accepted.
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_can_delegate_a_bounded_search_then_write_over_mcp() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    workspace_config(home.path(), &fixtures());
+    let daemon = Daemon::start(home.path(), workspace.path()).await;
+
+    let mut client = McpClient::start(home.path()).await;
+
+    // Dispatch a write-capable run whose task selects the fixture's probe branch.
+    let started = client
+        .call_tool(
+            "run_agent",
+            serde_json::json!({
+                "agent_id": "agent-fixture",
+                "task": "SEARCH_THEN_WRITE_PROBE find the marker and write the probe file",
+                "access_mode": "write"
+            }),
+        )
+        .await;
+    let run_id = started["runId"].as_str().unwrap().to_string();
+    let worker_id = started["workerSessionId"].as_str().unwrap().to_string();
+
+    // The worker reaches a terminal, host-reviewable state on its own.
+    let waited = client
+        .call_tool(
+            "wait_agent",
+            serde_json::json!({ "worker_session_id": worker_id }),
+        )
+        .await;
+    assert_eq!(waited["run"]["status"], "awaiting_host");
+    assert_eq!(waited["workers"][0]["status"], "completed");
+    assert_eq!(waited["result"]["summary"], "search then write complete");
+    assert_eq!(waited["lastEvent"]["type"], "run/awaiting_host");
+
+    // The event log preserves search, then edit, then the completed turn.
+    let store = SqliteEventStore::new(daemon.sqlite());
+    let events = store.list(&run_id).unwrap();
+    let types: Vec<&str> = events
+        .iter()
+        .map(|event| event.event_type.as_str())
+        .collect();
+    assert_eq!(
+        types,
+        vec![
+            "run/created",
+            "step/created",
+            "worker/started",
+            "worker/message",
+            "worker/reasoning",
+            "tool/search",
+            "tool/result",
+            "tool/edit",
+            "tool/result",
+            "worker/message",
+            "worker/message",
+            "worker/message",
+            "worker/completed",
+            "run/awaiting_host",
+        ]
+    );
+    let search = events
+        .iter()
+        .find(|event| event.event_type == relay_core::RelayEventType::ToolSearch)
+        .unwrap();
+    assert_eq!(search.data["tool"], "search_files");
+    assert_eq!(search.data["input"]["query"], "SEARCH_THEN_WRITE_PROBE");
+    let edit = events
+        .iter()
+        .find(|event| event.event_type == relay_core::RelayEventType::ToolEdit)
+        .unwrap();
+    assert_eq!(edit.data["tool"], "write_file");
+    assert_eq!(edit.data["input"]["path"], "dsh-search-write-probe.txt");
+
+    // The write really reached the run's working directory.
+    let probe = workspace.path().join("dsh-search-write-probe.txt");
+    assert_eq!(
+        std::fs::read_to_string(&probe).unwrap(),
+        "relay-search-then-write-ok\n"
+    );
+
+    // Review and accept the terminal result.
+    let accepted = client
+        .call_tool(
+            "accept_agent",
+            serde_json::json!({ "worker_session_id": worker_id }),
+        )
+        .await;
+    assert_eq!(accepted["run"]["status"], "completed");
+    assert_eq!(accepted["steps"][0]["status"], "completed");
+    assert_eq!(accepted["lastEvent"]["type"], "run/accepted");
+
+    client.shutdown().await;
+
+    // The run finishes completed with exactly one acceptance.
+    let events = store.list(&run_id).unwrap();
+    let types: Vec<&str> = events
+        .iter()
+        .map(|event| event.event_type.as_str())
+        .collect();
+    assert_eq!(*types.last().unwrap(), "run/accepted");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == relay_core::RelayEventType::RunAccepted)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_session_identity_can_come_from_mcp_request_metadata() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    workspace_config(home.path(), &fixtures());
+    let _daemon = Daemon::start(home.path(), workspace.path()).await;
+
+    let mut client = McpClient::start_without_thread_id(home.path()).await;
+    let agents = client
+        .call_tool_with_meta(
+            "list_agents",
+            serde_json::json!({}),
+            serde_json::json!({ "sessionId": "metadata-thread" }),
+        )
+        .await;
+    assert_eq!(agents[0]["id"], "agent-fixture");
+
+    let started = client
+        .call_tool_with_meta(
+            "run_agent",
+            serde_json::json!({
+                "agent_id": "agent-fixture",
+                "task": "Prove metadata identity reaches the daemon",
+                "access_mode": "read_only"
+            }),
+            serde_json::json!({ "session_id": "metadata-thread" }),
+        )
+        .await;
+    assert_eq!(started["hostSessionDisplayName"], "Fixture session");
+
+    client.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -619,6 +801,43 @@ async fn an_mcp_server_without_a_daemon_reports_it_instead_of_starting_one() {
     assert!(
         message.contains("Relay daemon is not running"),
         "unexpected message: {message}"
+    );
+
+    client.shutdown().await;
+}
+
+/// An unsupported isolation request is not a failed Relay dispatch: Codex gets
+/// an explicit successful handoff and can continue without waiting for a run.
+#[tokio::test(flavor = "multi_thread")]
+async fn worktree_request_returns_codex_takeover_without_contacting_daemon() {
+    let home = tempfile::tempdir().unwrap();
+    let mut client = McpClient::start_without_thread_id(home.path()).await;
+
+    let result = client
+        .call_tool_raw(
+            "run_agent",
+            serde_json::json!({
+                "agent_id": "researcher",
+                "task": "Inspect the requested files",
+                "access_mode": "write",
+                "isolation": "worktree"
+            }),
+        )
+        .await;
+
+    assert_ne!(
+        result.get("isError").and_then(|value| value.as_bool()),
+        Some(true)
+    );
+    let payload = &result["structuredContent"]["result"];
+    assert_eq!(payload["status"], "not_dispatched");
+    assert_eq!(payload["dispatched"], false);
+    assert_eq!(payload["fallback"], "codex");
+    assert_eq!(payload["requestedIsolation"], "worktree");
+    assert!(payload.get("workerSessionId").is_none());
+    assert!(
+        !home.path().join("server.json").exists(),
+        "the fallback must happen before daemon discovery"
     );
 
     client.shutdown().await;

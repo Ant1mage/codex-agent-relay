@@ -1,133 +1,95 @@
-# Relay — External Agent Runtime for OpenAI Codex
+# Relay — Local MCP Agent Delegation for OpenAI Codex
 
-[English](README.md) · [简体中文](README.zh-CN.md)
+[简体中文](README.zh-CN.md) · English
 
 [![CI](https://github.com/Ant1mage/codex-agent-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/Ant1mage/codex-agent-relay/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Ant1mage/codex-agent-relay?label=release)](https://github.com/Ant1mage/codex-agent-relay/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Codex decides what to delegate. Relay controls how it runs.**
+**Codex chooses what to delegate. Relay runs and supervises the external agent.**
 
-Relay is a local runtime and control plane for Codex. Codex delegates a bounded
-task to an external coding agent; Relay resolves the runtime, applies policy,
-starts and supervises the worker process, and reports the result back into the
-same Codex session.
+Relay is a local MCP agent runtime and desktop control plane for delegating
+coding, research, and review tasks from OpenAI Codex to agent CLIs such as
+DeepSeek Harness. It manages agent profiles, runtime discovery, permissions,
+worker processes, and results while keeping planning and orchestration in Codex.
 
-Relay is not another AI IDE: no editor, no chat window, no agent loop of its own.
-Planning, review and orchestration stay in Codex.
+Relay is not an AI IDE or a second agent loop. It connects Codex to the agent
+runtimes already available on your machine.
 
-## Stack
+## What Relay does
 
-| Layer | Implementation |
-| --- | --- |
-| Desktop shell | Tauri 2 (Rust), menu bar only |
-| UI | Leptos + Trunk → WebAssembly |
-| Relay Core | Rust (`crates/relay-core`) |
-| Daemon (`relayd`) | Rust + Axum (HTTP/SSE) |
-| MCP server (`relay-mcp`) | Rust + rmcp (stdio) |
-| Storage | SQLite through `rusqlite` |
-| Configuration | TOML (`~/.relay/config.toml`) |
-| Worker runtimes | External CLIs, spawned as separate processes |
+- Adds a `$relay` skill and MCP tools to Codex for bounded task delegation.
+- Runs external agent CLIs as supervised local processes.
+- Stores model, reasoning, and capability settings in reusable agent profiles.
+- Applies workspace and session policies for read-only, propose, and write tasks.
+- Tracks runs, worker output, and file changes in a local inspector and control panel.
 
-There is no Node.js, Electron, Chromium, npm or Vite anywhere — not at runtime
-and not in the build.
+## Status
 
-## Current MVP
+The current release is **v0.1.0**. The verified end-to-end setup is
+**macOS Apple silicon + Codex + DeepSeek Harness**.
+Relay itself is written in Rust, with a Tauri menu bar app and a local daemon.
 
-The verified end-to-end slice is **macOS + Codex + DeepSeek**:
-
-| | |
-| --- | --- |
-| Platform | macOS, Apple silicon |
-| Host | Codex (CLI or IDE extension) |
-| Worker runtime | DeepSeek Harness (`dsh`), installed and authenticated |
-
-Kimi, Z.ai and Antigravity adapters are in the tree with parser fixtures, but
-they have no end-to-end verification yet.
-
-## Build and run
-
-Requirements: macOS on Apple silicon, Rust (stable), and
-[Trunk](https://trunkrs.dev) for the UI.
-
-```bash
-cargo build --workspace                 # core, daemon, MCP server, desktop shell
-cargo test --workspace                  # unit tests + the delegation end-to-end test
-cargo install trunk --locked
-(cd apps/relay-desktop/ui && trunk build --release)
-
-./scripts/dev.sh                       # debug session: UI + daemon + menu bar app
-```
-
-`./scripts/dev.sh` builds the Leptos UI, builds the debug binaries and starts the
-menu bar app with the daemon behind it, printing the inspector and panel URLs. It
-keeps its state in `~/.relay-dev`, so it never touches an installed Relay.
-`--daemon-only`, `--stop`, `--watch-ui` and `--no-ui` cover the rest.
-
-```bash
-cargo run -p relayd                     # the daemon alone, on 127.0.0.1:7352
-(cd apps/relay-desktop && cargo tauri dev)   # the menu bar app (starts relayd itself)
-```
-
-`cargo tauri build` produces `Relay.app` and a DMG. Full instructions, including
-signing and notarization, are in [docs/development.md](docs/development.md).
+| Agent runtime | CLI | Adapter | Status |
+| --- | --- | --- | --- |
+| DeepSeek Harness | `dsh` | `deepseek-harness` | Supported; end-to-end verified |
+| Kimi Code | `kimi` | `kimi-code` | Experimental; not end-to-end verified |
+| Antigravity CLI | `agy` | `antigravity-cli` | Experimental; not end-to-end verified |
+| Z.ai / GLM | `zai-cli` | `zai-cli` | Experimental; not end-to-end verified |
 
 ## Quick start
 
-1. **Launch Relay.** The menu bar icon appears; the daemon runs behind it.
-   `relayd` prints the inspector URL, including a one-time token.
-2. **Check Runtimes.** Menu bar → Runtimes. Detection *finds* CLIs; it never
-   creates an agent for you. If your `dsh` lives outside the usual locations,
-   register the executable by hand in the same tab.
-3. **Create an Agent.** Control panel → Agents → New agent. Pick the runtime,
-   choose the model and reasoning values the CLI itself reports, set
-   capabilities, save.
-4. **Install into Codex.** Control panel → Codex → Install. Relay writes a local
-   plugin marketplace, registers the `relay` MCP server pointing at its own Rust
-   binary, and shows five checks.
-5. **Delegate from Codex.**
+1. Install and sign in to Codex and the agent CLI you want to run.
+2. Launch Relay. In **Runtimes**, check that Relay detects your CLI; register its
+   executable manually if needed.
+3. In **Agents**, create a profile and choose its runtime, model, reasoning level,
+   and capabilities.
+4. In **Codex**, install the Relay plugin and MCP integration.
+5. Ask Codex to delegate a bounded task:
 
-```text
-$relay use DeepSeek to review the current implementation and report potential issues.
-```
+   ```text
+   $relay Use DeepSeek to review the current implementation and report potential issues.
+   ```
+
+Codex reads the worker result from Relay for review, decides whether more work is
+needed, and writes the final response.
 
 ## How it works
 
 ```text
-Codex ──$relay / MCP──► relay-mcp ──► RunController ──► runtime adapter ──► dsh
-  ▲                          │                                                 │
-  └──── result.summary ──────┘◄──────────── Relay events ◄────────────────────┘
-
-relayd        ──► configuration, runtime scan, Codex integration, HTTP/SSE
-menu bar      ──► status, quick actions, configuration
-inspector     ◄── execution state, events, logs
+Codex + $relay skill
+        │ MCP
+        ▼
+   relay-mcp ── local HTTP ──► relayd ──► runtime adapter ──► agent CLI
+                                  │                            │
+                                  └──── run events/results ◄───┘
 ```
 
-Relay owns runtime execution, policy, lifecycle and observability. Codex owns
-planning and review. Native CLIs keep their own agent loop; Relay never
-re-implements one.
+Codex owns task planning, delegation, and result review. Relay owns runtime
+execution, policy, process lifecycle, and local observability. Agent CLIs retain
+their own model calls and internal agent behavior.
 
-Full architecture: [docs/architecture.md](docs/architecture.md).
+## Build and test
 
-## Supported runtimes
+Relay currently targets macOS on Apple silicon. Building from source requires
+stable Rust, the `wasm32-unknown-unknown` target, Trunk, and the Tauri CLI.
 
-| Runtime | CLI | Adapter | Status |
-| --- | --- | --- | --- |
-| DeepSeek Harness | `dsh` | `deepseek-harness` | **Supported / MVP** |
-| Kimi Code | `kimi` | `kimi-code` | Planned |
-| Antigravity CLI | `agy` | `antigravity-cli` | Planned |
-| Z.ai / GLM | `zai-cli` | `zai-cli` | Planned |
+```bash
+cargo build --workspace
+cargo test --workspace
+./scripts/dev.sh
+```
 
-`dsh` versions differ in what they expose: a version with a `--json` stream is
-used in structured mode, one without it in bounded plain-text mode. Relay reports
-which one it found instead of assuming.
+See [Development](docs/development.md) for desktop builds, packaging, and release
+requirements.
 
 ## Documentation
 
-- [docs/architecture.md](docs/architecture.md) — crates, processes, data model, events.
-- [docs/codex-integration.md](docs/codex-integration.md) — what Relay installs into Codex, checks, repair.
-- [docs/development.md](docs/development.md) — build, test, release, signing.
+- [Architecture](docs/architecture.md) — components, delegation flow, policy, and security.
+- [Codex integration](docs/codex-integration.md) — plugin, MCP tools, setup, and troubleshooting.
+- [Development](docs/development.md) — build, test, run, and package Relay.
 
 ## License
 
-Released under the [MIT License](LICENSE).
+MIT. See [LICENSE](LICENSE).

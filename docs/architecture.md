@@ -5,8 +5,7 @@ Relay keeps one boundary intact:
 > **Codex owns planning and orchestration. Relay owns runtime execution, policy,
 > lifecycle and observability. Native CLIs own their internal agent behavior.**
 
-Everything below follows from that split. This document describes the stable
-architecture — not a plan, and not a change history.
+Everything below follows from that split.
 
 ## 1. Responsibilities
 
@@ -185,10 +184,9 @@ copy of "progress" or "last message".
   a gap.
 - Each row keeps the normalized event and, when available, the original native
   event (bounded to 128 KiB).
-- The schema is created by a version gate in `PRAGMA user_version`. Version 1 is
-  the Rust baseline; a database written by an earlier implementation is reset
-  rather than migrated, because Relay's old development data is not something a
-  user keeps.
+- The schema is versioned with `PRAGMA user_version`. An incompatible database
+  is reset rather than migrated; back up `relay.sqlite` before upgrading across
+  schema versions.
 - The daemon pushes projections over SSE with a per-run sequence cursor; clients
   de-duplicate by `seq`, so "connect first, backfill history" neither duplicates
   nor drops events.

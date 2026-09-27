@@ -319,7 +319,7 @@ fn harness(directory: &std::path::Path) -> Harness {
         panel_root: directory.join("ui"),
         token: TOKEN.to_string(),
         port: Arc::new(AtomicU16::new(7352)),
-        version: "0.2.0".to_string(),
+        version: "0.1.0".to_string(),
         started_at: relay_core::now(),
         nonce: "nonce-1".to_string(),
         database_path: directory.join("relay.sqlite").display().to_string(),
@@ -420,7 +420,7 @@ async fn the_api_answers_with_a_token_and_refuses_without_one() {
     assert_eq!(health["ok"], true);
     assert_eq!(health["nonce"], "nonce-1");
     assert_eq!(health["port"], 7352);
-    assert_eq!(health["version"], "0.2.0");
+    assert_eq!(health["version"], "0.1.0");
     assert_eq!(health["sessions"], 0);
     assert_eq!(health["runs"], 0);
 
@@ -819,7 +819,7 @@ async fn diagnostics_are_plain_text_for_a_bug_report() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.starts_with("Relay diagnostics\n"));
-    assert!(body.contains("Relay 0.2.0"));
+    assert!(body.contains("Relay 0.1.0"));
     assert!(body.contains("Daemon: http://127.0.0.1:7352"));
     assert!(body.contains("Sessions: 0"));
 }

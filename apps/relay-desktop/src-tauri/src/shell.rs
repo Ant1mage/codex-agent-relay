@@ -794,7 +794,7 @@ mod tests {
         probe.menu = Some(menu(MenuStatus::Ready, 1));
         probe.version_mismatch = true;
         probe.running_version = Some("0.1.0".into());
-        probe.app_version = Some("0.2.0".into());
+        probe.app_version = Some("0.1.0".into());
         let view = build_view(
             Locale::ZhCn,
             DaemonStatus::Running,
@@ -813,7 +813,7 @@ mod tests {
             view.daemon_version_mismatch,
             Some(VersionMismatch {
                 running: "0.1.0".into(),
-                app: "0.2.0".into()
+                app: "0.1.0".into()
             })
         );
         assert_eq!(menu_bar_status_label(&view), "Relay · 1 个运行中");
@@ -842,7 +842,7 @@ mod tests {
             token: "token".into(),
             nonce: "nonce".into(),
             started_at: "2026-09-27T00:00:00.000Z".into(),
-            version: "0.2.0".into(),
+            version: "0.1.0".into(),
             database: "/tmp/relay.sqlite".into(),
         };
 

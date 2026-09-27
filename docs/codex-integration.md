@@ -5,8 +5,8 @@ Installing is a lifecycle with checks, not a one-time file copy: the same code
 path handles install, repair, update and removal, and every step is idempotent
 and reported individually.
 
-The MCP entry points at Relay's own Rust binary. There is no Node entry point, no
-`process.execPath`, no `ELECTRON_RUN_AS_NODE` and no Electron runtime to reach.
+The MCP server runs Relay's Rust binary over stdio and forwards tool calls to the
+local daemon.
 
 ## 1. What gets installed
 
@@ -87,6 +87,14 @@ Codex.
 | `cancel_agent` | Cancel the worker process |
 | `accept_agent` / `resume_agent` | Close a Run after review, or continue the same Step with feedback |
 | `sync_session` / `end_session` | Session registration and teardown (used by hooks) |
+
+Relay does not currently create separate Git worktrees. For any
+`run_agent` request with `isolation: "worktree"`, the MCP tool returns a
+successful `status: "not_dispatched"`, `dispatched: false`,
+`fallback: "codex"` result before contacting the daemon. No worker is created;
+Codex should take over the original task and preserve the requested isolation,
+not wait for a worker or silently retry in the shared workspace. The daemon API
+also continues to reject write/worktree requests as a fail-closed safeguard.
 
 `wait_agent` returns the projection, including `result` — the data carried by the
 terminal worker event — which is what Codex reviews before calling

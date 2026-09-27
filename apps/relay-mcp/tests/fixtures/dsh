@@ -21,6 +21,22 @@ case "$task" in
     printf '%s\n' '{"type":"error","message":"fixture failed"}'
     exit 1
     ;;
+  *SEARCH_THEN_WRITE_PROBE*)
+    # A bounded search-then-write turn: observe, write a real file into the run's
+    # working directory, then report the edit. The MCP test inspects the mapped
+    # events and the file itself.
+    printf '%s\n' '{"type":"status","phase":"turn_start","turn":1}'
+    printf '%s\n' '{"type":"thinking","text":"search for the probe marker"}'
+    printf '%s\n' '{"type":"tool_call","callId":"call-search-1","tool":"search_files","input":{"query":"SEARCH_THEN_WRITE_PROBE"}}'
+    printf '%s\n' '{"type":"tool_result","callId":"call-search-1","status":"completed","result":"1 match"}'
+    printf '%s\n' 'relay-search-then-write-ok' > ./dsh-search-write-probe.txt
+    printf '%s\n' '{"type":"tool_call","callId":"call-write-1","tool":"write_file","input":{"path":"dsh-search-write-probe.txt"}}'
+    printf '%s\n' '{"type":"tool_result","callId":"call-write-1","status":"completed","result":"written"}'
+    printf '%s\n' '{"type":"text","text":"search then write complete"}'
+    printf '%s\n' '{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}'
+    printf '%s\n' '{"type":"final","text":"search then write complete"}'
+    exit 0
+    ;;
 esac
 
 printf '%s\n' '{"type":"status","phase":"turn_start","turn":1}'
