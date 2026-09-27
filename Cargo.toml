@@ -6,6 +6,7 @@ members = [
   "crates/relay-config",
   "crates/relay-adapters",
   "crates/relay-api",
+  "crates/relay-codex",
 ]
 exclude = ["apps/relay-desktop/ui"]
 

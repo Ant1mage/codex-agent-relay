@@ -1,0 +1,21 @@
+[package]
+name = "relay-codex"
+description = "The Codex side of Relay: thread identity and the integration lifecycle."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+relay-api = { workspace = true }
+relay-config.workspace = true
+relay-core.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
