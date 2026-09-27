@@ -12,6 +12,8 @@ export interface RunProjection {
   run: Run
   steps: Step[]
   workers: WorkerSession[]
+  /** Data carried by the latest terminal worker event, for host review. */
+  result?: unknown
   lastEvent?: RelayEvent
 }
 
@@ -132,10 +134,16 @@ export function projectRun(events: RelayEvent[]): RunProjection {
   if (steps.size === 0) legacyStep()
 
   const lastEvent = events.at(-1)
+  const terminalEvent = events.findLast((event) =>
+    event.type === 'worker/completed' ||
+    event.type === 'worker/failed' ||
+    event.type === 'worker/cancelled',
+  )
   return {
     run,
     steps: [...steps.values()],
     workers: [...workers.values()],
+    ...(terminalEvent ? { result: terminalEvent.data } : {}),
     ...(lastEvent ? { lastEvent } : {}),
   }
 }

@@ -90,6 +90,7 @@ describe('RelayService', () => {
     expect(started.hostSessionDisplayName).toBe('Name shown by Codex')
     expect(projected.run.hostSessionId).toBe('codex:thread-1')
     expect(projected.run.cwd).toBe('/codex/workspace')
+    expect(projected.result).toEqual({ summary: 'done' })
     expect(sessions.get('codex:thread-1')?.displayName).toBe('Name shown by Codex')
 
     expect((await service.listAgents({ threadId: 'thread-1' })).map((item) => item.id)).toEqual([

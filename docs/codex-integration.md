@@ -12,7 +12,7 @@ and reported individually.
 | **MCP server** | `relay` stdio server (agent control + session sync) | `[mcp_servers.relay]` in `~/.codex/config.toml` |
 | **Plugin** | `relay@relay`: skill + hooks + metadata | `~/.relay/codex-plugin` (a local marketplace Relay generates) |
 | **Skill** | `skills/relay/SKILL.md`, which teaches Codex to compress context into a bounded task | ships with the plugin |
-| **Hooks** | `hooks/hooks.json`: `SessionStart` → `sync_session`, `SessionEnd` → `end_session` | ships with the plugin (Codex asks you to trust hooks once) |
+| **Hooks** | `hooks/hooks.json`: `SessionStart` → `sync_session`, `SessionEnd` → a bundled Relay cleanup command | ships with the plugin (Codex asks you to trust hooks once) |
 
 The MCP entry points at a bundled file in a packaged Relay
 (`Contents/Resources/mcp/stdio.js`, run with the app's own binary), or at the
@@ -66,7 +66,9 @@ Codex.
   name or alias.
 - **Fallback** — `sync_session` also runs on the first MCP tool call, so
   delegation works even before hooks have been trusted.
-- **End** — the `SessionEnd` hook calls `end_session`: the session is marked ended
+- **End** — current Codex releases do not support MCP-tool handlers for `SessionEnd`,
+  so the hook runs the bundled Relay MCP entry in one-shot cleanup mode; the
+  session is marked ended without depending on a live stdio MCP connection.
   and its session-scoped policy is cleared.
 - **Resolution** — if `codex` is not on `PATH` (common with the IDE extension),
   Relay walks the known install locations before giving up.

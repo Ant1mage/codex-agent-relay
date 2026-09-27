@@ -478,8 +478,16 @@ function probeRelayHooks(): CodexCheck {
   } catch {
     return { id: 'relay-hooks', ok: false, status: 'stale', detail: 'hooks.json 无法解析', hint: '运行"修复"' }
   }
-  if (sources && readFileSync(sources.hooks, 'utf8') !== readFileSync(hooksFile, 'utf8')) {
-    return { id: 'relay-hooks', ok: false, status: 'outdated', detail: 'hooks 与当前 Relay 版本不一致', hint: '运行"更新"' }
+  if (sources) {
+    const expected = materialisedHookDocument(readFileSync(sources.hooks, 'utf8'), desiredMcpCommand())
+    const installed = readFileSync(hooksFile, 'utf8')
+    try {
+      if (JSON.stringify(JSON.parse(expected)) !== JSON.stringify(JSON.parse(installed))) {
+        return { id: 'relay-hooks', ok: false, status: 'outdated', detail: 'hooks 与当前 Relay 版本不一致', hint: '运行"更新"' }
+      }
+    } catch {
+      return { id: 'relay-hooks', ok: false, status: 'stale', detail: 'hooks.json 无法解析', hint: '运行"修复"' }
+    }
   }
   return {
     id: 'relay-hooks',
@@ -487,6 +495,30 @@ function probeRelayHooks(): CodexCheck {
     status: 'ok',
     detail: `${events.join(' / ')} · 首次使用需在 Codex 中信任`,
   }
+}
+
+/** Expands the portable hook template with this installation's MCP command. */
+export function materialisedHookDocument(source: string, desired: McpCommand): string {
+  const hookDocument = JSON.parse(source) as { hooks: Record<string, unknown> }
+  const quote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`
+  const hookCommand = [
+    ...Object.entries(desired.env ?? {}).map(([key, value]) => `${key}=${quote(value)}`),
+    quote(desired.command),
+    ...desired.args.map(quote),
+    quote('--session-end-hook'),
+  ].join(' ')
+  hookDocument.hooks.SessionEnd = [
+    {
+      hooks: [
+        {
+          type: 'command',
+          command: hookCommand,
+          timeout: 3,
+        },
+      ],
+    },
+  ]
+  return `${JSON.stringify(hookDocument, null, 2)}\n`
 }
 
 export async function codexStatus(): Promise<CodexStatus> {
@@ -558,6 +590,12 @@ function materialisePlugin(): { root: string; version: string } {
     'utf8',
   )
   cpSync(join(sources.hooks, '..'), join(plugin, 'hooks'), { recursive: true })
+  const desired = desiredMcpCommand()
+  writeFileSync(
+    join(plugin, 'hooks', 'hooks.json'),
+    materialisedHookDocument(readFileSync(sources.hooks, 'utf8'), desired),
+    'utf8',
+  )
   cpSync(join(sources.skill, '..', '..'), join(plugin, 'skills'), { recursive: true })
   return { root, version }
 }

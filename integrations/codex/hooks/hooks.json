@@ -19,16 +19,12 @@
       {
         "hooks": [
           {
-            "type": "mcp_tool",
-            "server": "relay",
-            "tool": "end_session",
-            "input": {
-              "session_id": "${session_id}"
-            }
+            "type": "command",
+            "command": "__RELAY_SESSION_END_COMMAND__",
+            "timeout": 10
           }
         ]
       }
     ]
   }
 }
-

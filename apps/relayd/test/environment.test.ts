@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { parseInstalledPlugin, parseMarketplaceRoot, readMcpEntry } from '../src/environment.js'
+import {
+  materialisedHookDocument,
+  parseInstalledPlugin,
+  parseMarketplaceRoot,
+  readMcpEntry,
+} from '../src/environment.js'
 
 describe('readMcpEntry', () => {
   it('reads command and args out of the relay table only', () => {
@@ -45,5 +50,24 @@ describe('codex CLI output parsing', () => {
   it('finds the registered marketplace root', () => {
     const output = ['MARKETPLACE  ROOT', 'openai-bundled  /tmp/bundled', 'relay  /Users/x/.relay/codex-plugin'].join('\n')
     expect(parseMarketplaceRoot(output)).toBe('/Users/x/.relay/codex-plugin')
+  })
+})
+
+describe('materialisedHookDocument', () => {
+  it('installs a one-shot SessionEnd command using the current MCP entry', () => {
+    const source = JSON.stringify({ hooks: { SessionStart: [], SessionEnd: [] } })
+    const result = JSON.parse(
+      materialisedHookDocument(source, {
+        command: "/Applications/Relay's App/Relay",
+        args: ['/Resources/mcp/stdio.js'],
+        env: { ELECTRON_RUN_AS_NODE: '1' },
+      }),
+    ) as { hooks: { SessionEnd: Array<{ hooks: Array<{ command: string; timeout: number; type: string }> }> } }
+    expect(result.hooks.SessionEnd[0]?.hooks[0]).toEqual({
+      type: 'command',
+      command:
+        "ELECTRON_RUN_AS_NODE='1' '/Applications/Relay'\"'\"'s App/Relay' '/Resources/mcp/stdio.js' '--session-end-hook'",
+      timeout: 3,
+    })
   })
 })
