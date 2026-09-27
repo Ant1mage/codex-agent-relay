@@ -1,0 +1,32 @@
+#!/bin/sh
+# A stand-in for the DeepSeek Harness CLI, so the delegation path can be tested
+# without the real (and authenticated) tool. It speaks the same headless JSON
+# stream the real `dsh --profile headless --json` does.
+for arg in "$@"; do
+  case "$arg" in
+    --version) printf 'dsh 0.0.0-fixture\n'; exit 0 ;;
+    --help) printf 'Options:\n  --json\n  --session-id <id>\n  --model <model>  Model to use: flash, pro\n  --reasoning <level>  One of: low, high\n'; exit 0 ;;
+  esac
+done
+
+task=$(cat)
+printf '%s\n' '{"type":"session","sessionId":"session-fixture","cwd":"'"$PWD"'"}'
+
+case "$task" in
+  *HANG*)
+    trap 'exit 143' TERM
+    while true; do sleep 1; done
+    ;;
+  *FAIL*)
+    printf '%s\n' '{"type":"error","message":"fixture failed"}'
+    exit 1
+    ;;
+esac
+
+printf '%s\n' '{"type":"status","phase":"turn_start","turn":1}'
+printf '%s\n' '{"type":"thinking","text":"inspect the workspace"}'
+printf '%s\n' '{"type":"tool_call","callId":"call-1","tool":"read_file","input":{"path":"README.md"}}'
+printf '%s\n' '{"type":"tool_result","callId":"call-1","status":"completed","result":"contents"}'
+printf '%s\n' '{"type":"text","text":"work complete"}'
+printf '%s\n' '{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}'
+printf '%s\n' '{"type":"final","text":"work complete"}'

@@ -1,0 +1,11 @@
+#!/bin/sh
+# A stand-in for `codex app-server --stdio`: it answers the two JSON-RPC calls
+# the thread resolver makes, so session identity works without Codex installed.
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"userAgent":"fixture"}}'
+while IFS= read -r line; do
+  case "$line" in
+    *thread/read*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"test-thread","name":"Fixture session","preview":"fixture preview","cwd":"'"${RELAY_FIXTURE_CWD:-$PWD}"'","model":"gpt-5"}}}'
+      ;;
+  esac
+done

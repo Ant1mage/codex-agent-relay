@@ -1,0 +1,30 @@
+[package]
+name = "relay-mcp"
+description = "Relay's MCP server: the tools Codex delegates through."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "relay-mcp"
+path = "src/main.rs"
+
+[dependencies]
+relay-adapters.workspace = true
+relay-codex.workspace = true
+relay-config.workspace = true
+relay-core.workspace = true
+relay-storage.workspace = true
+async-trait.workspace = true
+rmcp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+relay-storage.workspace = true
+tempfile = "3"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process", "io-util"] }
