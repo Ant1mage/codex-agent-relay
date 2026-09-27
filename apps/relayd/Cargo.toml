@@ -1,10 +1,14 @@
 [package]
 name = "relayd"
-description = "Relay's local daemon: configuration, runtime scan and the HTTP/SSE surface."
+description = "Relay's local daemon: it owns configuration, the runtime scan, the HTTP/SSE surface and every worker process."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+
+[lib]
+name = "relayd"
+path = "src/lib.rs"
 
 [[bin]]
 name = "relayd"

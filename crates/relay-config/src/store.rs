@@ -226,6 +226,9 @@ impl From<&RuntimeDocument> for ManualRuntime {
 /* Store                                                               */
 /* ------------------------------------------------------------------ */
 
+/// A path, nothing else: cloning one is how the daemon hands the same
+/// configuration to the environment service and to the execution engine.
+#[derive(Debug, Clone)]
 pub struct ConfigStore {
     path: PathBuf,
 }

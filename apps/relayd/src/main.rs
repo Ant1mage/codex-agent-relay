@@ -1,34 +1,34 @@
 //! Relay's local daemon.
 //!
-//! The daemon is Relay's control plane: it reads the event store the MCP process
-//! writes, owns Relay's configuration, runs the Codex integration lifecycle, and
-//! serves all of that to the tray and the inspector over loopback. It never
-//! starts or owns a worker, so it can be restarted at any time without touching a
-//! running delegation.
+//! The daemon is Relay: it owns Relay's configuration, the Codex integration
+//! lifecycle, the runtime scan, the event store **and execution**. Every worker
+//! process Relay starts is started here, so anything that talks to the daemon —
+//! the tray, the control panel, Codex's MCP server — sees the same runs, and a
+//! front-end that dies cannot take a running worker with it.
 //!
 //! It is deliberately a thin composition root: initialise, register, serve. No
 //! business logic lives in the route handlers.
-
-mod environment;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use relay_adapters::adapters;
 use relay_api::server_info::{
     clear_server_info, read_server_info, write_server_info, ServerInfo, DEFAULT_PORT, HOST,
 };
-use relay_api::{RelayServerState, RelayStore};
-use relay_codex::CodexIntegrationService;
+use relay_api::{RelayServerOptions, RelayServerState, RelayStore, RunService};
+use relay_codex::{CodexAppServerThreadResolver, CodexIntegrationService};
 use relay_config::{
     config_path, database_path, relay_home, relay_version, resources_dir, server_info_path,
     ConfigStore,
 };
-use relay_storage::{Database, SqliteControlQueue, SqliteEventStore, SqliteHostSessionStore};
+use relay_core::{EventStore, RunController};
+use relay_storage::{Database, SqliteEventStore, SqliteHostSessionStore};
 use std::io::Write;
 
-use crate::environment::DaemonService;
+use relayd::{shutdown, DaemonService, RelayEngine, RuntimeConfigReloader};
 
 const STARTUP_LOCK_MS: u64 = 3_000;
 const STALE_LOCK_MS: u64 = 10_000;
@@ -94,28 +94,76 @@ async fn run() -> Result<(), String> {
         Arc::new(Database::open(database_path()).map_err(|error| error.message().to_string())?);
     let events = Arc::new(SqliteEventStore::new(Arc::clone(&database)));
     let sessions = Arc::new(SqliteHostSessionStore::new(Arc::clone(&database)));
-    let commands = Arc::new(SqliteControlQueue::new(Arc::clone(&database)));
-    let store = Arc::new(RelayStore::new(events, sessions, commands));
+    let store = Arc::new(RelayStore::new(Arc::clone(&events), Arc::clone(&sessions)));
+
+    // Execution. The daemon starts and supervises every worker process Relay
+    // owns; no other process has a RunController.
+    let controller = Arc::new(RunController::new(
+        Arc::clone(&events) as Arc<dyn EventStore>
+    ));
+    for adapter in adapters() {
+        controller
+            .adapters
+            .register(adapter)
+            .map_err(|error| error.message().to_string())?;
+    }
+    let config = ConfigStore::new(config_path());
+    let reloader = Arc::new(RuntimeConfigReloader::new(
+        Arc::clone(&controller),
+        config.clone(),
+    ));
+    reloader
+        .refresh()
+        .await
+        .map_err(|error| error.message().to_string())?;
+
+    // A previous daemon may have stopped mid-run. Nothing else can finish those
+    // runs, so close them now, before the UI can show them as running.
+    match relay_storage::reconcile_stale_runs(&events) {
+        Ok(reconciliation) => {
+            if !reconciliation.resolved.is_empty() {
+                tracing::warn!(
+                    "converged {} run(s) left behind by a previous daemon: {}",
+                    reconciliation.resolved.len(),
+                    reconciliation.resolved.join(", ")
+                );
+            }
+            for diagnostic in &reconciliation.diagnostics {
+                tracing::warn!("{diagnostic}");
+            }
+        }
+        Err(error) => tracing::error!("startup reconciliation failed: {}", error.message()),
+    }
+
+    let engine = Arc::new(RelayEngine::new(
+        Arc::clone(&controller),
+        Arc::clone(&sessions) as Arc<dyn relay_core::HostSessionStore>,
+        Arc::new(CodexAppServerThreadResolver::new()),
+        Arc::clone(&reloader),
+    ));
+    let runs: Arc<dyn RunService> = engine;
+
+    let service = Arc::new(DaemonService::new(config).await);
+    store.set_environment(service.environment());
 
     let codex: Arc<dyn relay_api::CodexIntegration> = Arc::new(CodexIntegrationService::new());
-    let service = Arc::new(DaemonService::new(ConfigStore::new(config_path())).await);
-    store.set_environment(service.environment());
 
     let configured_port = parse_port();
     let port = Arc::new(AtomicU16::new(configured_port));
-    let state = RelayServerState::new(
-        Arc::clone(&store),
-        service.clone(),
-        Arc::clone(&codex),
-        web_root(),
-        panel_root(),
-        token.clone(),
-        Arc::clone(&port),
-        version.clone(),
-        started_at.clone(),
-        nonce.clone(),
-        database.path().to_string(),
-    );
+    let state = RelayServerState::new(RelayServerOptions {
+        store,
+        service: service.clone(),
+        runs,
+        codex: Arc::clone(&codex),
+        web_root: web_root(),
+        panel_root: panel_root(),
+        token: token.clone(),
+        port: Arc::clone(&port),
+        version: version.clone(),
+        started_at: started_at.clone(),
+        nonce: nonce.clone(),
+        database_path: database.path().to_string(),
+    });
 
     let (listener, bound_port) = relay_api::bind(configured_port)
         .await
@@ -150,6 +198,8 @@ async fn run() -> Result<(), String> {
     let server = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal());
     let result = server.await;
 
+    // The daemon is the parent of every worker process: they end with it.
+    shutdown(&controller).await;
     clear_server_info(&server_info_path(), std::process::id());
     let _ = std::fs::remove_file(relay_home().join("daemon.lock"));
     result.map_err(|error| error.to_string())

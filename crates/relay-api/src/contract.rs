@@ -6,8 +6,8 @@
 //! without pulling in a server.
 
 use relay_core::{
-    AgentProfile, HostSession, ManualRuntime, RelayEvent, RelayPolicy, RelayPolicyOverride, Run,
-    Runtime, RuntimeOptions, Step, WorkerSession,
+    AccessMode, AgentProfile, HostSession, Isolation, ManualRuntime, RelayEvent, RelayPolicy,
+    RelayPolicyOverride, Run, Runtime, RuntimeOptions, Step, WorkerSession,
 };
 use serde::{Deserialize, Serialize};
 
@@ -293,6 +293,89 @@ pub struct InstallResult {
 
 /// `GET /api/runtimes/:id/options`.
 pub type RuntimeOptionsView = RuntimeOptions;
+
+/// Which Codex thread (host session) one Relay call belongs to.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionContext {
+    pub thread_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+}
+
+/// The projection a host reviews after a delegation, as it crosses the wire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunProjectionView {
+    pub run: Run,
+    pub steps: Vec<Step>,
+    pub workers: Vec<WorkerSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_event: Option<RelayEvent>,
+}
+
+impl RunProjectionView {
+    pub fn from_projection(projection: &relay_core::RunProjection) -> Self {
+        Self {
+            run: projection.run.clone(),
+            steps: projection.steps.clone(),
+            workers: projection.workers.clone(),
+            result: projection.result.clone(),
+            last_event: projection.last_event.clone(),
+        }
+    }
+}
+
+/// Body of `POST /api/runs`: one delegation request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunStartBody {
+    #[serde(default)]
+    pub session: SessionContext,
+    #[serde(default)]
+    pub agent_id: String,
+    pub task: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_mode: Option<AccessMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isolation: Option<Isolation>,
+}
+
+/// Body of `POST /api/workers/:id/resume`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeBody {
+    pub feedback: String,
+}
+
+/// Body of `POST /api/workers/:id/send`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendBody {
+    pub message: String,
+}
+
+/// Answer to a start or a resume.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunStarted {
+    pub run_id: String,
+    pub worker_session_id: String,
+    #[serde(default)]
+    pub host_session_display_name: String,
+}
+
+/// Body of `POST /api/sessions/end`: ends a session the daemon never saw a call from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndSessionBody {
+    #[serde(default)]
+    pub session: SessionContext,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_session_id: Option<String>,
+}
 
 /// Body of `PUT /api/config/profiles/:id` — the same shape as a stored profile.
 pub type ProfileBody = AgentProfile;

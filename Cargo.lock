@@ -3557,11 +3557,15 @@ name = "relay-mcp"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "axum",
  "relay-adapters",
+ "relay-api",
  "relay-codex",
  "relay-config",
  "relay-core",
  "relay-storage",
+ "relayd",
+ "reqwest 0.12.28",
  "rmcp",
  "serde",
  "serde_json",
@@ -3575,6 +3579,7 @@ dependencies = [
 name = "relay-storage"
 version = "0.2.0"
 dependencies = [
+ "libc",
  "relay-core",
  "rusqlite",
  "serde_json",

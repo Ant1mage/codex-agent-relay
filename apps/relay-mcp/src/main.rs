@@ -1,23 +1,23 @@
 //! Relay's MCP server.
 //!
-//! Codex starts this process over stdio. It owns execution: the RunController,
-//! the worker processes, the event writes and the schema. Core never learns about
-//! MCP; this module only translates requests into Relay calls.
+//! Codex starts this process over stdio, and it is a protocol front-end and
+//! nothing else: it translates MCP tool calls into loopback HTTP calls on the
+//! Relay daemon. The daemon owns the RunController, the worker processes, the
+//! event writes and the schema — which is why this process can crash, restart or
+//! run beside another one without taking a running worker with it.
 //!
 //! The tool surface is deliberately generic — one tool set for every profile — so
 //! adding a runtime never changes what Codex sees.
 
-mod config_reloader;
 mod context;
-mod service;
+mod daemon;
 
-use std::sync::Arc;
-
-use relay_adapters::adapters;
-use relay_codex::CodexAppServerThreadResolver;
-use relay_config::{config_path, database_path, relay_version, ConfigStore};
-use relay_core::{AccessMode, Isolation, RunController};
-use relay_storage::{SqliteControlQueue, SqliteEventStore, SqliteHostSessionStore};
+use relay_api::{
+    CancelResult, EndSessionBody, ResumeBody, RunProjectionView, RunStartBody, RunStarted,
+    SendBody, SessionContext,
+};
+use relay_config::relay_version;
+use relay_core::{AccessMode, AgentProfile, HostSession, Isolation};
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
@@ -27,15 +27,12 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::io::stdio;
 use rmcp::{serve_server, ErrorData as McpError};
 
-use crate::config_reloader::RuntimeConfigReloader;
 use crate::context::invocation_context;
-use crate::service::{RelayService, RunAgentInput};
+use crate::daemon::DaemonClient;
 
 const INSTRUCTIONS: &str = "List agents before delegation. Give run_agent a bounded task. Use wait_agent before reviewing the result, then accept_agent or resume_agent after Codex review.";
 
-struct RelayMcp {
-    service: Arc<RelayService>,
-}
+struct RelayMcp;
 
 /// The result shape Codex already knows: the payload as text plus structured
 /// content under `result`, so `wait_agent` keeps returning `result.summary`.
@@ -47,6 +44,14 @@ fn payload(value: &serde_json::Value) -> CallToolResult {
 
 fn failure(error: impl std::fmt::Display) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(error.to_string())])
+}
+
+/// Sends a value the daemon answered with back to the host, or reports why not.
+fn payload_of<T: serde::Serialize>(value: T) -> CallToolResult {
+    match serde_json::to_value(&value) {
+        Ok(value) => payload(&value),
+        Err(error) => failure(error),
+    }
 }
 
 fn worker_schema(extra: Option<(&str, &str)>) -> serde_json::Value {
@@ -68,12 +73,13 @@ fn worker_schema(extra: Option<(&str, &str)>) -> serde_json::Value {
 }
 
 fn tool_definitions() -> Vec<Tool> {
-    let schema = |value: serde_json::Value| -> Arc<serde_json::Map<String, serde_json::Value>> {
-        match value {
-            serde_json::Value::Object(object) => Arc::new(object),
-            _ => Arc::new(serde_json::Map::new()),
-        }
-    };
+    let schema =
+        |value: serde_json::Value| -> std::sync::Arc<serde_json::Map<String, serde_json::Value>> {
+            match value {
+                serde_json::Value::Object(object) => std::sync::Arc::new(object),
+                _ => std::sync::Arc::new(serde_json::Map::new()),
+            }
+        };
     vec![
         Tool::new(
             "list_agents",
@@ -159,15 +165,34 @@ fn required_argument(
     }
 }
 
+/// Worker ids are opaque; percent-encode them so one can never change the path.
+fn segment(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect()
+}
+
 impl RelayMcp {
     fn invocation(
         &self,
         arguments: Option<&serde_json::Map<String, serde_json::Value>>,
-    ) -> Result<crate::context::CodexInvocationContext, McpError> {
+    ) -> Result<context::CodexInvocationContext, McpError> {
         let environment: Vec<(String, String)> = std::env::vars().collect();
         let metadata = arguments.map(|arguments| serde_json::Value::Object(arguments.clone()));
         invocation_context(metadata.as_ref(), &environment)
             .map_err(|message| McpError::invalid_params(message, None))
+    }
+
+    /// The daemon is discovered per call: restarting the daemon must not require
+    /// restarting Codex.
+    fn client(&self) -> Result<DaemonClient, String> {
+        DaemonClient::discover()
     }
 
     async fn dispatch(
@@ -177,18 +202,26 @@ impl RelayMcp {
     ) -> CallToolResult {
         let arguments = request.arguments.clone();
         let name = request.name.to_string();
+        let client = match self.client() {
+            Ok(client) => client,
+            Err(message) => return failure(message),
+        };
         match name.as_str() {
             "list_agents" => {
                 let invocation = match self.invocation(arguments.as_ref()) {
                     Ok(invocation) => invocation,
                     Err(error) => return failure(error.message),
                 };
-                match self.service.list_agents(&invocation).await {
-                    Ok(profiles) => match serde_json::to_value(&profiles) {
-                        Ok(value) => payload(&value),
-                        Err(error) => failure(error),
-                    },
-                    Err(error) => failure(error.message()),
+                let session = SessionContext {
+                    thread_id: invocation.thread_id,
+                    turn_id: invocation.turn_id,
+                };
+                match client
+                    .post::<Vec<AgentProfile>, _>("/api/agents", &session)
+                    .await
+                {
+                    Ok(profiles) => payload_of(profiles),
+                    Err(error) => failure(error),
                 }
             }
             "run_agent" => {
@@ -217,11 +250,14 @@ impl RelayMcp {
                     Some(other) => return failure(format!("Unknown isolation: {other}")),
                     None => None,
                 };
-                match self
-                    .service
-                    .run_agent(
-                        &invocation,
-                        RunAgentInput {
+                match client
+                    .post::<RunStarted, _>(
+                        "/api/runs",
+                        &RunStartBody {
+                            session: SessionContext {
+                                thread_id: invocation.thread_id,
+                                turn_id: invocation.turn_id,
+                            },
                             agent_id,
                             task,
                             access_mode,
@@ -230,11 +266,8 @@ impl RelayMcp {
                     )
                     .await
                 {
-                    Ok(value) => match serde_json::to_value(&value) {
-                        Ok(value) => payload(&value),
-                        Err(error) => failure(error),
-                    },
-                    Err(error) => failure(error.message()),
+                    Ok(started) => payload_of(started),
+                    Err(error) => failure(error),
                 }
             }
             "get_agent_status" => {
@@ -242,12 +275,12 @@ impl RelayMcp {
                     Ok(value) => value,
                     Err(error) => return failure(error.message),
                 };
-                match self.service.status(&worker) {
-                    Ok(projection) => match projection_payload(&projection) {
-                        Ok(value) => payload(&value),
-                        Err(error) => failure(error),
-                    },
-                    Err(error) => failure(error.message()),
+                match client
+                    .get::<RunProjectionView>(&format!("/api/workers/{}", segment(&worker)))
+                    .await
+                {
+                    Ok(projection) => payload_of(projection),
+                    Err(error) => failure(error),
                 }
             }
             "wait_agent" => {
@@ -255,12 +288,15 @@ impl RelayMcp {
                     Ok(value) => value,
                     Err(error) => return failure(error.message),
                 };
-                match self.service.wait(&worker).await {
-                    Ok(projection) => match projection_payload(&projection) {
-                        Ok(value) => payload(&value),
-                        Err(error) => failure(error),
-                    },
-                    Err(error) => failure(error.message()),
+                match client
+                    .post::<RunProjectionView, _>(
+                        &format!("/api/workers/{}/wait", segment(&worker)),
+                        &serde_json::json!({}),
+                    )
+                    .await
+                {
+                    Ok(projection) => payload_of(projection),
+                    Err(error) => failure(error),
                 }
             }
             "send_agent" => {
@@ -272,9 +308,15 @@ impl RelayMcp {
                     Ok(value) => value,
                     Err(error) => return failure(error.message),
                 };
-                match self.service.send(&worker, &message).await {
-                    Ok(()) => payload(&serde_json::json!({ "sent": true })),
-                    Err(error) => failure(error.message()),
+                match client
+                    .post::<serde_json::Value, _>(
+                        &format!("/api/workers/{}/send", segment(&worker)),
+                        &SendBody { message },
+                    )
+                    .await
+                {
+                    Ok(value) => payload(&value),
+                    Err(error) => failure(error),
                 }
             }
             "cancel_agent" => {
@@ -282,9 +324,22 @@ impl RelayMcp {
                     Ok(value) => value,
                     Err(error) => return failure(error.message),
                 };
-                match self.service.cancel(&worker).await {
-                    Ok(()) => payload(&serde_json::json!({ "cancelled": true })),
-                    Err(error) => failure(error.message()),
+                match client
+                    .post::<CancelResult, _>(
+                        &format!("/api/workers/{}/cancel", segment(&worker)),
+                        &serde_json::json!({}),
+                    )
+                    .await
+                {
+                    Ok(result) if result.accepted => {
+                        payload(&serde_json::json!({ "cancelled": true }))
+                    }
+                    Ok(result) => failure(
+                        result
+                            .message
+                            .unwrap_or_else(|| format!("Relay refused to cancel {worker}")),
+                    ),
+                    Err(error) => failure(error),
                 }
             }
             "accept_agent" => {
@@ -292,12 +347,15 @@ impl RelayMcp {
                     Ok(value) => value,
                     Err(error) => return failure(error.message),
                 };
-                match self.service.accept(&worker) {
-                    Ok(projection) => match projection_payload(&projection) {
-                        Ok(value) => payload(&value),
-                        Err(error) => failure(error),
-                    },
-                    Err(error) => failure(error.message()),
+                match client
+                    .post::<RunProjectionView, _>(
+                        &format!("/api/workers/{}/accept", segment(&worker)),
+                        &serde_json::json!({}),
+                    )
+                    .await
+                {
+                    Ok(projection) => payload_of(projection),
+                    Err(error) => failure(error),
                 }
             }
             "resume_agent" => {
@@ -309,12 +367,18 @@ impl RelayMcp {
                     Ok(value) => value,
                     Err(error) => return failure(error.message),
                 };
-                match self.service.resume(&worker, &feedback).await {
-                    Ok(value) => match serde_json::to_value(&value) {
-                        Ok(value) => payload(&value),
-                        Err(error) => failure(error),
-                    },
-                    Err(error) => failure(error.message()),
+                match client
+                    .post::<RunStarted, _>(
+                        &format!("/api/workers/{}/resume", segment(&worker)),
+                        &ResumeBody { feedback },
+                    )
+                    .await
+                {
+                    Ok(started) => payload(&serde_json::json!({
+                        "runId": started.run_id,
+                        "workerSessionId": started.worker_session_id,
+                    })),
+                    Err(error) => failure(error),
                 }
             }
             "sync_session" => {
@@ -330,12 +394,18 @@ impl RelayMcp {
                         );
                     }
                 }
-                match self.service.sync_session(&invocation).await {
-                    Ok(session) => match serde_json::to_value(&session) {
-                        Ok(value) => payload(&value),
-                        Err(error) => failure(error),
-                    },
-                    Err(error) => failure(error.message()),
+                match client
+                    .post::<HostSession, _>(
+                        "/api/sessions/sync",
+                        &SessionContext {
+                            thread_id: invocation.thread_id,
+                            turn_id: invocation.turn_id,
+                        },
+                    )
+                    .await
+                {
+                    Ok(session) => payload_of(session),
+                    Err(error) => failure(error),
                 }
             }
             "end_session" => {
@@ -350,33 +420,26 @@ impl RelayMcp {
                         );
                     }
                 }
-                match self.service.end_session(&invocation).await {
-                    Ok(()) => payload(&serde_json::json!({ "ended": true })),
-                    Err(error) => failure(error.message()),
+                match client
+                    .post::<Option<HostSession>, _>(
+                        "/api/sessions/end",
+                        &EndSessionBody {
+                            session: SessionContext {
+                                thread_id: invocation.thread_id,
+                                turn_id: invocation.turn_id,
+                            },
+                            native_session_id: None,
+                        },
+                    )
+                    .await
+                {
+                    Ok(_) => payload(&serde_json::json!({ "ended": true })),
+                    Err(error) => failure(error),
                 }
             }
             other => failure(format!("Unknown Relay tool: {other}")),
         }
     }
-}
-
-/// The projection Codex reviews: run, steps, workers, the terminal result and
-/// the last event.
-fn projection_payload(
-    projection: &relay_core::RunProjection,
-) -> Result<serde_json::Value, serde_json::Error> {
-    let mut value = serde_json::json!({
-        "run": projection.run,
-        "steps": projection.steps,
-        "workers": projection.workers,
-    });
-    if let Some(result) = &projection.result {
-        value["result"] = result.clone();
-    }
-    if let Some(last) = &projection.last_event {
-        value["lastEvent"] = serde_json::to_value(last)?;
-    }
-    Ok(value)
 }
 
 impl ServerHandler for RelayMcp {
@@ -427,7 +490,7 @@ async fn main() {
         .any(|argument| argument == "--help" || argument == "-h")
     {
         println!(
-            "relay-mcp {} — Relay's MCP server\n\nUSAGE: relay-mcp [--session-end-hook]\n\nCodex starts this process over stdio and calls its MCP tools.\n--session-end-hook marks a Codex session as ended from the SessionEnd hook.",
+            "relay-mcp {} — Relay's MCP server\n\nUSAGE: relay-mcp [--session-end-hook]\n\nCodex starts this process over stdio and calls its MCP tools. Every tool call\nis forwarded to the Relay daemon over loopback HTTP; this process never starts\nan agent CLI itself.\n--session-end-hook marks a Codex session as ended from the SessionEnd hook.",
             relay_version()
         );
         return;
@@ -466,97 +529,24 @@ async fn run_session_end_hook() -> Result<(), String> {
     let session_id = context::session_id_from_hook(&payload)
         .ok_or_else(|| "SessionEnd hook did not include a session id".to_string())?;
 
-    let database = Arc::new(
-        relay_storage::Database::open(database_path())
-            .map_err(|error| error.message().to_string())?,
-    );
-    let sessions = Arc::new(SqliteHostSessionStore::new(database));
-    let service = build_service(Arc::clone(&sessions))?;
-    service
-        .end_session_by_native_id(&session_id)
-        .map_err(|error| error.message().to_string())?;
+    let client = DaemonClient::discover()?;
+    let _: Option<HostSession> = client
+        .post(
+            "/api/sessions/end",
+            &EndSessionBody {
+                session: SessionContext::default(),
+                native_session_id: Some(session_id),
+            },
+        )
+        .await?;
     Ok(())
 }
 
-fn build_service(sessions: Arc<SqliteHostSessionStore>) -> Result<Arc<RelayService>, String> {
-    let database = Arc::new(
-        relay_storage::Database::open(database_path())
-            .map_err(|error| error.message().to_string())?,
-    );
-    let controller = Arc::new(RunController::new(Arc::new(SqliteEventStore::new(
-        Arc::clone(&database),
-    ))));
-    for adapter in adapters() {
-        controller
-            .adapters
-            .register(adapter)
-            .map_err(|error| error.message().to_string())?;
-    }
-    let reloader = Arc::new(RuntimeConfigReloader::new(
-        Arc::clone(&controller),
-        ConfigStore::new(config_path()),
-    ));
-    Ok(Arc::new(RelayService {
-        controller,
-        sessions,
-        codex_threads: Arc::new(CodexAppServerThreadResolver::new()),
-        reloader,
-    }))
-}
-
 async fn serve() -> Result<(), String> {
-    let database_path = database_path();
-    std::fs::create_dir_all(
-        database_path
-            .parent()
-            .ok_or_else(|| "invalid database path".to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-
-    let database = Arc::new(
-        relay_storage::Database::open(&database_path)
-            .map_err(|error| error.message().to_string())?,
-    );
-    let sessions = Arc::new(SqliteHostSessionStore::new(Arc::clone(&database)));
-    let commands = Arc::new(SqliteControlQueue::new(Arc::clone(&database)));
-    let service = build_service(Arc::clone(&sessions))?;
-    service
-        .reloader
-        .refresh()
-        .await
-        .map_err(|error| error.message().to_string())?;
-
-    // The daemon cannot reach a worker process, so cancellation crosses processes
-    // through the control queue.
-    let drain = {
-        let service = Arc::clone(&service);
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                let Ok(Some(command)) = commands.claim_next() else {
-                    continue;
-                };
-                if !command.is_cancel_worker() {
-                    let _ = commands.fail(&command.id, "unsupported control command");
-                    continue;
-                }
-                match service.cancel(&command.worker_session_id).await {
-                    Ok(()) => {
-                        let _ = commands.complete(&command.id);
-                    }
-                    Err(error) => {
-                        let _ = commands.fail(&command.id, error.message());
-                    }
-                }
-            }
-        })
-    };
-
-    let handler = RelayMcp { service };
+    let handler = RelayMcp;
     let running = serve_server(handler, stdio())
         .await
         .map_err(|error| error.to_string())?;
     let _ = running.waiting().await;
-    drain.abort();
     Ok(())
 }

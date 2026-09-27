@@ -11,7 +11,7 @@ use relay_core::{
     project_run, AgentProfile, EventStore, HostSessionStore, RelayEvent, RunProjection, RunStatus,
     Runtime, RuntimeHealth,
 };
-use relay_storage::{SqliteControlQueue, SqliteEventStore, SqliteHostSessionStore};
+use relay_storage::{SqliteEventStore, SqliteHostSessionStore};
 
 use crate::contract::{
     CodexStatus, EventBatch, InspectorSnapshot, MenuAgent, MenuBlocked, MenuSession, MenuStatus,
@@ -30,21 +30,15 @@ struct Cache {
 pub struct RelayStore {
     events: Arc<SqliteEventStore>,
     sessions: Arc<SqliteHostSessionStore>,
-    commands: Arc<SqliteControlQueue>,
     environment: RwLock<Environment>,
     cache: RwLock<Option<Cache>>,
 }
 
 impl RelayStore {
-    pub fn new(
-        events: Arc<SqliteEventStore>,
-        sessions: Arc<SqliteHostSessionStore>,
-        commands: Arc<SqliteControlQueue>,
-    ) -> Self {
+    pub fn new(events: Arc<SqliteEventStore>, sessions: Arc<SqliteHostSessionStore>) -> Self {
         Self {
             events,
             sessions,
-            commands,
             environment: RwLock::new(Environment::default()),
             cache: RwLock::new(None),
         }
@@ -309,29 +303,27 @@ impl RelayStore {
         }
     }
 
-    /// Appends to the queue the MCP process drains.
-    pub fn cancel_worker(&self, worker_session_id: &str) -> relay_core::Result<()> {
-        self.commands.enqueue_cancel(worker_session_id)?;
-        Ok(())
-    }
-
-    pub fn cancel_session(&self, host_session_id: &str) -> relay_core::Result<u32> {
-        let mut active = Vec::new();
-        for view in self.projected().1 {
-            if view.run.host_session_id != host_session_id {
-                continue;
-            }
-            for worker in view.workers {
-                if worker.status.is_active() {
-                    active.push(worker.id);
+    /// The two counters `/api/health` reports, read straight out of the
+    /// projection cache. Health must stay cheap: it never projects the log, never
+    /// clones the runs and never asks the Codex integration anything.
+    pub fn health_counts(&self) -> (u32, u32) {
+        let revision = self.revision();
+        {
+            let cache = self.cache.read().unwrap();
+            if let Some(cache) = cache.as_ref() {
+                if cache.revision == revision {
+                    return counts_of(&cache.sessions);
                 }
             }
         }
-        for worker_session_id in &active {
-            self.cancel_worker(worker_session_id)?;
-        }
-        Ok(active.len() as u32)
+        let (sessions, _, _) = self.projected();
+        counts_of(&sessions)
     }
+}
+
+fn counts_of(sessions: &[SessionView]) -> (u32, u32) {
+    let runs: u32 = sessions.iter().map(|view| view.runs.len() as u32).sum();
+    (sessions.len() as u32, runs)
 }
 
 /// Relay's environment state: a runtime that can run, and Codex wired up.

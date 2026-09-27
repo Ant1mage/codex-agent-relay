@@ -1,6 +1,11 @@
 //! The daemon's only listener: loopback HTTP that serves the built UI, the
 //! projection it renders, and Relay's own configuration.
 //!
+//! The daemon also owns execution: the `RunService` behind `/api/runs` is the
+//! same controller the daemon supervises, so every front-end (the control panel,
+//! the tray, and the MCP server Codex talks to) reaches workers through one
+//! process. Nothing else spawns an agent CLI.
+//!
 //! Two local-only guards protect it. The `Host` check stops DNS rebinding (a page
 //! on a public name resolving to loopback), and the `Origin` check stops other
 //! sites from reading the log through the user's browser. The token then covers
@@ -8,8 +13,8 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -19,17 +24,24 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use futures::stream::Stream;
-use relay_core::{AgentProfile, RuntimeOptions};
+use relay_core::{AgentProfile, HostSession, RuntimeOptions};
 use serde::Deserialize;
 use tokio::sync::broadcast;
 
 use crate::contract::{
-    AdapterCatalog, ApiError, CancelResult, CodexAction, CodexStatus, Health, InspectorSnapshot,
-    InstallResult, PolicyBody, ProbeBody, RefreshResult, RelayConfigView, RuntimeBody,
-    RuntimeMutation, RuntimeProbe, StreamMessage,
+    AdapterCatalog, ApiError, CancelResult, CodexAction, CodexStatus, EndSessionBody, Health,
+    InspectorSnapshot, InstallResult, PolicyBody, ProbeBody, RefreshResult, RelayConfigView,
+    ResumeBody, RunProjectionView, RunStartBody, RunStarted, RuntimeBody, RuntimeMutation,
+    RuntimeProbe, SendBody, SessionContext, StreamMessage,
 };
 use crate::diagnostics::{build_diagnostics_report, DiagnosticsInput};
 use crate::store_view::RelayStore;
+
+/// How long a Codex integration status stays valid before it is probed again.
+///
+/// `codex.status()` runs the Codex CLI, so it must never sit on the SSE tick's
+/// path. Install/repair/update/remove and an explicit refresh invalidate it.
+pub const CODEX_STATUS_TTL: Duration = Duration::from_secs(60);
 
 /// What the daemon can do that is not reading the event log.
 #[async_trait]
@@ -47,6 +59,34 @@ pub trait EnvironmentService: Send + Sync {
     fn adapter_ids(&self) -> Vec<String>;
 }
 
+/// Execution, as the daemon owns it.
+///
+/// Every method here is served by the daemon's own `RunController`. Front-ends
+/// call them; none of them creates a second execution runtime.
+#[async_trait]
+pub trait RunService: Send + Sync {
+    /// Agent Profiles usable by this host session, after a configuration refresh.
+    async fn list_agents(&self, session: &SessionContext) -> Result<Vec<AgentProfile>, String>;
+    /// Resolves and stores the host session behind a Codex thread.
+    async fn sync_session(&self, session: &SessionContext) -> Result<HostSession, String>;
+    /// Marks a host session ended and drops its temporary policy.
+    async fn end_session(&self, session: &SessionContext) -> Result<Option<HostSession>, String>;
+    /// Ends a session by its native id, for the `SessionEnd` hook.
+    async fn end_session_by_native_id(
+        &self,
+        native_session_id: &str,
+    ) -> Result<Option<HostSession>, String>;
+    async fn start(&self, body: RunStartBody) -> Result<RunStarted, String>;
+    async fn resume(&self, worker_session_id: &str, feedback: &str) -> Result<RunStarted, String>;
+    async fn status(&self, worker_session_id: &str) -> Result<RunProjectionView, String>;
+    async fn wait(&self, worker_session_id: &str) -> Result<RunProjectionView, String>;
+    async fn send(&self, worker_session_id: &str, message: &str) -> Result<(), String>;
+    async fn cancel(&self, worker_session_id: &str) -> Result<(), String>;
+    async fn accept(&self, worker_session_id: &str) -> Result<RunProjectionView, String>;
+    /// Cancels every worker a host session still has running.
+    async fn cancel_session(&self, host_session_id: &str) -> Result<u32, String>;
+}
+
 /// The Codex integration lifecycle, implemented outside the HTTP layer.
 #[async_trait]
 pub trait CodexIntegration: Send + Sync {
@@ -54,9 +94,15 @@ pub trait CodexIntegration: Send + Sync {
     async fn run(&self, action: CodexAction) -> InstallResult;
 }
 
+struct CachedCodex {
+    at: Instant,
+    status: CodexStatus,
+}
+
 pub struct RelayServerState {
     pub store: Arc<RelayStore>,
     pub service: Arc<dyn EnvironmentService>,
+    pub runs: Arc<dyn RunService>,
     pub codex: Arc<dyn CodexIntegration>,
     pub web_root: PathBuf,
     pub panel_root: PathBuf,
@@ -67,53 +113,93 @@ pub struct RelayServerState {
     pub nonce: String,
     pub database_path: String,
     pub tick: Duration,
+    /// How long a probed Codex status stays valid. Zero disables the cache.
+    pub codex_ttl: Duration,
+    codex_cache: RwLock<Option<CachedCodex>>,
     updates: broadcast::Sender<Arc<InspectorSnapshot>>,
 }
 
+/// Everything the daemon has to hand the HTTP layer.
+pub struct RelayServerOptions {
+    pub store: Arc<RelayStore>,
+    pub service: Arc<dyn EnvironmentService>,
+    pub runs: Arc<dyn RunService>,
+    pub codex: Arc<dyn CodexIntegration>,
+    pub web_root: PathBuf,
+    pub panel_root: PathBuf,
+    pub token: String,
+    pub port: Arc<AtomicU16>,
+    pub version: String,
+    pub started_at: String,
+    pub nonce: String,
+    pub database_path: String,
+}
+
 impl RelayServerState {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        store: Arc<RelayStore>,
-        service: Arc<dyn EnvironmentService>,
-        codex: Arc<dyn CodexIntegration>,
-        web_root: PathBuf,
-        panel_root: PathBuf,
-        token: String,
-        port: Arc<AtomicU16>,
-        version: String,
-        started_at: String,
-        nonce: String,
-        database_path: String,
-    ) -> Arc<Self> {
+    pub fn new(options: RelayServerOptions) -> Arc<Self> {
         let (updates, _) = broadcast::channel(64);
         Arc::new(Self {
-            store,
-            service,
-            codex,
-            web_root,
-            panel_root,
-            token,
-            port,
-            version,
-            started_at,
-            nonce,
-            database_path,
+            store: options.store,
+            service: options.service,
+            runs: options.runs,
+            codex: options.codex,
+            web_root: options.web_root,
+            panel_root: options.panel_root,
+            token: options.token,
+            port: options.port,
+            version: options.version,
+            started_at: options.started_at,
+            nonce: options.nonce,
+            database_path: options.database_path,
             tick: Duration::from_millis(400),
+            codex_ttl: CODEX_STATUS_TTL,
+            codex_cache: RwLock::new(None),
             updates,
         })
     }
 
-    /// Cheap identity of everything a client can see. Without the runtime scan
-    /// and the Codex state a client would keep rendering state that changed
-    /// elsewhere.
-    async fn stamp(&self) -> String {
-        let codex = self.codex.status().await;
+    /// The Codex status, probed at most once per TTL.
+    pub async fn codex_status(&self) -> CodexStatus {
+        if let Some(cached) = self.cached_codex() {
+            return cached;
+        }
+        let status = self.codex.status().await;
+        self.store_codex(status.clone());
+        status
+    }
+
+    fn cached_codex(&self) -> Option<CodexStatus> {
+        let guard = self.codex_cache.read().unwrap();
+        guard.as_ref().and_then(|cached| {
+            (cached.at.elapsed() < self.codex_ttl).then(|| cached.status.clone())
+        })
+    }
+
+    fn store_codex(&self, status: CodexStatus) {
+        *self.codex_cache.write().unwrap() = Some(CachedCodex {
+            at: Instant::now(),
+            status,
+        });
+    }
+
+    /// An install, repair, update, removal or an explicit refresh invalidates the
+    /// cached status; the next reader probes once and caches the answer again.
+    pub fn invalidate_codex(&self) {
+        *self.codex_cache.write().unwrap() = None;
+    }
+
+    /// Cheap identity of everything a client can see. Without the runtime scan and
+    /// the Codex state a client would keep rendering state that changed elsewhere.
+    ///
+    /// This runs on the 400 ms tick, so it only reads cached state: a Codex probe
+    /// here would spawn an external CLI five times a second.
+    fn stamp(&self) -> String {
         format!(
             "{}|{}|{:?}|{:?}",
             self.store.revision(),
             self.service.config().revision,
             self.service.environment(),
-            codex
+            self.cached_codex()
         )
     }
 
@@ -126,12 +212,14 @@ impl RelayServerState {
             if self.updates.receiver_count() == 0 {
                 continue;
             }
-            let current = self.stamp().await;
+            // Refresh the cached status at most once per TTL, before stamping.
+            let _ = self.codex_status().await;
+            let current = self.stamp();
             if current == last {
                 continue;
             }
             last = current;
-            let codex = self.codex.status().await;
+            let codex = self.codex_status().await;
             let snapshot = Arc::new(self.store.snapshot(codex));
             let _ = self.updates.send(snapshot);
         }
@@ -193,16 +281,14 @@ fn authorized(state: &RelayServerState, headers: &HeaderMap, uri: &Uri) -> bool 
 /* ------------------------------------------------------------------ */
 
 async fn snapshot_of(state: &RelayServerState) -> InspectorSnapshot {
-    state.store.snapshot(state.codex.status().await)
+    state.store.snapshot(state.codex_status().await)
 }
 
+/// `/api/health` stays cheap on purpose: identity, the counters the Status tab
+/// shows, and nothing that spawns a process. A health check must never be the
+/// reason a Codex CLI starts.
 async fn health(State(state): State<Arc<RelayServerState>>) -> Response {
-    let snapshot = snapshot_of(&state).await;
-    let runs: u32 = snapshot
-        .sessions
-        .iter()
-        .map(|session| session.runs.len() as u32)
-        .sum();
+    let (sessions, runs) = state.store.health_counts();
     Json(Health {
         ok: true,
         pid: std::process::id(),
@@ -211,7 +297,7 @@ async fn health(State(state): State<Arc<RelayServerState>>) -> Response {
         started_at: state.started_at.clone(),
         version: state.version.clone(),
         database: state.database_path.clone(),
-        sessions: snapshot.sessions.len() as u32,
+        sessions,
         runs,
     })
     .into_response()
@@ -222,7 +308,7 @@ async fn snapshot(State(state): State<Arc<RelayServerState>>) -> Response {
 }
 
 async fn menu(State(state): State<Arc<RelayServerState>>) -> Response {
-    let codex = state.codex.status().await;
+    let codex = state.codex_status().await;
     Json(state.store.menu(codex)).into_response()
 }
 
@@ -245,6 +331,13 @@ fn failed(message: impl Into<String>) -> Response {
         }),
     )
         .into_response()
+}
+
+fn from_service<T: serde::Serialize>(result: Result<T, String>) -> Response {
+    match result {
+        Ok(value) => Json(value).into_response(),
+        Err(message) => failed(message),
+    }
 }
 
 async fn save_profile(
@@ -357,11 +450,54 @@ async fn run_events(
     Json(state.store.events_for(&run_id, query.after)).into_response()
 }
 
+/* ---------------------------- execution ---------------------------- */
+
+async fn list_agents(
+    State(state): State<Arc<RelayServerState>>,
+    Json(session): Json<SessionContext>,
+) -> Response {
+    from_service(state.runs.list_agents(&session).await)
+}
+
+async fn start_run(
+    State(state): State<Arc<RelayServerState>>,
+    Json(body): Json<RunStartBody>,
+) -> Response {
+    from_service(state.runs.start(body).await)
+}
+
+async fn worker_status(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    from_service(state.runs.status(&id).await)
+}
+
+async fn wait_worker(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    from_service(state.runs.wait(&id).await)
+}
+
+async fn send_worker(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(body): Json<SendBody>,
+) -> Response {
+    match state.runs.send(&id, &body.message).await {
+        Ok(()) => Json(serde_json::json!({ "sent": true })).into_response(),
+        Err(message) => failed(message),
+    }
+}
+
+/// The worker's owner is the daemon, so cancellation is a direct call: there is
+/// no cross-process queue to route through and nothing to claim.
 async fn cancel_worker(
     State(state): State<Arc<RelayServerState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    match state.store.cancel_worker(&id) {
+    match state.runs.cancel(&id).await {
         Ok(()) => Json(CancelResult {
             accepted: true,
             count: None,
@@ -371,7 +507,7 @@ async fn cancel_worker(
         Err(error) => Json(CancelResult {
             accepted: false,
             count: None,
-            message: Some(error.message().to_string()),
+            message: Some(error),
         })
         .into_response(),
     }
@@ -381,7 +517,7 @@ async fn cancel_session(
     State(state): State<Arc<RelayServerState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    match state.store.cancel_session(&id) {
+    match state.runs.cancel_session(&id).await {
         Ok(count) => Json(CancelResult {
             accepted: true,
             count: Some(count),
@@ -391,10 +527,47 @@ async fn cancel_session(
         Err(error) => Json(CancelResult {
             accepted: false,
             count: None,
-            message: Some(error.message().to_string()),
+            message: Some(error),
         })
         .into_response(),
     }
+}
+
+async fn accept_worker(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    from_service(state.runs.accept(&id).await)
+}
+
+async fn resume_worker(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(body): Json<ResumeBody>,
+) -> Response {
+    from_service(state.runs.resume(&id, &body.feedback).await)
+}
+
+async fn sync_session(
+    State(state): State<Arc<RelayServerState>>,
+    Json(session): Json<SessionContext>,
+) -> Response {
+    from_service(state.runs.sync_session(&session).await)
+}
+
+async fn end_session(
+    State(state): State<Arc<RelayServerState>>,
+    Json(body): Json<EndSessionBody>,
+) -> Response {
+    if let Some(native_session_id) = body.native_session_id.filter(|id| !id.is_empty()) {
+        return from_service(
+            state
+                .runs
+                .end_session_by_native_id(&native_session_id)
+                .await,
+        );
+    }
+    from_service(state.runs.end_session(&body.session).await)
 }
 
 async fn codex_action(
@@ -402,13 +575,19 @@ async fn codex_action(
     AxumPath(action): AxumPath<String>,
 ) -> Response {
     match CodexAction::parse(&action) {
-        Some(action) => Json(state.codex.run(action).await).into_response(),
+        Some(action) => {
+            let result = state.codex.run(action).await;
+            // The integration just changed; the next reader probes it once.
+            state.invalidate_codex();
+            Json(result).into_response()
+        }
         None => failed(format!("Unknown Codex action: {action}")),
     }
 }
 
 async fn refresh(State(state): State<Arc<RelayServerState>>) -> Response {
     let (environment, config) = state.service.refresh().await;
+    state.invalidate_codex();
     Json(RefreshResult {
         runtimes: environment.runtimes.len() as u32,
         profiles: config.profiles.len() as u32,
@@ -592,7 +771,16 @@ pub fn router(state: Arc<RelayServerState>) -> Router {
         .route("/api/runtimes/{id}/options", get(runtime_options))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/runs/{id}/events", get(run_events))
+        .route("/api/agents", post(list_agents))
+        .route("/api/runs", post(start_run))
+        .route("/api/workers/{id}", get(worker_status))
+        .route("/api/workers/{id}/wait", post(wait_worker))
+        .route("/api/workers/{id}/send", post(send_worker))
         .route("/api/workers/{id}/cancel", post(cancel_worker))
+        .route("/api/workers/{id}/accept", post(accept_worker))
+        .route("/api/workers/{id}/resume", post(resume_worker))
+        .route("/api/sessions/sync", post(sync_session))
+        .route("/api/sessions/end", post(end_session))
         .route("/api/sessions/{id}/cancel", post(cancel_session))
         .route("/api/codex/{action}", post(codex_action))
         .route("/api/refresh", post(refresh))
@@ -699,34 +887,32 @@ mod tests {
         assert!(!authorized(&state, &headers, &uri));
     }
 
-    fn test_state() -> Arc<RelayServerState> {
-        use relay_storage::{
-            Database, SqliteControlQueue, SqliteEventStore, SqliteHostSessionStore,
-        };
+    pub(crate) fn test_state() -> Arc<RelayServerState> {
+        use relay_storage::{Database, SqliteEventStore, SqliteHostSessionStore};
         let directory = std::env::temp_dir().join(format!("relay-api-test-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let database = Arc::new(Database::open(directory.join("relay.sqlite")).unwrap());
         let store = Arc::new(RelayStore::new(
             Arc::new(SqliteEventStore::new(Arc::clone(&database))),
             Arc::new(SqliteHostSessionStore::new(Arc::clone(&database))),
-            Arc::new(SqliteControlQueue::new(database)),
         ));
-        RelayServerState::new(
+        RelayServerState::new(RelayServerOptions {
             store,
-            Arc::new(UnavailableService),
-            Arc::new(NoCodex),
-            directory.join("web"),
-            directory.join("panel"),
-            "secret".to_string(),
-            Arc::new(AtomicU16::new(7352)),
-            "0.2.0".to_string(),
-            relay_core::now(),
-            "nonce".to_string(),
-            directory.join("relay.sqlite").display().to_string(),
-        )
+            service: Arc::new(UnavailableService),
+            runs: Arc::new(UnavailableRuns),
+            codex: Arc::new(NoCodex),
+            web_root: directory.join("web"),
+            panel_root: directory.join("panel"),
+            token: "secret".to_string(),
+            port: Arc::new(AtomicU16::new(7352)),
+            version: "0.2.0".to_string(),
+            started_at: relay_core::now(),
+            nonce: "nonce".to_string(),
+            database_path: directory.join("relay.sqlite").display().to_string(),
+        })
     }
 
-    struct UnavailableService;
+    pub(crate) struct UnavailableService;
 
     #[async_trait]
     impl EnvironmentService for UnavailableService {
@@ -783,7 +969,67 @@ mod tests {
         }
     }
 
-    struct NoCodex;
+    /// A daemon without an execution engine: every run call fails loudly.
+    pub(crate) struct UnavailableRuns;
+
+    fn unavailable<T>() -> Result<T, String> {
+        Err("execution is not available in this test state".to_string())
+    }
+
+    #[async_trait]
+    impl RunService for UnavailableRuns {
+        async fn list_agents(
+            &self,
+            _session: &SessionContext,
+        ) -> Result<Vec<AgentProfile>, String> {
+            unavailable()
+        }
+        async fn sync_session(&self, _session: &SessionContext) -> Result<HostSession, String> {
+            unavailable()
+        }
+        async fn end_session(
+            &self,
+            _session: &SessionContext,
+        ) -> Result<Option<HostSession>, String> {
+            unavailable()
+        }
+        async fn end_session_by_native_id(
+            &self,
+            _native_session_id: &str,
+        ) -> Result<Option<HostSession>, String> {
+            unavailable()
+        }
+        async fn start(&self, _body: RunStartBody) -> Result<RunStarted, String> {
+            unavailable()
+        }
+        async fn resume(
+            &self,
+            _worker_session_id: &str,
+            _feedback: &str,
+        ) -> Result<RunStarted, String> {
+            unavailable()
+        }
+        async fn status(&self, _worker_session_id: &str) -> Result<RunProjectionView, String> {
+            unavailable()
+        }
+        async fn wait(&self, _worker_session_id: &str) -> Result<RunProjectionView, String> {
+            unavailable()
+        }
+        async fn send(&self, _worker_session_id: &str, _message: &str) -> Result<(), String> {
+            unavailable()
+        }
+        async fn cancel(&self, _worker_session_id: &str) -> Result<(), String> {
+            unavailable()
+        }
+        async fn accept(&self, _worker_session_id: &str) -> Result<RunProjectionView, String> {
+            unavailable()
+        }
+        async fn cancel_session(&self, _host_session_id: &str) -> Result<u32, String> {
+            unavailable()
+        }
+    }
+
+    pub(crate) struct NoCodex;
 
     #[async_trait]
     impl CodexIntegration for NoCodex {
@@ -796,5 +1042,62 @@ mod tests {
                 messages: Vec::new(),
             }
         }
+    }
+
+    struct CountingCodex {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl CodexIntegration for CountingCodex {
+        async fn status(&self) -> CodexStatus {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            CodexStatus::unknown()
+        }
+        async fn run(&self, _action: CodexAction) -> InstallResult {
+            InstallResult {
+                status: CodexStatus::unknown(),
+                messages: Vec::new(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_idle_tick_does_not_probe_the_codex_integration() {
+        use relay_storage::{Database, SqliteEventStore, SqliteHostSessionStore};
+        let directory =
+            std::env::temp_dir().join(format!("relay-tick-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let database = Arc::new(Database::open(directory.join("relay.sqlite")).unwrap());
+        let store = Arc::new(RelayStore::new(
+            Arc::new(SqliteEventStore::new(Arc::clone(&database))),
+            Arc::new(SqliteHostSessionStore::new(Arc::clone(&database))),
+        ));
+        let codex = Arc::new(CountingCodex {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let state = RelayServerState::new(RelayServerOptions {
+            store,
+            service: Arc::new(UnavailableService),
+            runs: Arc::new(UnavailableRuns),
+            codex: codex.clone(),
+            web_root: directory.join("web"),
+            panel_root: directory.join("panel"),
+            token: "secret".to_string(),
+            port: Arc::new(AtomicU16::new(7353)),
+            version: "0.2.0".to_string(),
+            started_at: relay_core::now(),
+            nonce: "nonce".to_string(),
+            database_path: directory.join("relay.sqlite").display().to_string(),
+        });
+        // 50 ticks at 400 ms is the "leave the inspector open" case.
+        for _ in 0..50 {
+            let _ = state.codex_status().await;
+        }
+        assert_eq!(
+            codex.calls.load(Ordering::SeqCst),
+            1,
+            "a cached Codex status must be reused instead of re-probed on every tick"
+        );
     }
 }

@@ -1,8 +1,8 @@
-//! Keeps the MCP process aligned with daemon-owned files and changing local CLIs.
+//! Keeps the daemon's runtime registry aligned with the configuration file.
 //!
-//! Configuration changes must not require restarting Codex: `list_agents` and
-//! `run_agent` re-read the config file and sync the differences into the
-//! registries, and policy is resolved per workspace before every run.
+//! Configuration changes must not require restarting anything: the panel writes
+//! the file, and the daemon re-reads it before each delegation so the next run
+//! sees the new profiles, runtimes and policy.
 
 use std::collections::BTreeSet;
 use std::sync::Mutex;
@@ -77,7 +77,7 @@ impl RuntimeConfigReloader {
         Ok(())
     }
 
-    /// Applies the workspace override after `run_agent`'s global refresh.
+    /// Applies the workspace override after a run's global refresh.
     pub fn apply_workspace(&self, workspace: &str) {
         let loaded = self.config.read();
         self.controller.policies.clear_workspace(workspace);

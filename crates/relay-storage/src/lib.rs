@@ -6,10 +6,14 @@
 //!
 //! The schema is the clean Rust baseline. Relay's old development database is
 //! deliberately not migrated: a file written by an earlier version is reset.
+//!
+//! Storage is a persistence plane, not a control plane: since the daemon owns
+//! every worker process there is nothing to hand between processes through the
+//! database, so no queue, claim or lease lives here.
 
-pub mod control_queue;
 pub mod event_store;
 pub mod host_sessions;
+pub mod reconcile;
 pub mod schema;
 
 use std::path::Path;
@@ -18,9 +22,9 @@ use std::sync::Mutex;
 use relay_core::{RelayError, Result};
 use rusqlite::Connection;
 
-pub use control_queue::{RelayControlCommand, SqliteControlQueue};
-pub use event_store::SqliteEventStore;
+pub use event_store::{SqliteEventStore, StaleRun};
 pub use host_sessions::{end_session, SqliteHostSessionStore};
+pub use reconcile::{reconcile_stale_runs, Reconciliation};
 
 /// One SQLite connection per process, serialised.
 ///
@@ -108,7 +112,7 @@ mod tests {
             .with(|connection| connection.query_row("PRAGMA user_version", [], |row| row.get(0)))
             .unwrap();
         assert_eq!(version, schema::SCHEMA_VERSION);
-        for table in ["relay_events", "host_sessions", "relay_control_commands"] {
+        for table in ["relay_events", "host_sessions"] {
             let found: i64 = database
                 .with(|connection| {
                     connection.query_row(
@@ -127,11 +131,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("relay.sqlite");
         {
-            // An earlier Relay kept a differently shaped table at version 2.
+            // An earlier Relay kept a differently shaped table, and a control
+            // queue the daemon no longer needs, at version 1.
             let connection = Connection::open(&path).unwrap();
             connection
                 .execute_batch(
-                    "CREATE TABLE relay_events (id TEXT, legacy_only INTEGER); PRAGMA user_version = 2;",
+                    "CREATE TABLE relay_events (id TEXT, legacy_only INTEGER);
+                     CREATE TABLE relay_control_commands (id TEXT PRIMARY KEY);
+                     PRAGMA user_version = 1;",
                 )
                 .unwrap();
         }
@@ -151,6 +158,17 @@ mod tests {
             })
             .unwrap();
         assert_eq!(columns, 0);
+        // A table only the old relay had is dropped, not left half-shaped.
+        let removed: i64 = database
+            .with(|connection| {
+                connection.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'relay_control_commands'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(removed, 0);
         // Unrelated tables are left alone.
         database
             .with(|connection| connection.execute_batch("CREATE TABLE unrelated (id TEXT);"))

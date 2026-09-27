@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use relay_core::{RelayEvent, RelayEventType, Result};
+use relay_core::{EventStore, RelayEvent, RelayEventType, Result, RunStatus, WorkerSession};
 use rusqlite::{OptionalExtension, Row};
 
 use crate::Database;
@@ -82,6 +82,82 @@ impl SqliteEventStore {
             )?;
             Ok(format!("{events}:{sessions}:{updated}"))
         })
+    }
+}
+
+/// A run the previous daemon left in progress.
+///
+/// The daemon owns every worker process, so a run whose projection is still
+/// queued/starting/running when the daemon starts up can only be a leftover: its
+/// owner is gone. Reconciliation appends the missing terminal event for it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaleRun {
+    pub run_id: String,
+    pub step_id: Option<String>,
+    /// Sequence number of the run's newest event.
+    pub last_seq: u64,
+    pub status: RunStatus,
+    pub workers: Vec<WorkerSession>,
+}
+
+/// Events that mean "this run is not in progress any more".
+const SETTLED_EVENTS: &str = "'worker/completed','worker/failed','worker/cancelled','worker/interrupted','worker/orphaned','run/awaiting_host','run/accepted'";
+
+impl SqliteEventStore {
+    /// Runs whose newest event is not a settled one.
+    ///
+    /// The SQL is a superset filter over the event index; the projection below
+    /// decides. Called once at daemon startup, never on a request path.
+    pub fn stale_runs(&self) -> Result<Vec<StaleRun>> {
+        let candidates: Vec<String> = self.database.with(|connection| {
+            let mut statement = connection.prepare(&format!(
+                "SELECT e.run_id
+                 FROM relay_events e
+                 JOIN (SELECT run_id, MAX(seq) AS max_seq FROM relay_events GROUP BY run_id) latest
+                   ON latest.run_id = e.run_id AND latest.max_seq = e.seq
+                 WHERE e.type NOT IN ({SETTLED_EVENTS})
+                 ORDER BY e.run_id ASC"
+            ))?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect()
+        })?;
+
+        let mut stale: Vec<StaleRun> = Vec::new();
+        for run_id in candidates {
+            let events = self.list(&run_id)?;
+            let Ok(projection) = relay_core::project_run(&events) else {
+                continue;
+            };
+            // A run that never reached worker/started still projects as queued,
+            // which is exactly the leftover this exists to converge.
+            if !matches!(
+                projection.run.status,
+                RunStatus::Queued | RunStatus::Starting | RunStatus::Running
+            ) {
+                continue;
+            }
+            let step_id = projection
+                .workers
+                .iter()
+                .rev()
+                .find(|worker| worker.status.is_active())
+                .map(|worker| worker.step_id.clone())
+                .or_else(|| {
+                    projection
+                        .last_event
+                        .as_ref()
+                        .and_then(|event| event.step_id.clone())
+                })
+                .or_else(|| projection.steps.first().map(|step| step.id.clone()));
+            stale.push(StaleRun {
+                run_id,
+                step_id,
+                last_seq: events.last().map(|event| event.seq).unwrap_or(0),
+                status: projection.run.status,
+                workers: projection.workers,
+            });
+        }
+        Ok(stale)
     }
 }
 

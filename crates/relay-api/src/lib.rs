@@ -20,7 +20,10 @@ pub mod store_view;
 pub use contract::*;
 
 #[cfg(feature = "server")]
-pub use server::{bind, router, CodexIntegration, EnvironmentService, RelayServerState};
+pub use server::{
+    bind, router, CodexIntegration, EnvironmentService, RelayServerOptions, RelayServerState,
+    RunService,
+};
 #[cfg(feature = "server")]
 pub use server_info::{DEFAULT_PORT, HOST, PORT_ATTEMPTS};
 #[cfg(feature = "server")]

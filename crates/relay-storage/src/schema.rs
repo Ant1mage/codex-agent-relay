@@ -1,17 +1,23 @@
 //! The schema Relay owns.
 //!
-//! Version 1 is the Rust baseline. A file carrying any other version is treated
-//! as old development data: Relay's own tables are dropped and recreated rather
-//! than migrated, because the previous implementation's data is not something a
-//! user keeps.
+//! Version 2 is the Rust baseline after execution moved into the daemon. A file
+//! carrying any other version is treated as old development data: Relay's own
+//! tables are dropped and recreated rather than migrated, because the previous
+//! implementation's data is not something a user keeps.
 
 use relay_core::Result;
 
 use crate::Database;
 
-pub const SCHEMA_VERSION: i64 = 1;
+/// 2 removed the cross-process control queue: the daemon owns every worker, so
+/// cancellation no longer has to travel through SQLite.
+pub const SCHEMA_VERSION: i64 = 2;
 
-const TABLES: [&str; 3] = ["relay_events", "host_sessions", "relay_control_commands"];
+const TABLES: [&str; 2] = ["relay_events", "host_sessions"];
+
+/// Tables an earlier Relay owned and this one does not. They are dropped with
+/// the rest when a file from another version is reset.
+const REMOVED_TABLES: [&str; 1] = ["relay_control_commands"];
 
 pub fn migrate(database: &Database) -> Result<()> {
     let version: i64 = database
@@ -22,7 +28,7 @@ pub fn migrate(database: &Database) -> Result<()> {
             tracing::warn!(
                 "relay.sqlite carries schema version {version}; resetting Relay's tables to version {SCHEMA_VERSION}"
             );
-            for table in TABLES {
+            for table in TABLES.into_iter().chain(REMOVED_TABLES) {
                 database.with(|connection| {
                     connection.execute(&format!("DROP TABLE IF EXISTS {table}"), [])
                 })?;
@@ -53,6 +59,7 @@ fn create(database: &Database) -> Result<()> {
             );
             CREATE INDEX IF NOT EXISTS relay_events_timestamp_idx ON relay_events(timestamp);
             CREATE INDEX IF NOT EXISTS relay_events_worker_idx ON relay_events(worker_session_id);
+            CREATE INDEX IF NOT EXISTS relay_events_type_idx ON relay_events(type);
 
             CREATE TABLE IF NOT EXISTS host_sessions (
               id TEXT PRIMARY KEY,
@@ -62,17 +69,6 @@ fn create(database: &Database) -> Result<()> {
               updated_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS host_sessions_updated_idx ON host_sessions(updated_at DESC);
-
-            CREATE TABLE IF NOT EXISTS relay_control_commands (
-              id TEXT PRIMARY KEY,
-              type TEXT NOT NULL,
-              worker_session_id TEXT NOT NULL,
-              status TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              error TEXT
-            );
-            CREATE INDEX IF NOT EXISTS relay_control_pending_idx
-              ON relay_control_commands(status, created_at);
             "#,
         )?;
         connection.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))
