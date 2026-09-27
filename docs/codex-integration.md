@@ -18,7 +18,7 @@ The MCP entry points at Relay's own Rust binary. There is no Node entry point, n
 | **Hooks** | `hooks/hooks.json`: `SessionStart` → `sync_session`, `SessionEnd` → `relay-mcp --session-end-hook` | ships with the plugin (Codex asks you to trust hooks once) |
 
 In a packaged Relay the entry is the bundled binary at
-`Relay.app/Contents/Resources/relay-mcp`. In a source checkout it is the binary in
+`Relay.app/Contents/Resources/bin/relay-mcp`. In a source checkout it is the binary in
 `target/debug` or `target/release`, resolved as the sibling of the running
 process. The daemon remembers which entry it expects: if the configured entry
 differs or the file is gone, the MCP check reports **stale** instead of a vague

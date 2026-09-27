@@ -121,16 +121,17 @@ The bundle contains:
 ```text
 Relay.app/Contents/
 ├── MacOS/Relay              the Tauri shell
-├── Resources/relayd         the daemon (also what the shell spawns)
-├── Resources/relay-mcp      the MCP server Codex starts
+├── Resources/bin/relayd     the daemon (also what the shell spawns)
+├── Resources/bin/relay-mcp  the MCP server Codex starts
 ├── Resources/ui/            the Leptos build served by the daemon
 ├── Resources/integrations/codex/   plugin, hooks and skill sources
 └── Info.plist               LSUIElement: menu bar only, no Dock icon
 ```
 
-`relayd` and `relay-mcp` are ordinary workspace binaries copied in as bundle
-resources, which is why `cargo build --release -p relayd -p relay-mcp` must run
-before `cargo tauri build`. The bundle lands in
+`relayd` and `relay-mcp` are ordinary workspace binaries; `bundle.resources`
+maps them from `target/release` to `bin/` inside the bundle, which is why
+`cargo build --release -p relayd -p relay-mcp` must run before
+`cargo tauri build`. The bundle lands in
 `target/aarch64-apple-darwin/release/bundle/`.
 
 A small environment note: `trunk` reads `NO_COLOR` and only accepts `true` or
@@ -143,24 +144,44 @@ the portable invocation.
 The release workflow:
 
 1. builds the UI, the daemon and the MCP server,
-2. runs `cargo tauri build` with `APPLE_SIGNING_IDENTITY` set,
-3. signs `Contents/Resources/relayd` and `Contents/Resources/relay-mcp`
-   explicitly, then re-signs the app,
-4. notarizes with `xcrun notarytool` and staples the ticket,
-5. uploads the DMG, the updater archive and `latest.json` to the GitHub release.
+2. stages the updater public key and runs `cargo tauri build --config` with
+   `APPLE_SIGNING_IDENTITY` set,
+3. signs `Contents/Resources/bin/relayd` and
+   `Contents/Resources/bin/relay-mcp` explicitly — `bin/` is where
+   `bundle.resources` puts them — then re-signs the app,
+4. fails the release unless both binaries exist, are executable and answer
+   `--version`, and unless the updater archive, its `.sig` and `latest.json`
+   are present,
+5. notarizes with `xcrun notarytool` and staples the ticket,
+6. uploads the DMG, the updater archive and `latest.json` to the GitHub release.
 
 Required secrets: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
 `KEYCHAIN_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_KEY_BASE64`,
 `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, `TAURI_SIGNING_PRIVATE_KEY`,
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and `TAURI_UPDATER_PUBKEY` (the public
+half of the signing key; it is not a secret, but it must reach the bundle).
 
 ## Updater
 
-`plugins.updater.pubkey` must hold the public half of
-`TAURI_SIGNING_PRIVATE_KEY` before a release (`cargo tauri signer generate`);
-until then the bundler logs `failed to decode pubkey` after producing the app,
-DMG and updater archive. `RELAY_UPDATE_FEED` overrides the endpoint at runtime
-for testing.
+A packaged app can only verify an update when it carries the *public* half of
+`TAURI_SIGNING_PRIVATE_KEY`. The repository keeps `plugins.updater.pubkey`
+empty and every release injects the `TAURI_UPDATER_PUBKEY` secret as a build
+override:
+
+```bash
+cargo tauri build --target aarch64-apple-darwin \
+  --config "$RUNNER_TEMP/updater-pubkey.json"
+# {"plugins":{"updater":{"pubkey":"…"}}} — the public half, base64
+```
+
+Two guards keep an un-updatable release from shipping again. The workflow fails
+before building when the secret is empty or is not a Tauri public key, and
+`build.rs` fails when `RELAY_REQUIRE_UPDATER_PUBKEY=1` (only the release
+workflow sets it) and the merged configuration — the `TAURI_CONFIG` overlay
+Tauri passes to the build script, else `tauri.conf.json` — has no key. Local
+builds leave the variable unset and still work with an empty key, where the
+updater honestly reports itself as unsupported. `RELAY_UPDATE_FEED` overrides
+the endpoint at runtime for testing.
 
 ## Local state
 
