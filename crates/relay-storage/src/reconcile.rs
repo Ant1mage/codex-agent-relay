@@ -13,7 +13,12 @@
 //! History is never rewritten: the fix is an appended event, exactly like every
 //! other state change in Relay.
 
-use relay_core::{now, EventStore, RelayError, RelayEvent, RelayEventType, Result, WorkerSession};
+use std::time::Duration;
+
+use relay_core::process::Termination;
+use relay_core::{
+    now, EventStore, ProcessIdentity, RelayError, RelayEvent, RelayEventType, Result, WorkerSession,
+};
 use uuid::Uuid;
 
 use crate::event_store::{SqliteEventStore, StaleRun};
@@ -22,6 +27,9 @@ const PROCESS_GONE: &str =
     "the worker process is gone: the Relay daemon stopped before it finished";
 const DAEMON_RESTARTED: &str =
     "the Relay daemon restarted while this worker was running and can no longer read its output";
+
+/// How long a surviving worker is given to exit before it is killed.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Default)]
 pub struct Reconciliation {
@@ -70,22 +78,21 @@ fn reconcile_one(events: &SqliteEventStore, stale: &StaleRun, reconciliation: &m
     }
 
     for worker in active {
-        let alive = worker.process_id.map(process_alive).unwrap_or(false);
-        if alive {
-            reconciliation.diagnostics.push(format!(
-                "worker {} (pid {:?}) outlived the Relay daemon; it is reported as interrupted, not killed, because a reused pid cannot be told apart from the original process",
-                worker.id, worker.process_id
-            ));
-        }
-        let (event_type, reason) = if alive {
-            (RelayEventType::WorkerInterrupted, DAEMON_RESTARTED)
-        } else {
-            (RelayEventType::WorkerOrphaned, PROCESS_GONE)
+        let survivor = end_survivor(worker.process.as_ref(), worker.process_id);
+        let (event_type, reason) = match &survivor {
+            Survivor::Gone => (RelayEventType::WorkerOrphaned, PROCESS_GONE),
+            Survivor::Ended(_) | Survivor::Unidentified => {
+                (RelayEventType::WorkerInterrupted, DAEMON_RESTARTED)
+            }
         };
+        if let Some(diagnostic) = survivor.diagnostic(worker) {
+            reconciliation.diagnostics.push(diagnostic);
+        }
         let data = serde_json::json!({
             "reason": reason,
             "reconciled": true,
             "processId": worker.process_id,
+            "process": survivor.summary(),
         });
         record(
             events,
@@ -95,6 +102,70 @@ fn reconcile_one(events: &SqliteEventStore, stale: &StaleRun, reconciliation: &m
             data,
             reconciliation,
         );
+    }
+}
+
+/// What a previous daemon left behind, and what Relay did about it.
+///
+/// A pid on its own is never enough to act on: the OS reuses pids, and the only
+/// process Relay may end is one whose whole recorded identity still matches.
+enum Survivor {
+    /// Nothing of this worker is running any more.
+    Gone,
+    /// A process holding the recorded pid was identified as the worker and ended.
+    Ended(Termination),
+    /// A process holds the pid, but Relay cannot prove it is the worker.
+    Unidentified,
+}
+
+impl Survivor {
+    fn summary(&self) -> &'static str {
+        match self {
+            Survivor::Gone => "the process is gone",
+            Survivor::Ended(termination) => termination.summary(),
+            Survivor::Unidentified => Termination::Unverified.summary(),
+        }
+    }
+
+    fn diagnostic(&self, worker: &WorkerSession) -> Option<String> {
+        match self {
+            Survivor::Gone => None,
+            Survivor::Ended(termination) => Some(format!(
+                "worker {} (pid {:?}) outlived the Relay daemon: {}",
+                worker.id,
+                worker.process_id,
+                termination.summary()
+            )),
+            Survivor::Unidentified => Some(format!(
+                "worker {} (pid {:?}): {}",
+                worker.id,
+                worker.process_id,
+                Termination::Unverified.summary()
+            )),
+        }
+    }
+}
+
+/// Ends a worker a previous daemon left running, when it can prove who it is.
+fn end_survivor(recorded: Option<&ProcessIdentity>, pid: Option<u32>) -> Survivor {
+    let process = match recorded {
+        Some(process) => process,
+        // A row written before Relay recorded identities carries a pid and
+        // nothing else. It is reported, never signalled.
+        None => {
+            return match pid {
+                Some(pid) if relay_core::process::alive(pid) => Survivor::Unidentified,
+                _ => Survivor::Gone,
+            }
+        }
+    };
+    if !relay_core::process::alive(process.pid) {
+        return Survivor::Gone;
+    }
+    match relay_core::process::terminate_verified(process, SHUTDOWN_GRACE) {
+        Termination::AlreadyGone => Survivor::Gone,
+        Termination::Unverified => Survivor::Unidentified,
+        termination => Survivor::Ended(termination),
     }
 }
 
@@ -163,11 +234,6 @@ fn append_terminal(
     ))
 }
 
-fn process_alive(pid: u32) -> bool {
-    // Signal 0 only performs the permission/existence check.
-    unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +253,16 @@ mod tests {
         step_id: &str,
         pid: Option<u32>,
     ) -> serde_json::Value {
+        worker_payload_with_identity(id, run_id, step_id, pid, None)
+    }
+
+    fn worker_payload_with_identity(
+        id: &str,
+        run_id: &str,
+        step_id: &str,
+        pid: Option<u32>,
+        process: Option<relay_core::ProcessIdentity>,
+    ) -> serde_json::Value {
         serde_json::json!({
             "id": id,
             "runId": run_id,
@@ -194,9 +270,78 @@ mod tests {
             "iteration": 1,
             "runtimeId": "runtime:test",
             "processId": pid,
+            "process": process,
             "status": "running",
             "startedAt": now(),
         })
+    }
+
+    /// A child in its own process group: the worker this test can really end.
+    #[cfg(unix)]
+    fn spawn_survivor() -> std::process::Child {
+        use std::os::unix::process::CommandExt;
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("the test needs a child process")
+    }
+
+    fn start_run_with_worker(store: &SqliteEventStore, run_id: &str, worker: serde_json::Value) {
+        let stamp = now();
+        append(
+            store,
+            run_id,
+            1,
+            None,
+            None,
+            RelayEventType::RunCreated,
+            serde_json::json!({
+                "run": {
+                    "id": run_id,
+                    "hostSessionId": "codex:test",
+                    "profileId": "agent-1",
+                    "task": "do it",
+                    "cwd": "/tmp",
+                    "accessMode": "read_only",
+                    "isolation": "shared",
+                    "status": "queued",
+                    "createdAt": stamp,
+                    "updatedAt": stamp,
+                }
+            }),
+        );
+        append(
+            store,
+            run_id,
+            2,
+            Some("step:1"),
+            None,
+            RelayEventType::StepCreated,
+            serde_json::json!({
+                "step": {
+                    "id": "step:1",
+                    "runId": run_id,
+                    "profileId": "agent-1",
+                    "task": "do it",
+                    "accessMode": "read_only",
+                    "isolation": "shared",
+                    "status": "starting",
+                    "iteration": 1,
+                    "createdAt": stamp,
+                    "updatedAt": stamp,
+                }
+            }),
+        );
+        append(
+            store,
+            run_id,
+            3,
+            Some("step:1"),
+            Some("worker:1"),
+            RelayEventType::WorkerStarted,
+            serde_json::json!({ "worker": worker }),
+        );
     }
 
     fn append(
@@ -375,5 +520,110 @@ mod tests {
         let second = reconcile_stale_runs(&store).unwrap();
         assert!(second.resolved.is_empty(), "{second:?}");
         assert_eq!(store.list("run:once").unwrap().len(), 5);
+    }
+
+    /// A worker that really outlived the daemon is ended, and only because its
+    /// whole recorded identity still matches the process holding its pid.
+    #[test]
+    #[cfg(unix)]
+    fn a_surviving_worker_with_a_matching_identity_is_terminated() {
+        let (_directory, database) = database();
+        let store = SqliteEventStore::new(database);
+        let mut child = spawn_survivor();
+        let pid = child.id();
+        let identity = relay_core::process::capture(pid).expect("the child is running");
+        let worker = worker_payload_with_identity(
+            "worker:1",
+            "run:ghost",
+            "step:1",
+            Some(pid),
+            Some(identity),
+        );
+        start_run_with_worker(&store, "run:ghost", worker);
+        let reaper = std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+
+        let reconciliation = reconcile_stale_runs(&store).unwrap();
+        assert_eq!(reconciliation.resolved, vec!["run:ghost".to_string()]);
+        assert!(
+            reconciliation
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("outlived the Relay daemon")),
+            "{reconciliation:?}"
+        );
+        reaper.join().unwrap();
+        assert!(
+            !relay_core::process::alive(pid),
+            "the surviving worker must not keep running"
+        );
+        let last = store.list("run:ghost").unwrap().pop().unwrap();
+        assert_eq!(last.event_type, RelayEventType::WorkerInterrupted);
+        assert_eq!(last.data["reconciled"], true);
+    }
+
+    /// The pid is alive, but it is not the worker Relay started: nothing may be
+    /// signalled, and the reason has to be recorded.
+    #[test]
+    #[cfg(unix)]
+    fn a_pid_that_no_longer_matches_is_never_signalled() {
+        let (_directory, database) = database();
+        let store = SqliteEventStore::new(database);
+        let mut child = spawn_survivor();
+        let pid = child.id();
+        let mut identity = relay_core::process::capture(pid).expect("the child is running");
+        // The pid was reused: same number, different process.
+        identity.start_time_seconds = identity.start_time_seconds.map(|value| value + 1);
+        let worker = worker_payload_with_identity(
+            "worker:1",
+            "run:reused",
+            "step:1",
+            Some(pid),
+            Some(identity),
+        );
+        start_run_with_worker(&store, "run:reused", worker);
+
+        let reconciliation = reconcile_stale_runs(&store).unwrap();
+        assert!(
+            reconciliation
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("could not safely identify")),
+            "{reconciliation:?}"
+        );
+        assert!(
+            relay_core::process::alive(pid),
+            "a process Relay cannot identify must never be signalled"
+        );
+        let last = store.list("run:reused").unwrap().pop().unwrap();
+        assert_eq!(last.event_type, RelayEventType::WorkerInterrupted);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    /// A row from before Relay recorded identities carries a pid and nothing
+    /// else. It is reported, never killed.
+    #[test]
+    #[cfg(unix)]
+    fn a_row_with_only_a_pid_is_never_signalled() {
+        let (_directory, database) = database();
+        let store = SqliteEventStore::new(database);
+        let mut child = spawn_survivor();
+        let pid = child.id();
+        let worker = worker_payload("worker:1", "run:old", "step:1", Some(pid));
+        start_run_with_worker(&store, "run:old", worker);
+
+        let reconciliation = reconcile_stale_runs(&store).unwrap();
+        assert!(
+            reconciliation
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("could not safely identify")),
+            "{reconciliation:?}"
+        );
+        assert!(relay_core::process::alive(pid));
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }

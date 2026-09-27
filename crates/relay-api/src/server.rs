@@ -1062,13 +1062,21 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn an_idle_tick_does_not_probe_the_codex_integration() {
+    /// A server state whose Codex integration counts every real probe, with the
+    /// client connection the ticker needs to have somebody to publish to.
+    #[allow(clippy::type_complexity)]
+    fn counting_state(
+        ttl: Duration,
+        tick: Duration,
+    ) -> (
+        tempfile::TempDir,
+        Arc<RelayServerState>,
+        Arc<CountingCodex>,
+        tokio::sync::broadcast::Receiver<Arc<InspectorSnapshot>>,
+    ) {
         use relay_storage::{Database, SqliteEventStore, SqliteHostSessionStore};
-        let directory =
-            std::env::temp_dir().join(format!("relay-tick-test-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).unwrap();
-        let database = Arc::new(Database::open(directory.join("relay.sqlite")).unwrap());
+        let directory = tempfile::tempdir().unwrap();
+        let database = Arc::new(Database::open(directory.path().join("relay.sqlite")).unwrap());
         let store = Arc::new(RelayStore::new(
             Arc::new(SqliteEventStore::new(Arc::clone(&database))),
             Arc::new(SqliteHostSessionStore::new(Arc::clone(&database))),
@@ -1076,20 +1084,34 @@ mod tests {
         let codex = Arc::new(CountingCodex {
             calls: std::sync::atomic::AtomicUsize::new(0),
         });
-        let state = RelayServerState::new(RelayServerOptions {
+        let mut state = RelayServerState::new(RelayServerOptions {
             store,
             service: Arc::new(UnavailableService),
             runs: Arc::new(UnavailableRuns),
             codex: codex.clone(),
-            web_root: directory.join("web"),
-            panel_root: directory.join("panel"),
+            web_root: directory.path().join("web"),
+            panel_root: directory.path().join("panel"),
             token: "secret".to_string(),
             port: Arc::new(AtomicU16::new(7353)),
             version: "0.2.0".to_string(),
             started_at: relay_core::now(),
             nonce: "nonce".to_string(),
-            database_path: directory.join("relay.sqlite").display().to_string(),
+            database_path: directory.path().join("relay.sqlite").display().to_string(),
         });
+        let client = {
+            let state = Arc::get_mut(&mut state).expect("the state has one owner here");
+            state.codex_ttl = ttl;
+            state.tick = tick;
+            // A connected client is what makes the ticker work at all.
+            state.updates.subscribe()
+        };
+        (directory, state, codex, client)
+    }
+
+    #[tokio::test]
+    async fn an_idle_tick_does_not_probe_the_codex_integration() {
+        let (_directory, state, codex, _client) =
+            counting_state(CODEX_STATUS_TTL, Duration::from_millis(400));
         // 50 ticks at 400 ms is the "leave the inspector open" case.
         for _ in 0..50 {
             let _ = state.codex_status().await;
@@ -1098,6 +1120,30 @@ mod tests {
             codex.calls.load(Ordering::SeqCst),
             1,
             "a cached Codex status must be reused instead of re-probed on every tick"
+        );
+    }
+
+    /// The SSE ticker is the one automatic reader of the Codex status, so it is
+    /// the one place a probe storm could hide: however fast it ticks, a real probe
+    /// happens at most once per TTL.
+    #[tokio::test]
+    async fn the_ticker_probes_the_codex_integration_at_most_once_per_ttl() {
+        const TTL: Duration = Duration::from_millis(150);
+        const WINDOW: Duration = Duration::from_millis(700);
+        let (_directory, state, codex, _client) = counting_state(TTL, Duration::from_millis(10));
+
+        let ticker = tokio::spawn(Arc::clone(&state).run_ticker());
+        tokio::time::sleep(WINDOW).await;
+        ticker.abort();
+
+        let calls = codex.calls.load(Ordering::SeqCst);
+        let allowed = (WINDOW.as_millis() / TTL.as_millis()) as usize + 1;
+        assert!(calls >= 1, "the ticker must refresh the cached status");
+        assert!(
+            calls <= allowed,
+            "the ticker probed {calls} times in {} ms with a {} ms TTL; at most {allowed} probes are allowed",
+            WINDOW.as_millis(),
+            TTL.as_millis()
         );
     }
 }

@@ -143,7 +143,9 @@ the portable invocation.
 `bundle.macOS.hardenedRuntime` and the entitlements file are already configured.
 The release workflow:
 
-1. builds the UI, the daemon and the MCP server,
+1. installs `trunk` and the Tauri CLI — the macOS runner image ships cargo
+   and rustc but neither of these — then builds the UI, the daemon and the MCP
+   server,
 2. stages the updater public key and runs `cargo tauri build --config` with
    `APPLE_SIGNING_IDENTITY` set,
 3. signs `Contents/Resources/bin/relayd` and

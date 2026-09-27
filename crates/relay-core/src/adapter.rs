@@ -12,7 +12,8 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use crate::domain::{
-    AdapterCapabilities, RelayError, Result, ResumeInput, Runtime, RuntimeOptions, StartInput,
+    AdapterCapabilities, ProcessIdentity, RelayError, Result, ResumeInput, Runtime, RuntimeOptions,
+    StartInput,
 };
 use crate::event::RelayEventType;
 
@@ -50,6 +51,9 @@ impl AdapterEvent {
 pub struct WorkerHandle {
     pub native_session_id: Option<String>,
     pub process_id: Option<u32>,
+    /// What the kernel reported about the process at spawn, so a later daemon can
+    /// tell this worker apart from whatever holds its pid after a crash.
+    pub process: Option<ProcessIdentity>,
     pub events: mpsc::Receiver<AdapterEvent>,
 }
 
@@ -58,6 +62,7 @@ impl std::fmt::Debug for WorkerHandle {
         f.debug_struct("WorkerHandle")
             .field("native_session_id", &self.native_session_id)
             .field("process_id", &self.process_id)
+            .field("process", &self.process)
             .finish()
     }
 }

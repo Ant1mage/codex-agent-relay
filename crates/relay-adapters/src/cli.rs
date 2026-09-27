@@ -215,6 +215,10 @@ pub async fn run_cli(
     if let Some(pid) = pid {
         supervisor.register(&spec.supervisor_key, pid);
     }
+    // Read what the kernel says about the process now, while it is certainly the
+    // one just spawned: this is the identity a later daemon verifies before it
+    // ever signals the pid (see `relay_core::process`).
+    let process = pid.and_then(|pid| relay_core::process::capture(pid as u32));
 
     let stdout = child
         .stdout
@@ -404,6 +408,7 @@ pub async fn run_cli(
     Ok(WorkerHandle {
         native_session_id,
         process_id: pid.map(|pid| pid as u32),
+        process,
         events: receiver,
     })
 }
@@ -609,8 +614,11 @@ mod tests {
     #[tokio::test]
     async fn every_alias_of_a_process_is_dropped_when_it_exits() {
         let supervisor = Arc::new(ProcessSupervisor::new());
+        // The child reports its session and then stays alive, so both of its
+        // names are observable while it is really running: a child that exits at
+        // once can be reaped before the test ever looks.
         let handle = run_cli(
-            spec("printf '%s\n' '{\"type\":\"session\",\"id\":\"s-alias\"}' '{\"type\":\"text\",\"text\":\"bye\"}'"),
+            spec("printf '%s\n' '{\"type\":\"session\",\"id\":\"s-alias\"}'; sleep 30"),
             StreamMode::Lines,
             Arc::new(parse_line),
             Arc::new(terminal),
@@ -626,6 +634,7 @@ mod tests {
             vec!["s-alias".to_string(), "worker:test".to_string()]
         );
         let pid = handle.process_id.unwrap() as i32;
+        assert!(supervisor.terminate("worker:test"));
 
         let mut receiver = handle.events;
         while receiver.recv().await.is_some() {}

@@ -83,10 +83,7 @@ pub fn parse_model_payload(payload: &serde_json::Value) -> Vec<ModelOption> {
         if models.iter().any(|model| model.value == value) {
             continue;
         }
-        models.push(ModelOption {
-            value,
-            label: Some(label),
-        });
+        models.push(ModelOption::new(value, Some(label)));
     }
     models
 }
@@ -351,10 +348,7 @@ mod tests {
         let cli = RuntimeOptions {
             runtime_id: "r".into(),
             adapter_id: "a".into(),
-            models: vec![ModelOption {
-                value: "m".into(),
-                label: None,
-            }],
+            models: vec![ModelOption::new("m", None)],
             levels: vec![ReasoningLevel {
                 strength: 1,
                 label: "Low".into(),

@@ -11,6 +11,7 @@ pub mod instructions;
 pub mod kimi;
 pub mod models;
 pub mod probe;
+pub mod yaml;
 pub mod zai;
 
 use std::sync::Arc;

@@ -314,12 +314,28 @@ fn agent_editor(
         }
         choices
     };
+    // A model decides which reasoning levels are real. A runtime that states one
+    // list for all of its models still offers that list; a model that states its
+    // own never borrows another model's.
+    let levels_for = move |model: Option<&String>| -> Vec<relay_core::ReasoningLevel> {
+        let Some(loaded) = options() else {
+            return Vec::new();
+        };
+        let Some(model) = model else {
+            return loaded.levels;
+        };
+        loaded
+            .models
+            .iter()
+            .find(|option| &option.value == model)
+            .map(|option| option.reasoning_levels.clone())
+            .filter(|levels| !levels.is_empty())
+            .unwrap_or(loaded.levels)
+    };
     let reasoning_choices = move || {
         let mut choices = vec![Choice::new(DEFAULT_MODEL, t.t("agents.runtimeDefault"))];
-        if let Some(loaded) = options() {
-            for level in loaded.levels {
-                choices.push(Choice::new(level.value, level.label));
-            }
+        for level in levels_for(draft.get().model.as_ref()) {
+            choices.push(Choice::new(level.value, level.label));
         }
         choices
     };
@@ -373,8 +389,18 @@ fn agent_editor(
                 <div class="field">
                     <label class="field-label">{t.t("agents.model")}</label>
                     <div class="select-row">{move || select_input(model_value, model_choices(), move |value| {
+                        let model = if value == DEFAULT_MODEL { None } else { Some(value) };
+                        // A level the newly selected model does not accept would be
+                        // refused by the runtime, so the draft forgets it instead of
+                        // saving a combination the run cannot apply.
+                        let allowed = levels_for(model.as_ref());
                         draft.update(|draft| {
-                            draft.model = if value == DEFAULT_MODEL { None } else { Some(value) };
+                            draft.model = model;
+                            if let Some(reasoning) = &draft.reasoning {
+                                if !allowed.iter().any(|level| &level.value == reasoning) {
+                                    draft.reasoning = None;
+                                }
+                            }
                         });
                     })}
                     </div>
@@ -397,7 +423,7 @@ fn agent_editor(
                     </div>
                     {move || {
                         options()
-                            .filter(|loaded| loaded.levels.is_empty())
+                            .filter(|_| levels_for(draft.get().model.as_ref()).is_empty())
                             .map(|_| view! { <p class="field-hint wrap">{t.t("agents.noReasoningLevels")}</p> })
                     }}
                 </div>

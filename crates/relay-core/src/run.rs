@@ -429,6 +429,7 @@ impl RunController {
             native_session_id: None,
             parent_worker_session_id: None,
             process_id: None,
+            process: None,
             status: WorkerStatus::Starting,
             started_at: stamp.clone(),
             ended_at: None,
@@ -581,6 +582,7 @@ impl RunController {
             native_session_id: None,
             parent_worker_session_id: None,
             process_id: None,
+            process: None,
             status: WorkerStatus::Starting,
             started_at: stamp.clone(),
             ended_at: None,
@@ -608,6 +610,11 @@ impl RunController {
             cwd: request.cwd.clone(),
             access_mode: resume_access_mode,
             executable_path: Some(runtime.executable_path.clone()),
+            // DeepSeek Harness re-reads its default model selection when it adopts
+            // an existing session, so the selection has to travel with the resume:
+            // without it the resumed run would quietly use the profile default.
+            model: profile.model.clone(),
+            reasoning: profile.reasoning.clone(),
             instructions: profile.instructions.clone(),
         };
 
@@ -822,7 +829,13 @@ async fn execute(
         *state.native_session_id.lock().unwrap() = Some(native_session_id.clone());
         state.worker.lock().unwrap().native_session_id = Some(native_session_id);
     }
-    if let Some(process_id) = handle.process_id {
+    if let Some(process) = handle.process.clone() {
+        // The full identity is what a later daemon verifies before it ever signals
+        // this pid; the bare process id stays for the wire contract.
+        let mut worker = state.worker.lock().unwrap();
+        worker.process_id = Some(process.pid);
+        worker.process = Some(process);
+    } else if let Some(process_id) = handle.process_id {
         state.worker.lock().unwrap().process_id = Some(process_id);
     }
 

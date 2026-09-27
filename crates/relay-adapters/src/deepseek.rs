@@ -16,6 +16,7 @@
 //!
 //! Core never sees any of this: only the mapped Relay events leave this module.
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -23,154 +24,368 @@ use std::time::Duration;
 use async_trait::async_trait;
 use relay_core::{
     AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, EnforcementSet, ModelOption,
-    OptionsSource, RelayError, RelayEventType, Result, ResumeInput, Runtime, RuntimeHealth,
-    RuntimeOptions, StartInput, WorkerHandle,
+    OptionsSource, ReasoningLevel, RelayError, RelayEventType, Result, ResumeInput, Runtime,
+    RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
 
 use crate::cli::{run_cli, ParsedOutput, ProcessSupervisor, StreamMode, StreamOutcome, StreamSpec};
 use crate::probe::{
-    capture_with, discover_executable, probe_runtime_options, probe_target, read_help, version_of,
-    with_selection_args, Selection,
+    capture_with, discover_executable, probe_runtime_options, probe_target, read_help_with,
+    version_of, with_selection_args, Selection,
 };
 
 pub const ADAPTER_ID: &str = "deepseek-harness";
 pub const RUNTIME_ID: &str = "runtime:deepseek-harness";
 /* ------------------------------------------------------------------ */
-/* How a model choice reaches a dsh run                                */
+/* How model, reasoning and instructions reach a dsh run               */
 /* ------------------------------------------------------------------ */
 
-/// Composing a whole profile is heavier than answering `--help`.
+/// Composing a whole profile is heavier than answering --help.
 const DUMP_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// What one dsh profile says about its own model selection.
+/// The entry schema mounts every plugin's config shape, so it costs more still.
+const SCHEMA_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// One model a provider route declares, with the reasoning levels it accepts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DshModelOption {
+    pub value: String,
+    pub label: Option<String>,
+    /// True when the model states its own levels, which may be none at all.
+    pub reasoning_declared: bool,
+    /// The levels the model accepts, in the order the runtime lists them.
+    pub reasoning_efforts: Vec<String>,
+    pub default_reasoning_effort: Option<String>,
+}
+
+/// The profile's own system persona, resolved so Relay can restate it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DshPersona {
+    pub prefix: String,
+    pub suffix: String,
+}
+
+/// The complete model selection one dsh run is started with.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DshSelection {
+    pub provider: String,
+    pub model: String,
+    pub reasoning_effort: Option<String>,
+}
+
+/// What one dsh profile says about its own model selection and its persona.
 ///
-/// Read from `dsh --profile <name> --dump-config`, the CLI's own report of its
-/// composed configuration: Relay never guesses a key or invents a model name.
+/// Everything here is read from the CLI itself: the composed configuration
+/// (--dump-config) and the entry schema of that composition
+/// (--dump-config-schema). Relay never guesses a key or invents a model name.
 #[derive(Debug, Default, PartialEq)]
 pub struct DshComposition {
     /// The provider route the profile's default model selection points at.
     pub provider: Option<String>,
-    /// The catalogue that route declares, when the profile declares one.
-    pub models: Vec<ModelOption>,
-    /// The composed system-prompt persona, when the profile states it inline.
-    pub persona_prefix: Option<String>,
-    pub persona_suffix: Option<String>,
+    /// The model that selection names.
+    pub model: Option<String>,
+    /// The reasoning effort that selection names, when it names one.
+    pub reasoning_effort: Option<String>,
+    /// The levels the provider route itself accepts.
+    pub route_efforts: Vec<String>,
+    /// The level the route falls back to, when the profile states one.
+    pub route_default_effort: Option<String>,
+    /// The catalogue the route declares.
+    pub models: Vec<DshModelOption>,
+    /// The composed persona, and only when Relay may restate the whole row.
+    pub persona: Option<DshPersona>,
 }
 
 impl DshComposition {
-    /// The composition row in which a provider route keeps its catalogue.
-    fn catalogue_row(provider: &str) -> Option<&'static str> {
+    /// The composition row that serves a provider route.
+    ///
+    /// A route Relay cannot map offers no models: a picker whose choice never
+    /// reaches the runtime is worse than no picker.
+    fn provider_row(provider: &str) -> Option<&'static str> {
         match provider {
             "deepseek-official" => Some("llm-deepseek"),
+            "deepseek-account" => Some("llm-deepseek-account"),
             _ => None,
         }
     }
 
-    /// The persona Relay can restate in an overlay.
-    ///
-    /// A block scalar is deliberately *not* rewritten: Relay cannot reproduce it
-    /// byte for byte, and a wrong rewrite would damage the profile's own prompt.
-    fn persona(&self) -> Option<(String, String)> {
-        Some((
-            self.persona_prefix.clone().unwrap_or_default(),
-            self.persona_suffix.clone().unwrap_or_default(),
-        ))
+    /// The catalogue entry a model id names, when the profile declares one.
+    pub fn model_option(&self, value: &str) -> Option<&DshModelOption> {
+        self.models.iter().find(|model| model.value == value)
+    }
+
+    /// The reasoning levels a model accepts: its own, or the route's.
+    pub fn efforts_for(&self, model: &str) -> Vec<String> {
+        match self.model_option(model) {
+            Some(option) if option.reasoning_declared => option.reasoning_efforts.clone(),
+            _ => self.route_efforts.clone(),
+        }
     }
 }
 
-/// True when a dumped scalar is a block scalar Relay will not restate.
-fn is_block_scalar(value: &str) -> bool {
-    matches!(value.trim(), "|" | ">" | "|-" | ">-" | "|+" | ">+")
-}
-
-fn scalar(value: &str) -> String {
-    let trimmed = value.trim();
-    let unquoted = trimmed
-        .strip_prefix('\'')
-        .and_then(|rest| rest.strip_suffix('\''))
-        .or_else(|| {
-            trimmed
-                .strip_prefix('"')
-                .and_then(|rest| rest.strip_suffix('"'))
-        })
-        .unwrap_or(trimmed);
-    unquoted.trim().to_string()
-}
-
-/// Reads the two facts Relay needs out of a composed profile dump.
-///
-/// The dump is machine-generated YAML with a fixed two-space shape, so a small
-/// line reader is enough. It is tested against a real dump below.
+/// Reads everything Relay needs out of a composed profile dump.
 pub fn parse_composition(text: &str) -> DshComposition {
-    let mut provider: Option<String> = None;
-    let mut declared: Vec<ModelOption> = Vec::new();
-    let mut persona_prefix: Option<String> = None;
-    let mut persona_suffix: Option<String> = None;
-    let mut entry = String::new();
-    let mut in_config = false;
-    let mut in_models = false;
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        let indent = line.len() - trimmed.len();
-        if indent == 0 && trimmed.starts_with("- id:") {
-            entry = scalar(trimmed.trim_start_matches("- id:"));
-            in_config = false;
-            in_models = false;
-            continue;
-        }
-        if !in_config && !(indent == 2 && trimmed == "config:") {
-            continue;
-        }
-        if indent == 2 && trimmed == "config:" {
-            in_config = true;
-            in_models = false;
-            continue;
-        }
-        match (entry.as_str(), indent) {
-            ("agent-default-model", 4) if trimmed.starts_with("provider:") => {
-                provider = Some(scalar(trimmed.trim_start_matches("provider:")));
+    let rows = crate::yaml::rows(text);
+    let mut composition = DshComposition::default();
+    for row in &rows {
+        match row.id.as_str() {
+            "agent-default-model" => {
+                let Some(config) = row.config() else { continue };
+                composition.provider = text_of(config, "provider");
+                composition.model = text_of(config, "model");
+                composition.reasoning_effort = text_of(config, "reasoningEffort");
             }
-            ("system-prompt", 4) if trimmed.starts_with("personaPrefix:") => {
-                let value = trimmed.trim_start_matches("personaPrefix:");
-                if !is_block_scalar(value) {
-                    persona_prefix = Some(scalar(value));
-                }
-            }
-            ("system-prompt", 4) if trimmed.starts_with("personaSuffix:") => {
-                let value = trimmed.trim_start_matches("personaSuffix:");
-                if !is_block_scalar(value) {
-                    persona_suffix = Some(scalar(value));
-                }
-            }
-            ("llm-deepseek", 4) if trimmed == "models:" => in_models = true,
-            ("llm-deepseek", 6) if in_models && trimmed.starts_with("- id:") => {
-                declared.push(ModelOption {
-                    value: scalar(trimmed.trim_start_matches("- id:")),
-                    label: None,
-                });
-            }
-            ("llm-deepseek", 8) if in_models && trimmed.starts_with("name:") => {
-                if let Some(last) = declared.last_mut() {
-                    last.label = Some(scalar(trimmed.trim_start_matches("name:")));
-                }
-            }
+            "system-prompt" => composition.persona = persona_of(row),
             _ => {}
         }
     }
-    let models = match provider.as_deref().and_then(DshComposition::catalogue_row) {
-        Some("llm-deepseek") => declared,
-        _ => Vec::new(),
+    let Some(provider) = composition.provider.clone() else {
+        return composition;
     };
-    DshComposition {
-        provider,
-        models,
-        persona_prefix,
-        persona_suffix,
+    composition.models = catalogue_of(&rows, &provider);
+    if let Some(row) = provider_row_of(&rows, &provider) {
+        let config = row.config();
+        let thinking = config.and_then(|config| text_of(config, "thinking"));
+        // A route that runs with thinking disabled accepts exactly one effort,
+        // which is what its own adapter reports for every model it serves.
+        if thinking.as_deref() == Some("disabled") {
+            composition.route_efforts = vec!["off".to_string()];
+        }
+        composition.route_default_effort =
+            config.and_then(|config| text_of(config, "reasoningEffort"));
+    }
+    // The route's own default is the model selection the profile already made.
+    if composition.route_default_effort.is_none() {
+        composition.route_default_effort = composition.reasoning_effort.clone();
+    }
+    for model in &mut composition.models {
+        if model.default_reasoning_effort.is_none() {
+            model.default_reasoning_effort = composition.route_default_effort.clone();
+        }
+    }
+    composition
+}
+
+/// One scalar of a mapping, resolved.
+fn text_of(node: &crate::yaml::Node, key: &str) -> Option<String> {
+    node.get(key)
+        .and_then(crate::yaml::Node::text)
+        .map(str::to_string)
+}
+
+/// The persona row, and only when Relay may restate it.
+///
+/// A patch replaces the row's whole config object, so any other key —
+/// includeRuntimeContext, toolOrder, anything a profile added — would silently
+/// fall back to its schema default. Relay restates the row only when the
+/// composed config is exactly the persona pair, and uses the prompt envelope
+/// for the instructions otherwise.
+fn persona_of(row: &crate::yaml::Row) -> Option<DshPersona> {
+    let config = row.config()?;
+    let mut keys = config.keys();
+    keys.sort_unstable();
+    if keys != ["personaPrefix", "personaSuffix"] {
+        return None;
+    }
+    Some(DshPersona {
+        prefix: text_of(config, "personaPrefix")?,
+        suffix: text_of(config, "personaSuffix")?,
+    })
+}
+
+/// The composed row that serves a provider route.
+fn provider_row_of<'a>(
+    rows: &'a [crate::yaml::Row],
+    provider: &str,
+) -> Option<&'a crate::yaml::Row> {
+    if let Some(id) = DshComposition::provider_row(provider) {
+        if let Some(row) = rows.iter().find(|row| row.id == id) {
+            return Some(row);
+        }
+    }
+    // A row that serves several routes names them under providers.
+    rows.iter().find(|row| {
+        row.config()
+            .and_then(|config| config.get("providers"))
+            .and_then(|providers| providers.get(provider))
+            .is_some()
+    })
+}
+
+/// The catalogue the profile itself declares for a route.
+fn catalogue_of(rows: &[crate::yaml::Row], provider: &str) -> Vec<DshModelOption> {
+    let Some(row) = provider_row_of(rows, provider) else {
+        return Vec::new();
+    };
+    let Some(config) = row.config() else {
+        return Vec::new();
+    };
+    let models = config.get("models").or_else(|| {
+        config
+            .get("providers")
+            .and_then(|providers| providers.get(provider))
+            .and_then(|route| route.get("models"))
+    });
+    let Some(items) = models.and_then(crate::yaml::Node::items) else {
+        return Vec::new();
+    };
+    let mut catalogue = Vec::new();
+    for item in items {
+        let Some(value) = item.get("id").and_then(crate::yaml::Node::text) else {
+            continue;
+        };
+        let (reasoning_declared, reasoning_efforts) = declared_efforts(item);
+        catalogue.push(DshModelOption {
+            value: value.to_string(),
+            label: item
+                .get("name")
+                .and_then(crate::yaml::Node::text)
+                .map(str::to_string),
+            reasoning_declared,
+            reasoning_efforts,
+            default_reasoning_effort: None,
+        });
+    }
+    catalogue
+}
+
+/// The levels a model declares for itself: a mapping of level to wire name, or
+/// false for a model that takes no reasoning at all.
+fn declared_efforts(item: &crate::yaml::Node) -> (bool, Vec<String>) {
+    match item.get("reasoningEfforts") {
+        Some(crate::yaml::Node::Mapping(entries)) => (
+            true,
+            entries.iter().map(|(level, _)| level.clone()).collect(),
+        ),
+        Some(crate::yaml::Node::Scalar(value)) if value == "false" => (true, Vec::new()),
+        _ => (false, Vec::new()),
     }
 }
 
-/// Composes the headless profile exactly the way a run would, and reads back the
-/// two facts Relay needs.
+/// Reads the catalogue and the effort levels the entry schema declares.
+///
+/// The composed configuration only shows what a profile overrode; dsh keeps its
+/// own provider catalogue in code, and the schema of the composed entry is where
+/// the CLI states it. Without this, a profile that declares no catalogue would
+/// offer no models at all — and a model picker that offers nothing is the same as
+/// no picker.
+pub fn apply_schema(composition: &mut DshComposition, schema: &str) {
+    let Ok(schema) = serde_json::from_str::<serde_json::Value>(schema) else {
+        return;
+    };
+    let Some(provider) = composition.provider.clone() else {
+        return;
+    };
+    let Some(properties) = schema_properties(&schema, &provider) else {
+        return;
+    };
+    if composition.route_efforts.is_empty() {
+        if let Some(field) = properties.get("reasoningEffort") {
+            composition.route_efforts = enum_values(field);
+        }
+    }
+    if composition.models.is_empty() {
+        composition.models = schema_catalogue(&properties);
+    }
+    for model in &mut composition.models {
+        if model.default_reasoning_effort.is_none() {
+            model.default_reasoning_effort = composition.route_default_effort.clone();
+        }
+    }
+}
+
+/// The config properties of the entry that serves a provider route.
+fn schema_properties(
+    schema: &serde_json::Value,
+    provider: &str,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let row_id = DshComposition::provider_row(provider)?;
+    let reference = schema
+        .get("x-cordis")?
+        .get("entries")?
+        .as_array()?
+        .iter()
+        .find(|entry| entry.get("id").and_then(|id| id.as_str()) == Some(row_id))?
+        .get("configRef")?
+        .as_str()?;
+    let name = reference.rsplit('/').next()?;
+    let definition = schema.get("$defs")?.get(name)?;
+    let mut properties = serde_json::Map::new();
+    let mut absorb = |node: &serde_json::Value| {
+        if let Some(map) = node.get("properties").and_then(|value| value.as_object()) {
+            for (key, value) in map {
+                properties.insert(key.clone(), value.clone());
+            }
+        }
+    };
+    absorb(definition);
+    if let Some(variants) = definition.get("anyOf").and_then(|value| value.as_array()) {
+        for variant in variants {
+            absorb(variant);
+        }
+    }
+    Some(properties)
+}
+
+/// The provider's own catalogue, as the entry schema states it.
+fn schema_catalogue(
+    properties: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<DshModelOption> {
+    let Some(defaults) = properties
+        .get("models")
+        .and_then(|models| models.get("default"))
+        .and_then(|value| value.as_array())
+    else {
+        return Vec::new();
+    };
+    defaults
+        .iter()
+        .filter_map(|model| {
+            let value = model.get("id").and_then(|id| id.as_str())?.to_string();
+            Some(DshModelOption {
+                value,
+                label: model
+                    .get("name")
+                    .and_then(|name| name.as_str())
+                    .map(str::to_string),
+                reasoning_declared: false,
+                reasoning_efforts: Vec::new(),
+                default_reasoning_effort: None,
+            })
+        })
+        .collect()
+}
+
+/// Every value a field enumerates, in schema order.
+fn enum_values(field: &serde_json::Value) -> Vec<String> {
+    let mut values = Vec::new();
+    collect_consts(field, &mut values);
+    values
+}
+
+fn collect_consts(node: &serde_json::Value, values: &mut Vec<String>) {
+    match node {
+        serde_json::Value::Object(map) => {
+            if let Some(constant) = map.get("const").and_then(|value| value.as_str()) {
+                if !values.iter().any(|existing| existing == constant) {
+                    values.push(constant.to_string());
+                }
+            }
+            for value in map.values() {
+                collect_consts(value, values);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_consts(item, values);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Composes the headless profile exactly the way a run would, and reads back
+/// everything Relay needs from it.
 async fn read_composition(
     executable: &str,
     prefix: &[String],
@@ -178,46 +393,122 @@ async fn read_composition(
 ) -> Option<DshComposition> {
     let mut args = prefix.to_vec();
     args.extend(["--profile".to_string(), "headless".to_string()]);
-    args.push("--dump-config".to_string());
-    let (code, stdout, _) = capture_with(executable, &args, env, DUMP_TIMEOUT).await?;
-    (code == 0).then(|| parse_composition(&stdout))
+    let mut dump_args = args.clone();
+    dump_args.push("--dump-config".to_string());
+    let (code, stdout, _) = capture_with(executable, &dump_args, env, DUMP_TIMEOUT).await?;
+    if code != 0 {
+        return None;
+    }
+    let mut composition = parse_composition(&stdout);
+    // The schema is where dsh states what the route really accepts. A version
+    // without the flag, or one that fails to compose it, simply leaves the
+    // catalogue the dump declared.
+    let mut schema_args = args;
+    schema_args.push("--dump-config-schema".to_string());
+    if let Some((code, schema, _)) =
+        capture_with(executable, &schema_args, env, SCHEMA_TIMEOUT).await
+    {
+        if code == 0 {
+            apply_schema(&mut composition, &schema);
+        }
+    }
+    Some(composition)
 }
 
 /// Writes the one-run overlay that makes an Agent Profile real.
 ///
-/// The launcher applies \`--patch\` files after the profile layer, so both rows
-/// replace exactly what the profile composed: the default model selection, and the
-/// system-prompt persona when the profile's instructions need their native slot.
-/// Every value is a double-quoted YAML scalar with escaped newlines, so a model id
-/// or instruction text can never change the shape of the document.
+/// The launcher applies --patch files after the profile layer, and a patch
+/// replaces a row's whole config object, so Relay only ever writes rows it can
+/// restate completely: the default model selection (provider, model and the
+/// optional reasoningEffort), and the system-prompt persona when the profile's
+/// own row is exactly that persona. Every value is a double-quoted YAML scalar
+/// with escaped newlines, so a model id or instruction text can never change the
+/// shape of the document.
 fn write_overlay(
-    model: Option<&(String, String)>,
-    persona: Option<&(String, String)>,
-) -> std::io::Result<PathBuf> {
+    selection: Option<&DshSelection>,
+    persona: Option<&DshPersona>,
+    worker_session_id: &str,
+) -> std::io::Result<Option<PathBuf>> {
+    if selection.is_none() && persona.is_none() {
+        return Ok(None);
+    }
     let mut body = String::from("# Written by Relay for a single run.\n");
-    if let Some((provider, value)) = model {
+    if let Some(selection) = selection {
         body.push_str("- id: agent-default-model\n  config:\n    provider: ");
-        body.push_str(&quoted(provider));
+        body.push_str(&quoted(&selection.provider));
         body.push_str("\n    model: ");
-        body.push_str(&quoted(value));
+        body.push_str(&quoted(&selection.model));
+        if let Some(effort) = &selection.reasoning_effort {
+            body.push_str("\n    reasoningEffort: ");
+            body.push_str(&quoted(effort));
+        }
         body.push('\n');
     }
-    if let Some((prefix, suffix)) = persona {
+    if let Some(persona) = persona {
         body.push_str("- id: system-prompt\n  config:\n    personaPrefix: ");
-        body.push_str(&quoted(prefix));
+        body.push_str(&quoted(&persona.prefix));
         body.push_str("\n    personaSuffix: ");
-        body.push_str(&quoted(suffix));
+        body.push_str(&quoted(&persona.suffix));
         body.push('\n');
     }
     let directory = std::env::temp_dir().join("relay-run-overlays");
     std::fs::create_dir_all(&directory)?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|value| value.as_nanos())
-        .unwrap_or(0);
-    let path = directory.join(format!("run-{}-{stamp}.yml", std::process::id()));
-    std::fs::write(&path, body)?;
-    Ok(path)
+    // The run's own identity names its overlay, and the file is created rather
+    // than replaced: two runs that start in the same microsecond must never share
+    // one --patch file, or one of them would be started with the other's model,
+    // reasoning effort and persona.
+    let key: String = worker_session_id
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        .take(64)
+        .collect();
+    for attempt in 0..8 {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_nanos())
+            .unwrap_or(0);
+        let path = directory.join(format!(
+            "run-{}-{key}-{stamp}-{attempt}.yml",
+            std::process::id()
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(body.as_bytes())?;
+                return Ok(Some(path));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "cannot create a unique run overlay",
+    ))
+}
+
+/// The panel's shape for one effort list: ordered, labelled, and never invented.
+fn levels(efforts: &[String]) -> Vec<ReasoningLevel> {
+    efforts
+        .iter()
+        .enumerate()
+        .map(|(index, value)| ReasoningLevel {
+            strength: (index + 1) as u8,
+            label: effort_label(value),
+            value: value.clone(),
+        })
+        .collect()
+}
+
+fn effort_label(value: &str) -> String {
+    let mut characters = value.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + characters.as_str(),
+        None => String::new(),
+    }
 }
 
 /// A YAML double-quoted scalar: the only shape Relay writes.
@@ -530,7 +821,7 @@ impl DeepSeekAdapter {
         let mut prefix = self.prefix_args.clone();
         prefix.push("--profile".to_string());
         prefix.push("headless".to_string());
-        let evidence = read_help(executable, &prefix).await;
+        let evidence = read_help_with(executable, &prefix, &self.environment).await;
         self.set_features(&evidence.text);
         let (_, options) =
             probe_runtime_options(self.capabilities(), &evidence, RUNTIME_ID, ADAPTER_ID);
@@ -583,19 +874,15 @@ impl DeepSeekAdapter {
     /// is the whole mechanism behind the model picker and behind the profile's
     /// instructions: both become rows the launcher layers over the profile.
     async fn prepare_run(&self, executable: &str, input: &StartInput) -> Result<PreparedRun> {
-        let model = input
-            .model
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let instructions = input
-            .instructions
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        if model.is_none() && instructions.is_none() {
+        let trimmed = |value: Option<&String>| {
+            value
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        };
+        let model = trimmed(input.model.as_ref());
+        let reasoning = trimmed(input.reasoning.as_ref());
+        let instructions = trimmed(input.instructions.as_ref());
+        if model.is_none() && reasoning.is_none() && instructions.is_none() {
             return Ok(PreparedRun {
                 task: input.task.clone(),
                 overlay: None,
@@ -604,15 +891,16 @@ impl DeepSeekAdapter {
 
         let composition = read_composition(executable, &self.prefix_args, &self.environment).await;
 
-        // The profile is the only authority for which model ids its provider route
-        // accepts, so a choice outside the catalogue is refused instead of being
-        // launched and silently ignored.
+        // A model and a reasoning effort are one selection: the row dsh reads --
+        // agent-default-model -- requires a provider and a model and takes an
+        // optional reasoningEffort. A choice the runtime cannot apply is refused
+        // here instead of being launched and silently ignored.
         let mut selection = None;
-        if let Some(model) = &model {
+        if model.is_some() || reasoning.is_some() {
             let Some(composition) = composition.as_ref() else {
                 return Err(RelayError::new(
                     "OPERATION_UNSUPPORTED",
-                    "This DeepSeek Harness installation did not report a composed configuration, so Relay cannot apply a model to it",
+                    "This DeepSeek Harness installation did not report a composed configuration, so Relay cannot apply a model selection to it",
                 ));
             };
             let Some(provider) = composition.provider.clone() else {
@@ -621,43 +909,65 @@ impl DeepSeekAdapter {
                     "This DeepSeek Harness profile declares no default model selection, so Relay cannot apply a model to it",
                 ));
             };
-            if !composition.models.is_empty()
-                && !composition
-                    .models
-                    .iter()
-                    .any(|option| option.value == *model)
-            {
+            // A reasoning choice without a model keeps the profile's own model:
+            // the row requires one, and choosing another would change the model.
+            let model_value = match &model {
+                Some(value) => value.clone(),
+                None => composition.model.clone().ok_or_else(|| {
+                    RelayError::new(
+                        "OPERATION_UNSUPPORTED",
+                        "This DeepSeek Harness profile names no model, so Relay cannot apply a reasoning effort to it",
+                    )
+                })?,
+            };
+            if !composition.models.is_empty() && composition.model_option(&model_value).is_none() {
                 return Err(RelayError::new(
                     "INVALID_REQUEST",
                     format!(
-                        "This dsh profile does not declare the model {model}; Relay will not pass a model the runtime cannot apply"
+                        "This dsh profile does not declare the model {model_value}; Relay will not pass a model the runtime cannot apply"
                     ),
                 ));
             }
-            selection = Some((provider, model.clone()));
+            if let Some(effort) = &reasoning {
+                let allowed = composition.efforts_for(&model_value);
+                if !allowed.is_empty() && !allowed.iter().any(|level| level == effort) {
+                    return Err(RelayError::new(
+                        "INVALID_REQUEST",
+                        format!(
+                            "dsh does not accept reasoning effort {effort} for {model_value}; it accepts {}",
+                            allowed.join(", ")
+                        ),
+                    ));
+                }
+            }
+            selection = Some(DshSelection {
+                provider,
+                model: model_value,
+                reasoning_effort: reasoning.clone(),
+            });
         }
 
-        // Instructions belong in the runtime's own system prompt, not appended to
-        // the task. A profile that states its persona as a block scalar is not
-        // restated — the envelope covers that case instead of dropping the text.
+        // Instructions belong in the runtime's own system prompt rather than
+        // appended to the task -- but only when Relay can restate the profile's own
+        // persona, because a patch replaces that row's whole config object.
+        // Otherwise the envelope carries them and the original persona stays.
         let mut task = input.task.clone();
         let mut persona = None;
         if let Some(instructions) = &instructions {
             match composition
                 .as_ref()
-                .and_then(|composition| composition.persona())
+                .and_then(|composition| composition.persona.as_ref())
             {
-                Some((prefix, suffix)) => {
-                    let suffix = if suffix.trim().is_empty() {
+                Some(existing) => {
+                    let suffix = if existing.suffix.trim().is_empty() {
                         instructions.clone()
                     } else {
-                        format!(
-                            "{suffix}
-
-{instructions}"
-                        )
+                        format!("{}\n\n{instructions}", existing.suffix)
                     };
-                    persona = Some((prefix, suffix));
+                    persona = Some(DshPersona {
+                        prefix: existing.prefix.clone(),
+                        suffix,
+                    });
                 }
                 None => {
                     task = crate::instructions::enveloped(&input.task, Some(instructions));
@@ -665,18 +975,19 @@ impl DeepSeekAdapter {
             }
         }
 
-        let overlay = write_overlay(selection.as_ref(), persona.as_ref()).map_err(|error| {
+        let overlay = write_overlay(
+            selection.as_ref(),
+            persona.as_ref(),
+            &input.worker_session_id,
+        )
+        .map_err(|error| {
             RelayError::new(
                 "ADAPTER_FAILURE",
                 format!("cannot write the run overlay: {error}"),
             )
         })?;
-        Ok(PreparedRun {
-            task,
-            overlay: Some(overlay),
-        })
+        Ok(PreparedRun { task, overlay })
     }
-
     async fn launch(
         &self,
         input: StartInput,
@@ -839,7 +1150,7 @@ impl AgentAdapter for DeepSeekAdapter {
         let mut prefix = self.prefix_args.clone();
         prefix.push("--profile".to_string());
         prefix.push("headless".to_string());
-        let evidence = read_help(&executable, &prefix).await;
+        let evidence = read_help_with(&executable, &prefix, &self.environment).await;
         self.set_features(&evidence.text);
         let version = version_of(&executable, &self.prefix_args).await;
         let capabilities = self.capabilities();
@@ -874,14 +1185,11 @@ impl AgentAdapter for DeepSeekAdapter {
 
     /// What a run of this runtime can really apply.
     ///
-    /// DeepSeek Harness's headless profile has neither a `--model` nor a
-    /// `--reasoning` flag — its own `--help` proves it — so Relay never reports a
-    /// flag for it. A model is applied through a one-run `--patch` overlay instead,
-    /// and the catalogue comes from the profile's own composed configuration. A
-    /// model list is therefore offered only when Relay found both a provider route
-    /// and a catalogue for it, because only then is a choice real. Reasoning is
-    /// never offered: dsh keeps `reasoningEffort` in the user's global settings
-    /// document, which Relay does not write.
+    /// DeepSeek Harness's headless profile has neither a --model nor a
+    /// --reasoning flag -- its own --help proves it -- so Relay never reports a
+    /// flag for it. Both choices are applied through one per-run --patch overlay
+    /// instead, and both the catalogue and the reasoning levels come from the
+    /// profile's own composed configuration and the schema of that composition.
     async fn report_options(&self, runtime: &Runtime) -> RuntimeOptions {
         let (executable, mut diagnostics) = probe_target(runtime, || self.executable());
         let Some(executable) = executable else {
@@ -892,15 +1200,36 @@ impl AgentAdapter for DeepSeekAdapter {
         diagnostics.append(&mut options.diagnostics);
         options.diagnostics = diagnostics;
 
-        // The profile is the only authority for which models the route accepts.
+        // The profile is the only authority for which models the route accepts, and
+        // the entry schema is the only authority for the levels each model takes.
         match read_composition(&executable, &self.prefix_args, &self.environment).await {
             Some(composition) => match composition.provider {
-                Some(provider) if !composition.models.is_empty() => {
-                    options.models = composition.models;
+                Some(ref provider) if !composition.models.is_empty() => {
+                    options.models = composition
+                        .models
+                        .iter()
+                        .map(|model| ModelOption {
+                            value: model.value.clone(),
+                            label: model.label.clone(),
+                            reasoning_levels: levels(&composition.efforts_for(&model.value)),
+                            default_reasoning: model.default_reasoning_effort.clone(),
+                        })
+                        .collect();
+                    // The runtime-wide list belongs to the model the profile itself
+                    // selects: choosing the runtime default must still show the
+                    // levels that run would really accept.
+                    let selected = composition.model.clone().unwrap_or_default();
+                    options.levels = levels(&composition.efforts_for(&selected));
                     options.source = OptionsSource::Cli;
                     options.diagnostics.push(format!(
-                        "DeepSeek Harness applies a model through a one-run --patch overlay on the {provider} route, not a command line flag; Relay writes that overlay for every run"
+                        "DeepSeek Harness applies a model and a reasoning effort through one per-run --patch overlay on the {provider} route, not a command line flag; Relay writes that overlay for every run"
                     ));
+                    if !composition.route_efforts.is_empty() {
+                        options.diagnostics.push(format!(
+                            "The {provider} route accepts the reasoning efforts {}",
+                            composition.route_efforts.join(", ")
+                        ));
+                    }
                 }
                 Some(provider) => options.diagnostics.push(format!(
                     "This dsh profile declares no model catalogue for the {provider} route, so Relay cannot offer a model list"
@@ -915,10 +1244,6 @@ impl AgentAdapter for DeepSeekAdapter {
                     .to_string(),
             ),
         }
-        options.diagnostics.push(
-            "DeepSeek Harness keeps reasoning effort in the user's global settings document rather than in a per-run flag or overlay, so Relay does not offer reasoning selection for it"
-                .to_string(),
-        );
         options
     }
 
@@ -928,6 +1253,10 @@ impl AgentAdapter for DeepSeekAdapter {
 
     async fn resume(&self, input: ResumeInput) -> Result<WorkerHandle> {
         let session_id = input.native_session_id.clone();
+        // dsh adopts the named session but re-reads its default model selection
+        // while it does, so the selection has to travel with the resume. Without
+        // it the resumed run would quietly use whatever the profile points at
+        // now, which is exactly the "resume changed my model" bug.
         self.launch(
             StartInput {
                 run_id: input.run_id,
@@ -936,8 +1265,8 @@ impl AgentAdapter for DeepSeekAdapter {
                 cwd: input.cwd,
                 access_mode: input.access_mode,
                 executable_path: input.executable_path,
-                model: None,
-                reasoning: None,
+                model: input.model,
+                reasoning: input.reasoning,
                 instructions: input.instructions,
             },
             Some(session_id),
@@ -1059,8 +1388,10 @@ mod tests {
 
     /* ---------------- model selection for DeepSeek Harness ------------- */
 
-    /// The dump shape is what `dsh --dump-config` actually prints; the catalogue
-    /// only appears when the profile declares one.
+    /// The dump shape is what dsh --dump-config actually prints. This fixture is
+    /// the shipped headless profile: its persona is a folded block scalar, and the
+    /// provider row declares no catalogue at all -- dsh keeps that in code, and the
+    /// entry schema is where the CLI states it.
     const DUMP: &str = "\
 # == @deepseek-ai/dsh-base
 - id: timer
@@ -1071,21 +1402,63 @@ mod tests {
     provider: deepseek-official
     model: deepseek-flash
 - id: llm-deepseek
-  name: '@deepseek-ai/dsh-llm-deepseek'
+  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config:
+    personaPrefix: >-
+      You are a coding agent powered by the {{model}} model.
+    personaSuffix: Your working directory is {{cwd}}.
+# == @deepseek-ai/dsh-headless
+- id: headless-runner
+  name: '@deepseek-ai/dsh-headless'
+";
+
+    /// The composed rows a real dsh prints after Relay's own overlay was applied
+    /// to the shipped headless profile: the selection Relay wrote, and the
+    /// profile's persona with the instructions appended to it. js-yaml emits that
+    /// appended suffix as a literal block scalar, so a second run reads it back
+    /// through the same resolver.
+    const DUMP_AFTER_A_RELAY_OVERLAY: &str = "\
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: deepseek-official
+    model: deepseek-v4-pro
+    reasoningEffort: max
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config:
+    personaPrefix: You are a coding agent powered by the {{model}} model.
+    personaSuffix: |-
+      Your working directory is {{cwd}}.
+      Focus on implementation.
+";
+
+    /// A profile that declares the catalogue itself, with one model stating its
+    /// own levels: the two models must not receive the same list.
+    const DUMP_WITH_DECLARED_CATALOGUE: &str = "\
+- id: agent-default-model
+  config:
+    provider: deepseek-official
+    model: deepseek-flash
+- id: llm-deepseek
   config:
     models:
       - id: deepseek-v4-pro
         name: DeepSeek-V4-Pro
       - id: deepseek-flash
         name: DeepSeek-V41-Flash
+        reasoningEfforts:
+          off: null
+          high: high
+          max: max
 - id: system-prompt
-  name: '@deepseek-ai/dsh-system-prompt'
   config:
     personaPrefix: You are a coding agent powered by the {{model}} model.
     personaSuffix: Your working directory is {{cwd}}.
-# == @deepseek-ai/dsh-headless
-- id: code-runtime
-  name: '@deepseek-ai/dsh-code-runtime-worker-thread'
 ";
 
     const DUMP_WITHOUT_CATALOGUE: &str = "\
@@ -1095,33 +1468,127 @@ mod tests {
     provider: deepseek-official
     model: deepseek-flash
 - id: llm-deepseek
-  name: '@deepseek-ai/dsh-llm-deepseek'
+  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
 ";
 
+    /// The same profile with a config Relay must not restate: a patch replaces the
+    /// row's whole config object, so any extra key means the envelope instead.
+    const DUMP_PERSONA_WITH_EXTRA_KEYS: &str = "\
+- id: agent-default-model
+  config:
+    provider: deepseek-official
+    model: deepseek-flash
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+- id: system-prompt
+  config:
+    personaPrefix: You are a coding agent powered by the {{model}} model.
+    personaSuffix: Your working directory is {{cwd}}.
+    includeRuntimeContext: false
+";
+
+    /// The entry schema dsh --dump-config-schema prints, trimmed to the parts
+    /// Relay reads: the provider row's catalogue default and its effort enum.
+    const SCHEMA: &str = r##"{
+  "x-cordis": {
+    "entries": [
+      { "id": "system-prompt", "name": "@deepseek-ai/dsh-system-prompt", "configRef": "#/$defs/config59" },
+      { "id": "llm-deepseek", "name": "@deepseek-ai/dsh-llm-deepseek-api-key", "configRef": "#/$defs/config62" }
+    ]
+  },
+  "$defs": {
+    "config62": {
+      "anyOf": [
+        {
+          "properties": {
+            "thinking": { "anyOf": [ { "anyOf": [ { "const": "enabled" }, { "const": "disabled" } ] } ] },
+            "reasoningEffort": { "anyOf": [ { "anyOf": [
+              { "const": "off" }, { "const": "low" }, { "const": "high" }, { "const": "max" }
+            ] } ] },
+            "models": { "default": [
+              { "id": "deepseek-flash", "name": "DeepSeek-V41-Flash" },
+              { "id": "deepseek-v4-pro", "name": "DeepSeek-V4-Pro" }
+            ] }
+          }
+        }
+      ]
+    }
+  }
+}"##;
+
     #[test]
-    fn a_profile_dump_yields_the_provider_and_its_catalogue() {
+    fn a_profile_dump_yields_the_provider_its_model_and_its_catalogue() {
         let composition = parse_composition(DUMP);
         assert_eq!(composition.provider.as_deref(), Some("deepseek-official"));
-        assert_eq!(composition.models.len(), 2);
-        assert_eq!(composition.models[0].value, "deepseek-v4-pro");
-        assert_eq!(
-            composition.models[0].label.as_deref(),
-            Some("DeepSeek-V4-Pro")
-        );
-        assert_eq!(composition.models[1].value, "deepseek-flash");
+        assert_eq!(composition.model.as_deref(), Some("deepseek-flash"));
+        assert!(composition.models.is_empty(), "the profile declares none");
     }
 
     #[test]
-    fn a_profile_without_a_catalogue_reports_none() {
-        let composition = parse_composition(DUMP_WITHOUT_CATALOGUE);
+    fn a_profile_without_a_catalogue_reports_none_until_the_schema_speaks() {
+        let mut composition = parse_composition(DUMP_WITHOUT_CATALOGUE);
         assert_eq!(composition.provider.as_deref(), Some("deepseek-official"));
         assert!(composition.models.is_empty());
+        apply_schema(&mut composition, SCHEMA);
+        assert_eq!(composition.models.len(), 2);
+        assert_eq!(composition.route_efforts, vec!["off", "low", "high", "max"]);
+    }
+
+    /// A folded persona is resolved, so Relay can restate it instead of losing it.
+    #[test]
+    fn a_folded_persona_is_resolved_into_a_restatable_form() {
+        let composition = parse_composition(DUMP);
+        let persona = composition.persona.expect("the persona is restatable");
+        assert_eq!(
+            persona.prefix,
+            "You are a coding agent powered by the {{model}} model."
+        );
+        assert_eq!(persona.suffix, "Your working directory is {{cwd}}.");
+    }
+
+    /// A dump the real CLI produced from Relay's own overlay round-trips: the
+    /// literal block scalar js-yaml wrote is resolved, not dropped, and the
+    /// selection Relay wrote is read back as the profile's own.
+    #[test]
+    fn the_dump_a_real_overlay_produces_round_trips() {
+        let composition = parse_composition(DUMP_AFTER_A_RELAY_OVERLAY);
+        assert_eq!(composition.provider.as_deref(), Some("deepseek-official"));
+        assert_eq!(composition.model.as_deref(), Some("deepseek-v4-pro"));
+        assert_eq!(composition.reasoning_effort.as_deref(), Some("max"));
+        let persona = composition.persona.expect("the persona is restatable");
+        assert_eq!(
+            persona.prefix,
+            "You are a coding agent powered by the {{model}} model."
+        );
+        assert_eq!(
+            persona.suffix,
+            "Your working directory is {{cwd}}.\nFocus on implementation."
+        );
+    }
+
+    /// A row carrying anything else is left alone: a patch would reset those keys.
+    #[test]
+    fn a_persona_row_with_other_keys_is_not_restatable() {
+        let composition = parse_composition(DUMP_PERSONA_WITH_EXTRA_KEYS);
+        assert!(composition.persona.is_none());
+    }
+
+    /// `defaultReasoningEffort` is not a dsh key, so Relay must not invent one: the
+    /// route's own configured effort is the only default it reports.
+    #[test]
+    fn the_reported_default_is_one_the_profile_states() {
+        let mut composition = parse_composition(DUMP_WITHOUT_CATALOGUE);
+        apply_schema(&mut composition, SCHEMA);
+        assert!(composition
+            .models
+            .iter()
+            .all(|model| model.default_reasoning_effort.is_none()));
     }
 
     /// The headless profile of the real CLI has no model and no reasoning flag, so
     /// Relay must never claim one — and must never offer what it cannot apply.
     fn headless_help() -> &'static str {
-        "Usage: dsh --profile headless [options] [task...]\n\nArguments:\n  task        the task text\n\nOptions:\n  -h, --help  show this help\n"
+        "Usage: dsh --profile headless [options] [task...]\n\nArguments:\n  task               the task text\n\nOptions:\n  --json             print one JSON event per line\n  --session-id <id>  adopt an existing session\n  -h, --help         show this help\n"
     }
 
     fn fake_dsh(directory: &std::path::Path, dump: &str) -> String {
@@ -1129,6 +1596,7 @@ mod tests {
         let body = "#!/bin/sh\n\
              for arg in \"$@\"; do\n\
                if [ \"$arg\" = \"--dump-config\" ]; then cat \"$DSH_DUMP\"; exit 0; fi\n\
+               if [ \"$arg\" = \"--dump-config-schema\" ]; then cat \"$DSH_SCHEMA\"; exit 0; fi\n\
                if [ \"$arg\" = \"--help\" ]; then cat \"$DSH_HELP\"; exit 0; fi\n\
                if [ \"$arg\" = \"--version\" ]; then printf '0.1.5-rc.3\\n'; exit 0; fi\n\
              done\n\
@@ -1142,6 +1610,8 @@ mod tests {
              done\n\
              echo \"ARGV $*\" >> \"$DSH_RECORD\"\n\
              echo \"PERMISSION $DSH_PERMISSION_MODE\" >> \"$DSH_RECORD\"\n\
+             payload=$(cat)\n\
+             echo \"STDIN $payload\" >> \"$DSH_RECORD\"\n\
              printf '%s\\n' '{\"type\":\"session\",\"sessionId\":\"s-1\"}'\n\
              printf '%s\\n' '{\"type\":\"final\",\"text\":\"ok\"}'\n";
         std::fs::write(&script, body).unwrap();
@@ -1149,11 +1619,25 @@ mod tests {
         std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
         std::fs::set_permissions(&script, permissions).unwrap();
         std::fs::write(directory.join("dump.yml"), dump).unwrap();
+        std::fs::write(directory.join("schema.json"), SCHEMA).unwrap();
         std::fs::write(directory.join("help.txt"), headless_help()).unwrap();
         script.display().to_string()
     }
 
     fn fixture_environment(
+        directory: &std::path::Path,
+        record: &std::path::Path,
+    ) -> Vec<(String, String)> {
+        let mut environment = fixture_environment_without_schema(directory, record);
+        environment.push((
+            "DSH_SCHEMA".to_string(),
+            directory.join("schema.json").display().to_string(),
+        ));
+        environment
+    }
+
+    /// The same fixture for a dsh that will not compose an entry schema.
+    fn fixture_environment_without_schema(
         directory: &std::path::Path,
         record: &std::path::Path,
     ) -> Vec<(String, String)> {
@@ -1195,6 +1679,11 @@ mod tests {
         }
     }
 
+    fn with_reasoning(mut input: StartInput, reasoning: &str) -> StartInput {
+        input.reasoning = Some(reasoning.to_string());
+        input
+    }
+
     /// The registered executable is the one probed — never a second CLI that
     /// discovery happens to find first.
     #[tokio::test]
@@ -1211,7 +1700,27 @@ mod tests {
         assert_eq!(options.model_flag, None, "the headless CLI has no --model");
         assert_eq!(options.reasoning_flag, None);
         assert_eq!(options.models.len(), 2, "{:?}", options.diagnostics);
-        assert_eq!(options.models[0].value, "deepseek-v4-pro");
+        let values: Vec<&str> = options
+            .models
+            .iter()
+            .map(|model| model.value.as_str())
+            .collect();
+        assert!(values.contains(&"deepseek-flash"), "{values:?}");
+        assert!(values.contains(&"deepseek-v4-pro"), "{values:?}");
+        // Every offered model states the levels the runtime accepts for it, and
+        // the runtime-wide list belongs to the profile's own model.
+        assert!(options
+            .models
+            .iter()
+            .all(|model| !model.reasoning_levels.is_empty()));
+        assert_eq!(
+            options
+                .levels
+                .iter()
+                .map(|level| level.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["off", "low", "high", "max"]
+        );
         assert!(options
             .diagnostics
             .iter()
@@ -1219,7 +1728,7 @@ mod tests {
         assert!(options
             .diagnostics
             .iter()
-            .any(|line| line.contains("reasoning effort")));
+            .any(|line| line.contains("accepts the reasoning efforts off, low, high, max")));
     }
 
     /// A model the profile does not declare must never be launched: that is
@@ -1359,8 +1868,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let record = directory.path().join("record.txt");
         let executable = fake_dsh(directory.path(), DUMP_WITHOUT_CATALOGUE);
-        let adapter = DeepSeekAdapter::with_executable(executable.clone())
-            .with_environment(fixture_environment(directory.path(), &record));
+        // A dsh old enough to have no entry schema: nothing to check a model against.
+        let adapter = DeepSeekAdapter::with_executable(executable.clone()).with_environment(
+            fixture_environment_without_schema(directory.path(), &record),
+        );
 
         let handle = adapter
             .start(start_input(&executable, Some("deepseek-flash")))
@@ -1370,5 +1881,204 @@ mod tests {
         while receiver.recv().await.is_some() {}
         let log = std::fs::read_to_string(&record).unwrap();
         assert!(log.contains("model: \"deepseek-flash\""), "{log}");
+    }
+
+    /// Relay instructions and the profile's own persona are not a choice: the
+    /// overlay restates the resolved persona and appends the instructions to it.
+    #[tokio::test]
+    async fn instructions_keep_the_folded_persona_the_profile_composed() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let mut input = start_input(&executable, None);
+        input.instructions = Some("Focus on implementation.".to_string());
+        let handle = adapter.start(input).await.unwrap();
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+
+        let log = std::fs::read_to_string(&record).unwrap();
+        assert!(log.contains("system-prompt"), "{log}");
+        // The persona dsh composed is restated, not replaced by an empty string.
+        assert!(
+            log.contains(
+                "personaPrefix: \"You are a coding agent powered by the {{model}} model.\""
+            ),
+            "{log}"
+        );
+        assert!(!log.contains("personaPrefix: \"\""), "{log}");
+        assert!(log.contains("{{cwd}}"), "{log}");
+        assert!(log.contains("Focus on implementation."), "{log}");
+        assert!(!log.contains("[Relay agent profile instructions]"), "{log}");
+    }
+
+    /// A row Relay cannot restate is never touched: the instructions travel in the
+    /// task envelope instead, and the profile's own prompt stays whole.
+    #[tokio::test]
+    async fn a_persona_relay_cannot_restate_is_never_overwritten() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP_PERSONA_WITH_EXTRA_KEYS);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let mut input = start_input(&executable, None);
+        input.instructions = Some("Focus on implementation.".to_string());
+        let handle = adapter.start(input).await.unwrap();
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+
+        let log = std::fs::read_to_string(&record).unwrap();
+        assert!(
+            !log.contains("system-prompt"),
+            "the system-prompt row must not be patched at all: {log}"
+        );
+        assert!(log.contains("[Relay agent profile instructions]"), "{log}");
+        assert!(log.contains("Focus on implementation."), "{log}");
+    }
+
+    /// The whole point of the feature: the effort a user picks is the effort the
+    /// child process is really started with.
+    #[tokio::test]
+    async fn a_selected_reasoning_effort_reaches_the_child_process() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let input = with_reasoning(start_input(&executable, Some("deepseek-v4-pro")), "max");
+        let handle = adapter.start(input).await.unwrap();
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+
+        let log = std::fs::read_to_string(&record).unwrap();
+        assert!(log.contains("provider: \"deepseek-official\""), "{log}");
+        assert!(log.contains("model: \"deepseek-v4-pro\""), "{log}");
+        assert!(log.contains("reasoningEffort: \"max\""), "{log}");
+    }
+
+    /// An effort dsh does not accept for that model is refused, never rounded to
+    /// something the runtime would take.
+    #[tokio::test]
+    async fn an_unsupported_reasoning_effort_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let input = with_reasoning(start_input(&executable, Some("deepseek-flash")), "ultra");
+        let error = adapter.start(input).await.unwrap_err();
+        assert_eq!(error.code(), "INVALID_REQUEST");
+        assert!(error.message().contains("ultra"), "{}", error.message());
+        assert!(
+            !record.exists(),
+            "a refused selection must never reach the child process"
+        );
+    }
+
+    /// Different models, different levels: one model's list must never be used
+    /// for another.
+    #[tokio::test]
+    async fn each_model_reports_the_levels_it_accepts() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP_WITH_DECLARED_CATALOGUE);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let options = adapter.report_options(&runtime_with(&executable)).await;
+        let levels_of = |value: &str| {
+            options
+                .models
+                .iter()
+                .find(|model| model.value == value)
+                .map(|model| {
+                    model
+                        .reasoning_levels
+                        .iter()
+                        .map(|level| level.value.as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| panic!("{value} is not offered: {:?}", options.models))
+        };
+        assert_eq!(levels_of("deepseek-flash"), vec!["off", "high", "max"]);
+        assert_eq!(
+            levels_of("deepseek-v4-pro"),
+            vec!["off", "low", "high", "max"]
+        );
+    }
+
+    /// Resuming adopts the named session and re-applies the profile's selection,
+    /// so a resumed run cannot drift back to whatever the profile points at now.
+    #[tokio::test]
+    async fn resuming_reapplies_the_profile_selection() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let handle = adapter
+            .resume(ResumeInput {
+                run_id: "run:1".to_string(),
+                worker_session_id: "worker:2".to_string(),
+                native_session_id: "session-1".to_string(),
+                task: "carry on".to_string(),
+                cwd: std::env::temp_dir().display().to_string(),
+                access_mode: relay_core::AccessMode::ReadOnly,
+                executable_path: Some(executable.clone()),
+                model: Some("deepseek-v4-pro".to_string()),
+                reasoning: Some("max".to_string()),
+                instructions: None,
+            })
+            .await
+            .unwrap();
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+
+        let log = std::fs::read_to_string(&record).unwrap();
+        assert!(log.contains("--session-id session-1"), "{log}");
+        assert!(log.contains("model: \"deepseek-v4-pro\""), "{log}");
+        assert!(log.contains("reasoningEffort: \"max\""), "{log}");
+    }
+
+    /// One run's overlay is its own. Two runs used to share a file when they
+    /// started in the same microsecond, and one of them was then started with the
+    /// other's model, reasoning effort and persona.
+    #[test]
+    fn every_run_gets_its_own_overlay_file() {
+        let persona = DshPersona {
+            prefix: "persona".to_string(),
+            suffix: "instructions".to_string(),
+        };
+        let first = write_overlay(None, Some(&persona), "worker-1")
+            .unwrap()
+            .unwrap();
+        let second = write_overlay(None, Some(&persona), "worker-2")
+            .unwrap()
+            .unwrap();
+        let third = write_overlay(None, Some(&persona), "worker-1")
+            .unwrap()
+            .unwrap();
+        assert_ne!(first, second);
+        assert_ne!(first, third, "the same worker session never reuses a file");
+        for path in [&first, &second, &third] {
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            assert!(name.starts_with("run-"), "{name}");
+            assert!(
+                std::fs::read_to_string(path).unwrap().contains("persona"),
+                "{name} was empty"
+            );
+            let _ = std::fs::remove_file(path);
+        }
+        assert!(first
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("worker-1"));
     }
 }

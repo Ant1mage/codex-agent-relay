@@ -162,6 +162,7 @@ fn projection() -> RunProjectionView {
             native_session_id: None,
             parent_worker_session_id: None,
             process_id: None,
+            process: None,
             status: WorkerStatus::Running,
             started_at: stamp.clone(),
             ended_at: None,

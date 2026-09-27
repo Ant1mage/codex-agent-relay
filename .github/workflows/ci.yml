@@ -42,6 +42,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install Trunk
         run: cargo install trunk --locked
+      - name: Install the Tauri CLI
+        # The macOS runner image ships cargo and rustc but not the Tauri CLI, and
+        # the app has no package.json to pull @tauri-apps/cli from: without this
+        # the build step dies with "no such command: tauri".
+        run: cargo install tauri-cli --version '^2' --locked
       - name: Build the UI
         # Trunk reads NO_COLOR and only accepts true/false, so an exported "1"
         # from the environment would abort it.

@@ -160,6 +160,7 @@ impl AgentAdapter for FakeAdapter {
         Ok(WorkerHandle {
             native_session_id: Some(session),
             process_id: None,
+            process: None,
             events: receiver,
         })
     }
@@ -250,6 +251,7 @@ impl AgentAdapter for ControlledAdapter {
         Ok(WorkerHandle {
             native_session_id: Some(format!("controlled:{}", input.worker_session_id)),
             process_id: None,
+            process: None,
             events: receiver,
         })
     }

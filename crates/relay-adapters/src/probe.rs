@@ -105,9 +105,22 @@ pub struct HelpEvidence {
 }
 
 pub async fn read_help(executable: &str, prefix_args: &[String]) -> HelpEvidence {
+    read_help_with(executable, prefix_args, &[]).await
+}
+
+/// The same, in the environment a run would have.
+///
+/// A CLI whose profile is chosen by an environment variable answers --help
+/// differently under a different home, and the options Relay offers have to be
+/// the options the run will apply.
+pub async fn read_help_with(
+    executable: &str,
+    prefix_args: &[String],
+    env: &[(String, String)],
+) -> HelpEvidence {
     let mut args = prefix_args.to_vec();
     args.push("--help".to_string());
-    match capture(executable, &args).await {
+    match capture_with(executable, &args, env, PROBE_TIMEOUT).await {
         Some((_, stdout, stderr)) => HelpEvidence {
             text: format!("{stdout}\n{stderr}"),
             executable_path: executable.to_string(),
@@ -218,10 +231,7 @@ fn parse_models(evidence: &HelpEvidence) -> (Vec<ModelOption>, Option<String>, V
     }
     let models = values
         .into_iter()
-        .map(|value| ModelOption {
-            label: Some(value.clone()),
-            value,
-        })
+        .map(|value| ModelOption::new(value.clone(), Some(value)))
         .collect();
     (models, Some(flag), Vec::new())
 }

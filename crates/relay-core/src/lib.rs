@@ -11,6 +11,8 @@ pub mod domain;
 pub mod event;
 pub mod host_sessions;
 pub mod policy;
+#[cfg(not(target_family = "wasm"))]
+pub mod process;
 pub mod projection;
 pub mod registry;
 pub mod run;
@@ -23,9 +25,9 @@ pub use adapter::{AdapterEvent, AgentAdapter, DetectionResult, WorkerHandle};
 pub use domain::{
     now, AccessMode, AdapterCapabilities, AgentProfile, CapabilitySet, EnforcementSet, HostSession,
     HostSessionStatus, HostSessionUpsert, Isolation, ManualRuntime, ModelOption, OptionsSource,
-    ReasoningLevel, RelayError, RelayPolicy, RelayPolicyOverride, Result, ResumeInput, Run,
-    RunRequest, RunStatus, Runtime, RuntimeHealth, RuntimeOptions, StartInput, Step, StepStatus,
-    Timestamp, WorkerSession, WorkerStatus,
+    ProcessIdentity, ReasoningLevel, RelayError, RelayPolicy, RelayPolicyOverride, Result,
+    ResumeInput, Run, RunRequest, RunStatus, Runtime, RuntimeHealth, RuntimeOptions, StartInput,
+    Step, StepStatus, Timestamp, WorkerSession, WorkerStatus,
 };
 pub use event::{bound_native_event, RelayEvent, RelayEventType};
 pub use host_sessions::{apply_upsert, HostSessionRegistry, HostSessionStore};

@@ -111,6 +111,33 @@ pub struct ModelOption {
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// The reasoning levels this model accepts, when the runtime's own answer
+    /// depends on which model is selected. Empty means the runtime offers one
+    /// list for all of its models, which is what `RuntimeOptions::levels`
+    /// carries; it never means "reasoning is unsupported".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_levels: Vec<ReasoningLevel>,
+    /// The level the runtime uses for this model when a profile pins none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning: Option<String>,
+}
+
+impl ModelOption {
+    /// A model with no model-specific reasoning choices.
+    pub fn new(value: impl Into<String>, label: Option<String>) -> Self {
+        Self {
+            value: value.into(),
+            label,
+            reasoning_levels: Vec::new(),
+            default_reasoning: None,
+        }
+    }
+}
+
+impl Default for ModelOption {
+    fn default() -> Self {
+        Self::new(String::new(), None)
+    }
 }
 
 /// One selectable reasoning strength.
@@ -338,6 +365,13 @@ pub struct WorkerSession {
     pub parent_worker_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_id: Option<u32>,
+    /// Everything the kernel said about the process when Relay spawned it.
+    ///
+    /// A pid alone cannot identify a worker after a crash: the OS reuses pids.
+    /// This is what lets a later daemon decide whether the process now holding
+    /// that pid is really the worker it started. See `crate::process`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<ProcessIdentity>,
     pub status: WorkerStatus,
     pub started_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -369,6 +403,58 @@ pub struct HostSession {
     pub updated_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_at: Option<Timestamp>,
+}
+
+/// What the kernel knows about one process, as Relay recorded it at spawn.
+///
+/// Every field is optional because a platform may not answer: a missing field is
+/// never treated as a match. `start_time_seconds` is the platform's own clock
+/// (epoch seconds on macOS, seconds since boot on Linux), so it is only ever
+/// compared with another capture on the same machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessIdentity {
+    pub pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pgid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time_seconds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time_micros: Option<u32>,
+    /// The executable the kernel reports for the process, not the path Relay
+    /// asked for: a `dsh` shim is executed by its interpreter, and only an
+    /// observed image can be compared with another observation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<String>,
+}
+
+impl ProcessIdentity {
+    /// True when the kernel's current answer describes the same process.
+    ///
+    /// Distinct from "the pid exists": every fact Relay recorded has to match,
+    /// and a fact Relay could not record can never confirm an identity.
+    pub fn same_process(&self, live: &ProcessIdentity) -> bool {
+        if live.pid != self.pid {
+            return false;
+        }
+        match (self.start_time_seconds, live.start_time_seconds) {
+            (Some(recorded), Some(current)) if recorded == current => {}
+            _ => return false,
+        }
+        if let Some(executable) = &self.executable {
+            if live.executable.as_deref() != Some(executable.as_str()) {
+                return false;
+            }
+        }
+        if let Some(pgid) = self.pgid {
+            if live.pgid != Some(pgid) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// What a host reports about a session; Relay derives id and timestamps.
@@ -433,6 +519,14 @@ pub struct ResumeInput {
     pub access_mode: AccessMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<String>,
+    /// The same selection `start` would apply. DeepSeek Harness re-reads its
+    /// default model selection on resume instead of restoring the session's, so
+    /// a resume that carried no selection would silently fall back to the
+    /// profile's default model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
 }
