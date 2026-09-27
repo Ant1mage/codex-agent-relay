@@ -247,12 +247,15 @@ pub async fn list_models_over_http(key: &str) -> HttpModelsResult {
 
 /// Merges CLI-reported options with the official API. The CLI wins for each list
 /// it can actually enumerate; the API fills only a missing list.
+///
+/// A list is only ever filled in behind a flag the adapter will use to apply the
+/// answer: offering a model the run cannot apply would be a lie told by the UI.
 pub async fn with_model_fallback(
     cli: RuntimeOptions,
     provider_key: Option<&str>,
 ) -> RuntimeOptions {
-    let needs_models = cli.models.is_empty();
-    let needs_levels = cli.levels.is_empty();
+    let needs_models = cli.models.is_empty() && cli.model_flag.is_some();
+    let needs_levels = cli.levels.is_empty() && cli.reasoning_flag.is_some();
     let Some(provider_key) = provider_key else {
         return cli;
     };
@@ -364,5 +367,23 @@ mod tests {
         };
         let merged = with_model_fallback(cli.clone(), Some("deepseek")).await;
         assert_eq!(merged, cli);
+    }
+
+    /// A list the runtime cannot apply must never be fetched, let alone shown.
+    #[tokio::test]
+    async fn a_cli_without_a_model_flag_gets_no_model_list() {
+        std::env::remove_var("DEEPSEEK_API_KEY");
+        let cli = RuntimeOptions {
+            runtime_id: "r".into(),
+            adapter_id: "a".into(),
+            models: Vec::new(),
+            levels: Vec::new(),
+            model_flag: None,
+            reasoning_flag: None,
+            source: OptionsSource::Default,
+            diagnostics: Vec::new(),
+        };
+        let merged = with_model_fallback(cli.clone(), Some("deepseek")).await;
+        assert_eq!(merged, cli, "no flag means no way to apply a choice");
     }
 }

@@ -18,21 +18,225 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType,
-    Result, ResumeInput, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, EnforcementSet, ModelOption,
+    OptionsSource, RelayError, RelayEventType, Result, ResumeInput, Runtime, RuntimeHealth,
+    RuntimeOptions, StartInput, WorkerHandle,
 };
 
 use crate::cli::{run_cli, ParsedOutput, ProcessSupervisor, StreamMode, StreamOutcome, StreamSpec};
 use crate::probe::{
-    discover_executable, probe_runtime_options, read_help, version_of, with_selection_args,
-    Selection,
+    capture_with, discover_executable, probe_runtime_options, probe_target, read_help, version_of,
+    with_selection_args, Selection,
 };
 
 pub const ADAPTER_ID: &str = "deepseek-harness";
 pub const RUNTIME_ID: &str = "runtime:deepseek-harness";
+/* ------------------------------------------------------------------ */
+/* How a model choice reaches a dsh run                                */
+/* ------------------------------------------------------------------ */
+
+/// Composing a whole profile is heavier than answering `--help`.
+const DUMP_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// What one dsh profile says about its own model selection.
+///
+/// Read from `dsh --profile <name> --dump-config`, the CLI's own report of its
+/// composed configuration: Relay never guesses a key or invents a model name.
+#[derive(Debug, Default, PartialEq)]
+pub struct DshComposition {
+    /// The provider route the profile's default model selection points at.
+    pub provider: Option<String>,
+    /// The catalogue that route declares, when the profile declares one.
+    pub models: Vec<ModelOption>,
+    /// The composed system-prompt persona, when the profile states it inline.
+    pub persona_prefix: Option<String>,
+    pub persona_suffix: Option<String>,
+}
+
+impl DshComposition {
+    /// The composition row in which a provider route keeps its catalogue.
+    fn catalogue_row(provider: &str) -> Option<&'static str> {
+        match provider {
+            "deepseek-official" => Some("llm-deepseek"),
+            _ => None,
+        }
+    }
+
+    /// The persona Relay can restate in an overlay.
+    ///
+    /// A block scalar is deliberately *not* rewritten: Relay cannot reproduce it
+    /// byte for byte, and a wrong rewrite would damage the profile's own prompt.
+    fn persona(&self) -> Option<(String, String)> {
+        Some((
+            self.persona_prefix.clone().unwrap_or_default(),
+            self.persona_suffix.clone().unwrap_or_default(),
+        ))
+    }
+}
+
+/// True when a dumped scalar is a block scalar Relay will not restate.
+fn is_block_scalar(value: &str) -> bool {
+    matches!(value.trim(), "|" | ">" | "|-" | ">-" | "|+" | ">+")
+}
+
+fn scalar(value: &str) -> String {
+    let trimmed = value.trim();
+    let unquoted = trimmed
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))
+        .or_else(|| {
+            trimmed
+                .strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix('"'))
+        })
+        .unwrap_or(trimmed);
+    unquoted.trim().to_string()
+}
+
+/// Reads the two facts Relay needs out of a composed profile dump.
+///
+/// The dump is machine-generated YAML with a fixed two-space shape, so a small
+/// line reader is enough. It is tested against a real dump below.
+pub fn parse_composition(text: &str) -> DshComposition {
+    let mut provider: Option<String> = None;
+    let mut declared: Vec<ModelOption> = Vec::new();
+    let mut persona_prefix: Option<String> = None;
+    let mut persona_suffix: Option<String> = None;
+    let mut entry = String::new();
+    let mut in_config = false;
+    let mut in_models = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        if indent == 0 && trimmed.starts_with("- id:") {
+            entry = scalar(trimmed.trim_start_matches("- id:"));
+            in_config = false;
+            in_models = false;
+            continue;
+        }
+        if !in_config && !(indent == 2 && trimmed == "config:") {
+            continue;
+        }
+        if indent == 2 && trimmed == "config:" {
+            in_config = true;
+            in_models = false;
+            continue;
+        }
+        match (entry.as_str(), indent) {
+            ("agent-default-model", 4) if trimmed.starts_with("provider:") => {
+                provider = Some(scalar(trimmed.trim_start_matches("provider:")));
+            }
+            ("system-prompt", 4) if trimmed.starts_with("personaPrefix:") => {
+                let value = trimmed.trim_start_matches("personaPrefix:");
+                if !is_block_scalar(value) {
+                    persona_prefix = Some(scalar(value));
+                }
+            }
+            ("system-prompt", 4) if trimmed.starts_with("personaSuffix:") => {
+                let value = trimmed.trim_start_matches("personaSuffix:");
+                if !is_block_scalar(value) {
+                    persona_suffix = Some(scalar(value));
+                }
+            }
+            ("llm-deepseek", 4) if trimmed == "models:" => in_models = true,
+            ("llm-deepseek", 6) if in_models && trimmed.starts_with("- id:") => {
+                declared.push(ModelOption {
+                    value: scalar(trimmed.trim_start_matches("- id:")),
+                    label: None,
+                });
+            }
+            ("llm-deepseek", 8) if in_models && trimmed.starts_with("name:") => {
+                if let Some(last) = declared.last_mut() {
+                    last.label = Some(scalar(trimmed.trim_start_matches("name:")));
+                }
+            }
+            _ => {}
+        }
+    }
+    let models = match provider.as_deref().and_then(DshComposition::catalogue_row) {
+        Some("llm-deepseek") => declared,
+        _ => Vec::new(),
+    };
+    DshComposition {
+        provider,
+        models,
+        persona_prefix,
+        persona_suffix,
+    }
+}
+
+/// Composes the headless profile exactly the way a run would, and reads back the
+/// two facts Relay needs.
+async fn read_composition(
+    executable: &str,
+    prefix: &[String],
+    env: &[(String, String)],
+) -> Option<DshComposition> {
+    let mut args = prefix.to_vec();
+    args.extend(["--profile".to_string(), "headless".to_string()]);
+    args.push("--dump-config".to_string());
+    let (code, stdout, _) = capture_with(executable, &args, env, DUMP_TIMEOUT).await?;
+    (code == 0).then(|| parse_composition(&stdout))
+}
+
+/// Writes the one-run overlay that makes an Agent Profile real.
+///
+/// The launcher applies \`--patch\` files after the profile layer, so both rows
+/// replace exactly what the profile composed: the default model selection, and the
+/// system-prompt persona when the profile's instructions need their native slot.
+/// Every value is a double-quoted YAML scalar with escaped newlines, so a model id
+/// or instruction text can never change the shape of the document.
+fn write_overlay(
+    model: Option<&(String, String)>,
+    persona: Option<&(String, String)>,
+) -> std::io::Result<PathBuf> {
+    let mut body = String::from("# Written by Relay for a single run.\n");
+    if let Some((provider, value)) = model {
+        body.push_str("- id: agent-default-model\n  config:\n    provider: ");
+        body.push_str(&quoted(provider));
+        body.push_str("\n    model: ");
+        body.push_str(&quoted(value));
+        body.push('\n');
+    }
+    if let Some((prefix, suffix)) = persona {
+        body.push_str("- id: system-prompt\n  config:\n    personaPrefix: ");
+        body.push_str(&quoted(prefix));
+        body.push_str("\n    personaSuffix: ");
+        body.push_str(&quoted(suffix));
+        body.push('\n');
+    }
+    let directory = std::env::temp_dir().join("relay-run-overlays");
+    std::fs::create_dir_all(&directory)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    let path = directory.join(format!("run-{}-{stamp}.yml", std::process::id()));
+    std::fs::write(&path, body)?;
+    Ok(path)
+}
+
+/// A YAML double-quoted scalar: the only shape Relay writes.
+fn quoted(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other => escaped.push(other),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
 
 /// Maps one native line into Relay events. Public so it can be tested directly.
 pub fn parse_line(line: &str) -> ParsedOutput {
@@ -240,6 +444,12 @@ impl Default for Features {
     }
 }
 
+/// A run's task plus the overlay that carries its per-run choices.
+struct PreparedRun {
+    task: String,
+    overlay: Option<PathBuf>,
+}
+
 pub struct DeepSeekAdapter {
     configured_executable: Option<String>,
     prefix_args: Vec<String>,
@@ -346,6 +556,127 @@ impl DeepSeekAdapter {
         }
     }
 
+    /// The environment a run starts with.
+    ///
+    /// Relay's access mode is not advice for this runtime: the sandbox row reads
+    /// DSH_PERMISSION_MODE, so a read-only run really is read-only. An explicit
+    /// deployment override in the adapter's own environment wins.
+    fn run_environment(&self, access_mode: relay_core::AccessMode) -> Vec<(String, String)> {
+        let mut environment = self.environment.clone();
+        if environment
+            .iter()
+            .any(|(key, _)| key == "DSH_PERMISSION_MODE")
+        {
+            return environment;
+        }
+        let mode = match access_mode {
+            relay_core::AccessMode::ReadOnly | relay_core::AccessMode::Propose => "read-only",
+            relay_core::AccessMode::Write => "workspace-write",
+        };
+        environment.push(("DSH_PERMISSION_MODE".to_string(), mode.to_string()));
+        environment
+    }
+
+    /// Everything one run needs beyond its bare task.
+    ///
+    /// DeepSeek Harness applies per-run choices through a --patch overlay, so this
+    /// is the whole mechanism behind the model picker and behind the profile's
+    /// instructions: both become rows the launcher layers over the profile.
+    async fn prepare_run(&self, executable: &str, input: &StartInput) -> Result<PreparedRun> {
+        let model = input
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let instructions = input
+            .instructions
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if model.is_none() && instructions.is_none() {
+            return Ok(PreparedRun {
+                task: input.task.clone(),
+                overlay: None,
+            });
+        }
+
+        let composition = read_composition(executable, &self.prefix_args, &self.environment).await;
+
+        // The profile is the only authority for which model ids its provider route
+        // accepts, so a choice outside the catalogue is refused instead of being
+        // launched and silently ignored.
+        let mut selection = None;
+        if let Some(model) = &model {
+            let Some(composition) = composition.as_ref() else {
+                return Err(RelayError::new(
+                    "OPERATION_UNSUPPORTED",
+                    "This DeepSeek Harness installation did not report a composed configuration, so Relay cannot apply a model to it",
+                ));
+            };
+            let Some(provider) = composition.provider.clone() else {
+                return Err(RelayError::new(
+                    "OPERATION_UNSUPPORTED",
+                    "This DeepSeek Harness profile declares no default model selection, so Relay cannot apply a model to it",
+                ));
+            };
+            if !composition.models.is_empty()
+                && !composition
+                    .models
+                    .iter()
+                    .any(|option| option.value == *model)
+            {
+                return Err(RelayError::new(
+                    "INVALID_REQUEST",
+                    format!(
+                        "This dsh profile does not declare the model {model}; Relay will not pass a model the runtime cannot apply"
+                    ),
+                ));
+            }
+            selection = Some((provider, model.clone()));
+        }
+
+        // Instructions belong in the runtime's own system prompt, not appended to
+        // the task. A profile that states its persona as a block scalar is not
+        // restated — the envelope covers that case instead of dropping the text.
+        let mut task = input.task.clone();
+        let mut persona = None;
+        if let Some(instructions) = &instructions {
+            match composition
+                .as_ref()
+                .and_then(|composition| composition.persona())
+            {
+                Some((prefix, suffix)) => {
+                    let suffix = if suffix.trim().is_empty() {
+                        instructions.clone()
+                    } else {
+                        format!(
+                            "{suffix}
+
+{instructions}"
+                        )
+                    };
+                    persona = Some((prefix, suffix));
+                }
+                None => {
+                    task = crate::instructions::enveloped(&input.task, Some(instructions));
+                }
+            }
+        }
+
+        let overlay = write_overlay(selection.as_ref(), persona.as_ref()).map_err(|error| {
+            RelayError::new(
+                "ADAPTER_FAILURE",
+                format!("cannot write the run overlay: {error}"),
+            )
+        })?;
+        Ok(PreparedRun {
+            task,
+            overlay: Some(overlay),
+        })
+    }
+
     async fn launch(
         &self,
         input: StartInput,
@@ -363,19 +694,21 @@ impl DeepSeekAdapter {
             })?;
         let options = self.refresh_options(&executable).await;
         let features = self.features();
+        let prepared = self.prepare_run(&executable, &input).await?;
 
         if !features.json {
             return self
-                .launch_plain(&executable, input, resume_session_id)
+                .launch_plain(&executable, input, resume_session_id, prepared)
                 .await;
         }
 
         let mut args = self.prefix_args.clone();
-        args.extend([
-            "--profile".to_string(),
-            "headless".to_string(),
-            "--json".to_string(),
-        ]);
+        args.extend(["--profile".to_string(), "headless".to_string()]);
+        if let Some(path) = &prepared.overlay {
+            args.push("--patch".to_string());
+            args.push(path.display().to_string());
+        }
+        args.push("--json".to_string());
         if let Some(session_id) = &resume_session_id {
             args.push("--session-id".to_string());
             args.push(session_id.clone());
@@ -387,9 +720,10 @@ impl DeepSeekAdapter {
                 executable,
                 args,
                 cwd: input.cwd.clone(),
-                env: self.environment.clone(),
-                stdin: Some(input.task.clone()),
+                env: self.run_environment(input.access_mode),
+                stdin: Some(prepared.task.clone()),
                 supervisor_key: input.worker_session_id.clone(),
+                cleanup: prepared.overlay,
             },
             StreamMode::Lines,
             Arc::new(parse_line),
@@ -405,6 +739,7 @@ impl DeepSeekAdapter {
         executable: &str,
         input: StartInput,
         resume_session_id: Option<String>,
+        prepared: PreparedRun,
     ) -> Result<WorkerHandle> {
         if resume_session_id.is_some() && !self.features().resume {
             return Err(RelayError::new(
@@ -420,11 +755,15 @@ impl DeepSeekAdapter {
             .unwrap_or_else(|| RuntimeOptions::empty(RUNTIME_ID, ADAPTER_ID, "plain mode"));
         let mut args = self.prefix_args.clone();
         args.extend(["--profile".to_string(), "headless".to_string()]);
+        if let Some(path) = &prepared.overlay {
+            args.push("--patch".to_string());
+            args.push(path.display().to_string());
+        }
         if let Some(session_id) = &resume_session_id {
             args.push("--session-id".to_string());
             args.push(session_id.clone());
         }
-        args.push(input.task.clone());
+        args.push(prepared.task.clone());
         let args = with_selection_args(&args, &self.selection(&input), &options);
 
         run_cli(
@@ -432,9 +771,10 @@ impl DeepSeekAdapter {
                 executable: executable.to_string(),
                 args,
                 cwd: input.cwd.clone(),
-                env: self.environment.clone(),
+                env: self.run_environment(input.access_mode),
                 stdin: None,
                 supervisor_key: input.worker_session_id.clone(),
+                cleanup: prepared.overlay,
             },
             StreamMode::WholeOutput,
             Arc::new(parse_plain_output),
@@ -477,6 +817,15 @@ impl AgentAdapter for DeepSeekAdapter {
             cancel: true,
             child_sessions: false,
             model_selection: None,
+            // DeepSeek Harness has a real sandbox: the sandbox-policy row reads its
+            // mode from DSH_PERMISSION_MODE, which is exactly the deployment
+            // override Relay maps an access mode onto. It has no way to remove
+            // shell or network access, so those stay unenforced.
+            enforcement: EnforcementSet {
+                workspace: true,
+                commands: false,
+                network: false,
+            },
         }
     }
 
@@ -523,17 +872,53 @@ impl AgentAdapter for DeepSeekAdapter {
         }
     }
 
-    async fn report_options(&self, runtime_id: &str) -> RuntimeOptions {
-        let Some(executable) = self.executable() else {
-            return RuntimeOptions::empty(
-                runtime_id,
-                ADAPTER_ID,
-                "Runtime executable was not found, so Relay cannot read its model options",
-            );
+    /// What a run of this runtime can really apply.
+    ///
+    /// DeepSeek Harness's headless profile has neither a `--model` nor a
+    /// `--reasoning` flag — its own `--help` proves it — so Relay never reports a
+    /// flag for it. A model is applied through a one-run `--patch` overlay instead,
+    /// and the catalogue comes from the profile's own composed configuration. A
+    /// model list is therefore offered only when Relay found both a provider route
+    /// and a catalogue for it, because only then is a choice real. Reasoning is
+    /// never offered: dsh keeps `reasoningEffort` in the user's global settings
+    /// document, which Relay does not write.
+    async fn report_options(&self, runtime: &Runtime) -> RuntimeOptions {
+        let (executable, mut diagnostics) = probe_target(runtime, || self.executable());
+        let Some(executable) = executable else {
+            return RuntimeOptions::empty(&runtime.id, ADAPTER_ID, diagnostics.join("; "));
         };
-        let options = self.refresh_options(&executable).await;
-        let mut options = options;
-        options.runtime_id = runtime_id.to_string();
+        let mut options = self.refresh_options(&executable).await;
+        options.runtime_id = runtime.id.clone();
+        diagnostics.append(&mut options.diagnostics);
+        options.diagnostics = diagnostics;
+
+        // The profile is the only authority for which models the route accepts.
+        match read_composition(&executable, &self.prefix_args, &self.environment).await {
+            Some(composition) => match composition.provider {
+                Some(provider) if !composition.models.is_empty() => {
+                    options.models = composition.models;
+                    options.source = OptionsSource::Cli;
+                    options.diagnostics.push(format!(
+                        "DeepSeek Harness applies a model through a one-run --patch overlay on the {provider} route, not a command line flag; Relay writes that overlay for every run"
+                    ));
+                }
+                Some(provider) => options.diagnostics.push(format!(
+                    "This dsh profile declares no model catalogue for the {provider} route, so Relay cannot offer a model list"
+                )),
+                None => options.diagnostics.push(
+                    "This dsh profile declares no default model selection, so Relay cannot offer a model list"
+                        .to_string(),
+                ),
+            },
+            None => options.diagnostics.push(
+                "dsh did not report a composed configuration, so Relay cannot offer a model list"
+                    .to_string(),
+            ),
+        }
+        options.diagnostics.push(
+            "DeepSeek Harness keeps reasoning effort in the user's global settings document rather than in a per-run flag or overlay, so Relay does not offer reasoning selection for it"
+                .to_string(),
+        );
         options
     }
 
@@ -670,5 +1055,320 @@ mod tests {
         });
         assert_eq!(failed_turn.event_type, RelayEventType::WorkerFailed);
         assert_eq!(failed_turn.data["turnEndKind"], "max-tokens");
+    }
+
+    /* ---------------- model selection for DeepSeek Harness ------------- */
+
+    /// The dump shape is what `dsh --dump-config` actually prints; the catalogue
+    /// only appears when the profile declares one.
+    const DUMP: &str = "\
+# == @deepseek-ai/dsh-base
+- id: timer
+  name: '@deepseek-ai/cordis-plugin-timer'
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: deepseek-official
+    model: deepseek-flash
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek'
+  config:
+    models:
+      - id: deepseek-v4-pro
+        name: DeepSeek-V4-Pro
+      - id: deepseek-flash
+        name: DeepSeek-V41-Flash
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config:
+    personaPrefix: You are a coding agent powered by the {{model}} model.
+    personaSuffix: Your working directory is {{cwd}}.
+# == @deepseek-ai/dsh-headless
+- id: code-runtime
+  name: '@deepseek-ai/dsh-code-runtime-worker-thread'
+";
+
+    const DUMP_WITHOUT_CATALOGUE: &str = "\
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: deepseek-official
+    model: deepseek-flash
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek'
+";
+
+    #[test]
+    fn a_profile_dump_yields_the_provider_and_its_catalogue() {
+        let composition = parse_composition(DUMP);
+        assert_eq!(composition.provider.as_deref(), Some("deepseek-official"));
+        assert_eq!(composition.models.len(), 2);
+        assert_eq!(composition.models[0].value, "deepseek-v4-pro");
+        assert_eq!(
+            composition.models[0].label.as_deref(),
+            Some("DeepSeek-V4-Pro")
+        );
+        assert_eq!(composition.models[1].value, "deepseek-flash");
+    }
+
+    #[test]
+    fn a_profile_without_a_catalogue_reports_none() {
+        let composition = parse_composition(DUMP_WITHOUT_CATALOGUE);
+        assert_eq!(composition.provider.as_deref(), Some("deepseek-official"));
+        assert!(composition.models.is_empty());
+    }
+
+    /// The headless profile of the real CLI has no model and no reasoning flag, so
+    /// Relay must never claim one — and must never offer what it cannot apply.
+    fn headless_help() -> &'static str {
+        "Usage: dsh --profile headless [options] [task...]\n\nArguments:\n  task        the task text\n\nOptions:\n  -h, --help  show this help\n"
+    }
+
+    fn fake_dsh(directory: &std::path::Path, dump: &str) -> String {
+        let script = directory.join("dsh");
+        let body = "#!/bin/sh\n\
+             for arg in \"$@\"; do\n\
+               if [ \"$arg\" = \"--dump-config\" ]; then cat \"$DSH_DUMP\"; exit 0; fi\n\
+               if [ \"$arg\" = \"--help\" ]; then cat \"$DSH_HELP\"; exit 0; fi\n\
+               if [ \"$arg\" = \"--version\" ]; then printf '0.1.5-rc.3\\n'; exit 0; fi\n\
+             done\n\
+             prev=\"\"\n\
+             for arg in \"$@\"; do\n\
+               if [ \"$prev\" = \"--patch\" ]; then\n\
+                 echo \"PATCH-PATH $arg\" >> \"$DSH_RECORD\"\n\
+                 cat \"$arg\" >> \"$DSH_RECORD\"\n\
+               fi\n\
+               prev=\"$arg\"\n\
+             done\n\
+             echo \"ARGV $*\" >> \"$DSH_RECORD\"\n\
+             echo \"PERMISSION $DSH_PERMISSION_MODE\" >> \"$DSH_RECORD\"\n\
+             printf '%s\\n' '{\"type\":\"session\",\"sessionId\":\"s-1\"}'\n\
+             printf '%s\\n' '{\"type\":\"final\",\"text\":\"ok\"}'\n";
+        std::fs::write(&script, body).unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+        std::fs::write(directory.join("dump.yml"), dump).unwrap();
+        std::fs::write(directory.join("help.txt"), headless_help()).unwrap();
+        script.display().to_string()
+    }
+
+    fn fixture_environment(
+        directory: &std::path::Path,
+        record: &std::path::Path,
+    ) -> Vec<(String, String)> {
+        vec![
+            (
+                "DSH_DUMP".to_string(),
+                directory.join("dump.yml").display().to_string(),
+            ),
+            (
+                "DSH_HELP".to_string(),
+                directory.join("help.txt").display().to_string(),
+            ),
+            ("DSH_RECORD".to_string(), record.display().to_string()),
+        ]
+    }
+
+    fn runtime_with(executable: &str) -> Runtime {
+        Runtime {
+            id: RUNTIME_ID.to_string(),
+            adapter_id: ADAPTER_ID.to_string(),
+            executable_path: executable.to_string(),
+            version: None,
+            health: RuntimeHealth::Available,
+            capabilities: AdapterCapabilities::default(),
+        }
+    }
+
+    fn start_input(executable: &str, model: Option<&str>) -> StartInput {
+        StartInput {
+            run_id: "run:1".to_string(),
+            worker_session_id: "worker:1".to_string(),
+            task: "do it".to_string(),
+            cwd: std::env::temp_dir().display().to_string(),
+            access_mode: relay_core::AccessMode::ReadOnly,
+            executable_path: Some(executable.to_string()),
+            model: model.map(str::to_string),
+            reasoning: None,
+            instructions: None,
+        }
+    }
+
+    /// The registered executable is the one probed — never a second CLI that
+    /// discovery happens to find first.
+    #[tokio::test]
+    async fn options_are_read_from_the_registered_executable() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP);
+        // The adapter's own discovery points somewhere useless; the runtime wins.
+        let adapter = DeepSeekAdapter::with_executable("/nonexistent/dsh")
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let options = adapter.report_options(&runtime_with(&executable)).await;
+        assert_eq!(options.runtime_id, RUNTIME_ID);
+        assert_eq!(options.model_flag, None, "the headless CLI has no --model");
+        assert_eq!(options.reasoning_flag, None);
+        assert_eq!(options.models.len(), 2, "{:?}", options.diagnostics);
+        assert_eq!(options.models[0].value, "deepseek-v4-pro");
+        assert!(options
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("--patch overlay")));
+        assert!(options
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("reasoning effort")));
+    }
+
+    /// A model the profile does not declare must never be launched: that is
+    /// exactly the "picker that does nothing" Relay refuses to offer.
+    #[tokio::test]
+    async fn a_run_refuses_a_model_the_profile_cannot_apply() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let error = adapter
+            .start(start_input(&executable, Some("not-a-model")))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "INVALID_REQUEST");
+        assert!(error.message().contains("not-a-model"));
+    }
+
+    /// The whole point: a model that is offered is a model that is applied. The
+    /// overlay reaches the child process, names the profile's own provider, and is
+    /// gone once the run ends.
+    #[tokio::test]
+    async fn a_selected_model_reaches_the_child_process_and_is_cleaned_up() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let handle = adapter
+            .start(start_input(&executable, Some("deepseek-v4-pro")))
+            .await
+            .unwrap();
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+
+        let log = std::fs::read_to_string(&record).unwrap();
+        assert!(
+            log.contains("--patch"),
+            "the overlay never reached dsh: {log}"
+        );
+        assert!(log.contains("provider: \"deepseek-official\""), "{log}");
+        assert!(log.contains("model: \"deepseek-v4-pro\""), "{log}");
+
+        let patch_path = log
+            .lines()
+            .find_map(|line| line.strip_prefix("PATCH-PATH "))
+            .expect("the run recorded the overlay path")
+            .trim()
+            .to_string();
+        assert!(
+            !std::path::Path::new(&patch_path).exists(),
+            "the overlay outlived the run: {patch_path}"
+        );
+    }
+
+    /// Instructions are the profile's whole point, so they must reach the child
+    /// process — through the runtime's own system prompt, not appended to a task.
+    #[tokio::test]
+    async fn profile_instructions_reach_the_runtime_system_prompt() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let mut input = start_input(&executable, None);
+        input.instructions = Some("You own the engineering work.".to_string());
+        let handle = adapter.start(input).await.unwrap();
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+
+        let log = std::fs::read_to_string(&record).unwrap();
+        assert!(log.contains("system-prompt"), "{log}");
+        assert!(log.contains("You own the engineering work."), "{log}");
+        // The profile's own persona survives: Relay restates what it composed
+        // instead of replacing it.
+        assert!(log.contains("{{cwd}}"), "{log}");
+        assert!(log.contains("{{model}}"), "{log}");
+        // The task itself is untouched: the instructions are not duplicated.
+        assert!(!log.contains("[Relay agent profile instructions]"), "{log}");
+    }
+
+    /// Relay's access mode is a real boundary for this runtime: the sandbox row
+    /// reads DSH_PERMISSION_MODE, so a read-only run really cannot write.
+    #[tokio::test]
+    async fn the_access_mode_reaches_the_runtime_sandbox() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let mut read_only = start_input(&executable, None);
+        read_only.access_mode = relay_core::AccessMode::ReadOnly;
+        let handle = adapter.start(read_only).await.unwrap();
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+        let log = std::fs::read_to_string(&record).unwrap();
+        assert!(log.contains("PERMISSION read-only"), "{log}");
+    }
+
+    #[tokio::test]
+    async fn a_write_run_gets_the_workspace_sandbox() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let mut write = start_input(&executable, None);
+        write.access_mode = relay_core::AccessMode::Write;
+        let handle = adapter.start(write).await.unwrap();
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+        let log = std::fs::read_to_string(&record).unwrap();
+        assert!(log.contains("PERMISSION workspace-write"), "{log}");
+    }
+
+    /// An explicit deployment override is never overridden by Relay's mapping.
+    #[test]
+    fn an_explicit_permission_override_wins() {
+        let adapter = DeepSeekAdapter::new().with_environment(vec![(
+            "DSH_PERMISSION_MODE".to_string(),
+            "danger-full-access".to_string(),
+        )]);
+        let environment = adapter.run_environment(relay_core::AccessMode::ReadOnly);
+        assert_eq!(environment.len(), 1);
+        assert_eq!(environment[0].1, "danger-full-access");
+    }
+
+    /// A profile that declares no catalogue still applies what a profile carries.
+    #[tokio::test]
+    async fn a_profile_without_a_catalogue_still_applies_its_model() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("record.txt");
+        let executable = fake_dsh(directory.path(), DUMP_WITHOUT_CATALOGUE);
+        let adapter = DeepSeekAdapter::with_executable(executable.clone())
+            .with_environment(fixture_environment(directory.path(), &record));
+
+        let handle = adapter
+            .start(start_input(&executable, Some("deepseek-flash")))
+            .await
+            .unwrap();
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+        let log = std::fs::read_to_string(&record).unwrap();
+        assert!(log.contains("model: \"deepseek-flash\""), "{log}");
     }
 }

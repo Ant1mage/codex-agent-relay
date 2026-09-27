@@ -124,6 +124,7 @@ impl AgentAdapter for FakeAdapter {
             cancel: true,
             child_sessions: false,
             model_selection: None,
+            enforcement: Default::default(),
         }
     }
 
@@ -224,6 +225,7 @@ impl AgentAdapter for ControlledAdapter {
             cancel: true,
             child_sessions: false,
             model_selection: None,
+            enforcement: Default::default(),
         }
     }
 

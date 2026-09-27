@@ -27,6 +27,9 @@ pub struct StreamSpec {
     pub stdin: Option<String>,
     /// Key the process is registered under so `cancel` can find it.
     pub supervisor_key: String,
+    /// A file this launch created that must not outlive the process — a per-run
+    /// configuration overlay, for instance. Removed once the child is reaped.
+    pub cleanup: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,6 +248,7 @@ pub async fn run_cli(
     }
 
     let supervisor_for_task = Arc::clone(&supervisor);
+    let cleanup = spec.cleanup.clone();
     let key = spec.supervisor_key.clone();
     let parse_for_task = Arc::clone(&parse);
     let terminal_for_task = Arc::clone(&terminal);
@@ -376,6 +380,9 @@ pub async fn run_cli(
         if let Some(pid) = pid {
             supervisor_for_task.forget_process(pid);
         }
+        if let Some(path) = &cleanup {
+            let _ = std::fs::remove_file(path);
+        }
         let _ = sender.send(terminal_for_task(&outcome)).await;
         drop(sender);
     });
@@ -501,6 +508,7 @@ mod tests {
             env: Vec::new(),
             stdin: None,
             supervisor_key: "worker:test".to_string(),
+            cleanup: None,
         }
     }
 

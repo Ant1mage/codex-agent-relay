@@ -7,7 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use relay_core::{AdapterCapabilities, ModelOption, OptionsSource, ReasoningLevel, RuntimeOptions};
+use relay_core::{
+    AdapterCapabilities, ModelOption, OptionsSource, ReasoningLevel, Runtime, RuntimeOptions,
+};
 use tokio::process::Command;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -43,9 +45,32 @@ pub fn discover_executable(name: &str, extra: &[PathBuf]) -> Option<PathBuf> {
 
 /// Runs a CLI once and captures stdout+stderr. Used for `--version` and `--help`.
 pub async fn capture(executable: &str, args: &[String]) -> Option<(i32, String, String)> {
+    capture_within(executable, args, PROBE_TIMEOUT).await
+}
+
+/// The same, with an explicit budget. Composing a whole configuration is heavier
+/// than answering `--help`, so it gets its own.
+pub async fn capture_within(
+    executable: &str,
+    args: &[String],
+    timeout: Duration,
+) -> Option<(i32, String, String)> {
+    capture_with(executable, args, &[], timeout).await
+}
+
+/// The same, with the environment an adapter launches its CLI under.
+pub async fn capture_with(
+    executable: &str,
+    args: &[String],
+    env: &[(String, String)],
+    timeout: Duration,
+) -> Option<(i32, String, String)> {
     let mut command = Command::new(executable);
     command.args(args).kill_on_drop(true);
-    let output = tokio::time::timeout(PROBE_TIMEOUT, command.output())
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = tokio::time::timeout(timeout, command.output())
         .await
         .ok()?
         .ok()?;
@@ -276,6 +301,62 @@ pub fn probe_runtime_options(
             diagnostics,
         },
     )
+}
+
+/// Which executable an options probe must use.
+///
+/// A registered runtime carries the exact file the user chose — possibly one
+/// discovery would never find — so that file is the only thing a probe may run.
+/// Discovery is a fallback for a runtime that has no path at all, and it is
+/// reported so the panel can say the probe used a different CLI.
+pub fn probe_target(
+    runtime: &Runtime,
+    discovered: impl FnOnce() -> Option<String>,
+) -> (Option<String>, Vec<String>) {
+    let registered = runtime.executable_path.trim();
+    if !registered.is_empty() {
+        return (Some(registered.to_string()), Vec::new());
+    }
+    match discovered() {
+        Some(path) => (
+            Some(path.clone()),
+            vec![format!(
+                "Runtime {} has no registered executable; Relay probed {path} instead",
+                runtime.id
+            )],
+        ),
+        None => (
+            None,
+            vec![format!(
+                "Runtime {} has no registered executable, so Relay cannot read its options",
+                runtime.id
+            )],
+        ),
+    }
+}
+
+/// Keeps only the lists this runtime can actually apply.
+///
+/// Some CLIs advertise a model flag but refuse to list the values for it, and the
+/// provider's own API can fill that list in. That is only worth doing when there
+/// is a flag to apply the answer with: a picker whose choice never reaches the
+/// child process is worse than no picker.
+pub fn applicable(options: RuntimeOptions) -> RuntimeOptions {
+    let models = if options.model_flag.is_some() {
+        options.models
+    } else {
+        Vec::new()
+    };
+    let levels = if options.reasoning_flag.is_some() {
+        options.levels
+    } else {
+        Vec::new()
+    };
+    RuntimeOptions {
+        models,
+        levels,
+        ..options
+    }
 }
 
 /// Narrows a start/resume input to just the selection fields.

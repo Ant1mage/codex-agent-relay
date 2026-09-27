@@ -126,7 +126,11 @@ pub async fn detect_environment(config: &ConfigStore) -> Environment {
     }
 }
 
-/// Model and reasoning values a runtime's CLI advertises, for the profile editor.
+/// Model and reasoning values a run of this runtime can really apply.
+///
+/// The whole `Runtime` travels to the adapter, so a hand-registered runtime is
+/// probed through the exact executable the user chose: an options query must
+/// never silently fall back to a different CLI on `PATH`.
 pub async fn runtime_options(runtime_id: &str, runtimes: &[Runtime]) -> RuntimeOptions {
     let Some(runtime) = runtimes.iter().find(|runtime| runtime.id == runtime_id) else {
         return RuntimeOptions::empty(
@@ -136,7 +140,7 @@ pub async fn runtime_options(runtime_id: &str, runtimes: &[Runtime]) -> RuntimeO
         );
     };
     match relay_adapters::adapter_by_id(&runtime.adapter_id) {
-        Some(adapter) => adapter.report_options(runtime_id).await,
+        Some(adapter) => adapter.report_options(runtime).await,
         None => RuntimeOptions::empty(
             runtime_id,
             &runtime.adapter_id,

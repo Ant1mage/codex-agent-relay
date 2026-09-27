@@ -36,6 +36,38 @@ impl Default for CapabilitySet {
     }
 }
 
+/// What an adapter can actually enforce, as opposed to merely refuse to start.
+///
+/// Relay's policy decides whether a run may start. Whether a runtime then *stays*
+/// inside that decision is a property of the runtime, and only a runtime with a
+/// real sandbox or permission mode can promise it. Everything false means the
+/// policy is advice the runtime is trusted to follow, and the UI must say so.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnforcementSet {
+    /// The runtime maps an access mode onto its own workspace sandbox.
+    pub workspace: bool,
+    /// The runtime can be run without shell access.
+    pub commands: bool,
+    /// The runtime can be confined to no network.
+    pub network: bool,
+}
+
+impl EnforcementSet {
+    /// One short, honest phrase for the panel.
+    pub fn summary(self) -> &'static str {
+        match (self.workspace, self.commands, self.network) {
+            (false, false, false) => "not enforced by this runtime",
+            (true, false, false) => "workspace access enforced by this runtime",
+            _ => "partially enforced by this runtime",
+        }
+    }
+
+    pub fn enforces_anything(self) -> bool {
+        self.workspace || self.commands || self.network
+    }
+}
+
 /// What a CLI can do, as declared by its adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,9 +79,14 @@ pub struct AdapterCapabilities {
     pub send: bool,
     pub cancel: bool,
     pub child_sessions: bool,
-    /// True only when the CLI itself advertises a model flag.
+    /// True only when a model chosen in Relay actually reaches the run: the CLI
+    /// advertises a model flag, or the adapter has another verified mechanism.
+    /// Never true just because a model list could be fetched from somewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_selection: Option<bool>,
+    /// Which parts of Relay's policy this runtime enforces itself.
+    #[serde(default)]
+    pub enforcement: EnforcementSet,
 }
 
 impl Default for AdapterCapabilities {
@@ -63,6 +100,7 @@ impl Default for AdapterCapabilities {
             cancel: false,
             child_sessions: false,
             model_selection: None,
+            enforcement: EnforcementSet::default(),
         }
     }
 }
@@ -566,6 +604,26 @@ mod tests {
         let merged = patch.apply_to(base);
         assert!(!merged.allow_write);
         assert_eq!(merged.max_concurrent_runs, base.max_concurrent_runs);
+    }
+
+    /// Relay must never claim a runtime enforces a policy it has no sandbox for.
+    #[test]
+    fn enforcement_is_opt_in_per_runtime() {
+        let capabilities = AdapterCapabilities::default();
+        assert!(!capabilities.enforcement.enforces_anything());
+        assert_eq!(
+            capabilities.enforcement.summary(),
+            "not enforced by this runtime"
+        );
+        let sandboxed = EnforcementSet {
+            workspace: true,
+            ..EnforcementSet::default()
+        };
+        assert!(sandboxed.enforces_anything());
+        assert_eq!(
+            sandboxed.summary(),
+            "workspace access enforced by this runtime"
+        );
     }
 
     #[test]

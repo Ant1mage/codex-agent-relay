@@ -7,14 +7,14 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType,
-    Result, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, EnforcementSet, RelayError,
+    RelayEventType, Result, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
 
 use crate::cli::{run_cli, ParsedOutput, ProcessSupervisor, StreamMode, StreamOutcome, StreamSpec};
 use crate::probe::{
-    discover_executable, probe_runtime_options, read_help, version_of, with_selection_args,
-    Selection,
+    discover_executable, probe_runtime_options, probe_target, read_help, version_of,
+    with_selection_args, Selection,
 };
 
 pub const ADAPTER_ID: &str = "zai-cli";
@@ -159,6 +159,7 @@ impl AgentAdapter for ZaiAdapter {
             cancel: true,
             child_sessions: false,
             model_selection: None,
+            enforcement: EnforcementSet::default(),
         }
     }
 
@@ -191,17 +192,18 @@ impl AgentAdapter for ZaiAdapter {
         }
     }
 
-    async fn report_options(&self, runtime_id: &str) -> RuntimeOptions {
-        let Some(executable) = self.executable() else {
-            return RuntimeOptions::empty(
-                runtime_id,
-                ADAPTER_ID,
-                "Runtime executable was not found, so Relay cannot read its model options",
-            );
+    /// Reads the runtime's own options from exactly the executable it is
+    /// registered with, never from whatever discovery would find first.
+    async fn report_options(&self, runtime: &Runtime) -> RuntimeOptions {
+        let (executable, diagnostics) = probe_target(runtime, || self.executable());
+        let Some(executable) = executable else {
+            return RuntimeOptions::empty(&runtime.id, ADAPTER_ID, diagnostics.join("; "));
         };
         let evidence = read_help(&executable, &self.prefix_args).await;
         let (_, options) =
-            probe_runtime_options(self.capabilities(), &evidence, runtime_id, ADAPTER_ID);
+            probe_runtime_options(self.capabilities(), &evidence, &runtime.id, ADAPTER_ID);
+        let mut options = options;
+        options.diagnostics.splice(0..0, diagnostics);
         options
     }
 
@@ -225,7 +227,7 @@ impl AgentAdapter for ZaiAdapter {
             self.prefix_args.clone(),
             vec![
                 "chat".to_string(),
-                input.task.clone(),
+                crate::instructions::enveloped(&input.task, input.instructions.as_deref()),
                 "--output".to_string(),
                 "json".to_string(),
                 "--quiet".to_string(),
@@ -246,6 +248,7 @@ impl AgentAdapter for ZaiAdapter {
                 env: self.environment.clone(),
                 stdin: None,
                 supervisor_key: input.worker_session_id.clone(),
+                cleanup: None,
             },
             StreamMode::WholeOutput,
             Arc::new(parse_output),
@@ -302,6 +305,52 @@ mod tests {
             ..StreamOutcome::default()
         });
         assert_eq!(event.event_type, RelayEventType::WorkerFailed);
+    }
+
+    /// GLM / Z.ai has no system-prompt flag, so the envelope is how a profile's
+    /// instructions reach the child process. This asserts on the real argv.
+    #[tokio::test]
+    async fn profile_instructions_reach_the_child_process() {
+        let directory = tempfile::tempdir().unwrap();
+        let record = directory.path().join("args.txt");
+        let script = directory.path().join("zai-cli");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nprintf '%s' '{{\"response\":\"ok\"}}'\n",
+                record.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+
+        let adapter = ZaiAdapter::with_executable(script.display().to_string());
+        let handle = adapter
+            .start(StartInput {
+                run_id: "run:1".to_string(),
+                worker_session_id: "worker:1".to_string(),
+                task: "do it".to_string(),
+                cwd: std::env::temp_dir().display().to_string(),
+                access_mode: relay_core::AccessMode::ReadOnly,
+                executable_path: Some(script.display().to_string()),
+                model: None,
+                reasoning: None,
+                instructions: Some("You own the engineering work.".to_string()),
+            })
+            .await
+            .unwrap();
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+
+        let args = std::fs::read_to_string(&record).unwrap();
+        assert!(args.contains("You own the engineering work."), "{args}");
+        assert!(
+            args.contains("[Relay agent profile instructions]"),
+            "{args}"
+        );
+        assert!(args.contains("do it"), "{args}");
     }
 
     #[test]

@@ -8,14 +8,15 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType,
-    Result, ResumeInput, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, EnforcementSet, RelayError,
+    RelayEventType, Result, ResumeInput, Runtime, RuntimeHealth, RuntimeOptions, StartInput,
+    WorkerHandle,
 };
 
 use crate::cli::{run_cli, ParsedOutput, ProcessSupervisor, StreamMode, StreamOutcome, StreamSpec};
 use crate::probe::{
-    discover_executable, probe_runtime_options, read_help, version_of, with_selection_args,
-    Selection,
+    discover_executable, probe_runtime_options, probe_target, read_help, version_of,
+    with_selection_args, Selection,
 };
 
 pub const ADAPTER_ID: &str = "antigravity-cli";
@@ -278,7 +279,7 @@ impl AntigravityAdapter {
             self.prefix_args.clone(),
             vec![
                 "-p".to_string(),
-                input.task.clone(),
+                crate::instructions::enveloped(&input.task, input.instructions.as_deref()),
                 "--output-format".to_string(),
                 "stream-json".to_string(),
             ],
@@ -303,6 +304,7 @@ impl AntigravityAdapter {
                 env: self.environment.clone(),
                 stdin: None,
                 supervisor_key: input.worker_session_id.clone(),
+                cleanup: None,
             },
             StreamMode::Lines,
             Arc::new(parse_line),
@@ -330,6 +332,7 @@ impl AgentAdapter for AntigravityAdapter {
             cancel: true,
             child_sessions: true,
             model_selection: None,
+            enforcement: EnforcementSet::default(),
         }
     }
 
@@ -362,17 +365,18 @@ impl AgentAdapter for AntigravityAdapter {
         }
     }
 
-    async fn report_options(&self, runtime_id: &str) -> RuntimeOptions {
-        let Some(executable) = self.executable() else {
-            return RuntimeOptions::empty(
-                runtime_id,
-                ADAPTER_ID,
-                "Runtime executable was not found, so Relay cannot read its model options",
-            );
+    /// Reads the runtime's own options from exactly the executable it is
+    /// registered with, never from whatever discovery would find first.
+    async fn report_options(&self, runtime: &Runtime) -> RuntimeOptions {
+        let (executable, diagnostics) = probe_target(runtime, || self.executable());
+        let Some(executable) = executable else {
+            return RuntimeOptions::empty(&runtime.id, ADAPTER_ID, diagnostics.join("; "));
         };
         let evidence = read_help(&executable, &self.prefix_args).await;
         let (_, options) =
-            probe_runtime_options(self.capabilities(), &evidence, runtime_id, ADAPTER_ID);
+            probe_runtime_options(self.capabilities(), &evidence, &runtime.id, ADAPTER_ID);
+        let mut options = options;
+        options.diagnostics.splice(0..0, diagnostics);
         options
     }
 

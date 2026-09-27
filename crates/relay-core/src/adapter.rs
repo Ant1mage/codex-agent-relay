@@ -81,11 +81,17 @@ pub trait AgentAdapter: Send + Sync {
     /// Finds the CLI on this machine. Detection never creates an Agent Profile.
     async fn detect(&self) -> DetectionResult;
 
-    /// Model and reasoning values the CLI itself advertises.
-    async fn report_options(&self, runtime_id: &str) -> RuntimeOptions {
+    /// Model and reasoning values a run of this runtime can actually apply.
+    ///
+    /// The whole `Runtime` is passed on purpose: a manually registered runtime
+    /// carries an exact `executable_path` that discovery would not find again, and
+    /// probing a different CLI than the one a run will use is a bug, not a detail.
+    /// A list reported here is a promise — see `with_selection_args` and each
+    /// adapter's launch path, which must be able to apply every value offered.
+    async fn report_options(&self, runtime: &Runtime) -> RuntimeOptions {
         RuntimeOptions::empty(
-            runtime_id,
-            self.id(),
+            &runtime.id,
+            &runtime.adapter_id,
             format!("{} exposes no model or reasoning options", self.id()),
         )
     }

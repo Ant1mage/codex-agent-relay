@@ -4,14 +4,15 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType,
-    Result, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, EnforcementSet, RelayError,
+    RelayEventType, Result, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
 
 use crate::cli::{run_cli, ParsedOutput, ProcessSupervisor, StreamMode, StreamOutcome, StreamSpec};
+use crate::models::with_model_fallback;
 use crate::probe::{
-    discover_executable, probe_runtime_options, read_help, version_of, with_selection_args,
-    Selection,
+    applicable, discover_executable, probe_runtime_options, probe_target, read_help, version_of,
+    with_selection_args, Selection,
 };
 
 pub const ADAPTER_ID: &str = "kimi-code";
@@ -225,6 +226,7 @@ impl AgentAdapter for KimiAdapter {
             cancel: true,
             child_sessions: false,
             model_selection: None,
+            enforcement: EnforcementSet::default(),
         }
     }
 
@@ -257,17 +259,26 @@ impl AgentAdapter for KimiAdapter {
         }
     }
 
-    async fn report_options(&self, runtime_id: &str) -> RuntimeOptions {
-        let Some(executable) = self.executable() else {
-            return RuntimeOptions::empty(
-                runtime_id,
-                ADAPTER_ID,
-                "Runtime executable was not found, so Relay cannot read its model options",
-            );
+    /// Reads the runtime's own options from exactly the executable it is
+    /// registered with. When the CLI accepts a model but does not list values for
+    /// it, the provider's official API fills the list in — the flag is what makes
+    /// the answer usable, so a CLI without one gets no list at all.
+    async fn report_options(&self, runtime: &Runtime) -> RuntimeOptions {
+        let (executable, mut diagnostics) = probe_target(runtime, || self.executable());
+        let Some(executable) = executable else {
+            return RuntimeOptions::empty(&runtime.id, ADAPTER_ID, diagnostics.join("; "));
         };
         let evidence = read_help(&executable, &self.prefix_args).await;
         let (_, options) =
-            probe_runtime_options(self.capabilities(), &evidence, runtime_id, ADAPTER_ID);
+            probe_runtime_options(self.capabilities(), &evidence, &runtime.id, ADAPTER_ID);
+        let options = applicable(options);
+        let mut options = if options.models.is_empty() && options.model_flag.is_some() {
+            with_model_fallback(options, self.model_fallback_provider()).await
+        } else {
+            options
+        };
+        diagnostics.append(&mut options.diagnostics);
+        options.diagnostics = diagnostics;
         options
     }
 
@@ -291,7 +302,7 @@ impl AgentAdapter for KimiAdapter {
             self.prefix_args.clone(),
             vec![
                 "--prompt".to_string(),
-                input.task.clone(),
+                crate::instructions::enveloped(&input.task, input.instructions.as_deref()),
                 "--output-format".to_string(),
                 "stream-json".to_string(),
             ],
@@ -311,6 +322,7 @@ impl AgentAdapter for KimiAdapter {
                 env: self.environment.clone(),
                 stdin: None,
                 supervisor_key: input.worker_session_id.clone(),
+                cleanup: None,
             },
             StreamMode::Lines,
             Arc::new(parse_line),
@@ -319,6 +331,12 @@ impl AgentAdapter for KimiAdapter {
             false,
         )
         .await
+    }
+
+    /// Moonshot publishes the model ids its API accepts, and `kimi` applies a
+    /// choice through its own `--model` flag.
+    fn model_fallback_provider(&self) -> Option<&'static str> {
+        Some("kimi")
     }
 
     async fn cancel(&self, native_session_id: &str) -> Result<()> {

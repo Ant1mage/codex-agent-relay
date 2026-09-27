@@ -7,6 +7,7 @@
 pub mod antigravity;
 pub mod cli;
 pub mod deepseek;
+pub mod instructions;
 pub mod kimi;
 pub mod models;
 pub mod probe;
@@ -74,5 +75,23 @@ mod tests {
         let antigravity = adapter_by_id("antigravity-cli").unwrap();
         assert!(antigravity.capabilities().resume);
         assert!(antigravity.capabilities().child_sessions);
+    }
+
+    /// Relay's policy gates whether a run may start. Only a runtime with a real
+    /// sandbox may claim it enforces anything, or the panel would be lying.
+    #[test]
+    fn enforcement_is_declared_only_where_a_sandbox_exists() {
+        let deepseek = adapter_by_id("deepseek-harness").unwrap();
+        assert!(deepseek.capabilities().enforcement.workspace);
+        assert!(!deepseek.capabilities().enforcement.commands);
+        assert!(!deepseek.capabilities().enforcement.network);
+
+        for id in ["kimi-code", "zai-cli", "antigravity-cli"] {
+            let adapter = adapter_by_id(id).unwrap();
+            assert!(
+                !adapter.capabilities().enforcement.enforces_anything(),
+                "{id} must not claim enforcement it does not have"
+            );
+        }
     }
 }
