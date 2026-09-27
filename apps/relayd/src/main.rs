@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 
 use relay_adapters::adapters;
 use relay_api::server_info::{
-    clear_server_info, read_server_info, write_server_info, ServerInfo, DEFAULT_PORT, HOST,
+    clear_server_info, is_process_alive, read_server_info, write_server_info, ServerInfo,
+    DEFAULT_PORT, HOST,
 };
 use relay_api::{RelayServerOptions, RelayServerState, RelayStore, RunService};
 use relay_codex::{CodexAppServerThreadResolver, CodexIntegrationService};
@@ -195,7 +196,8 @@ async fn run() -> Result<(), String> {
     tokio::spawn(Arc::clone(&state).run_ticker());
 
     let router = relay_api::router(Arc::clone(&state));
-    let server = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal());
+    let server =
+        axum::serve(listener, router).with_graceful_shutdown(shutdown_signal(Arc::clone(&state)));
     let result = server.await;
 
     // The daemon is the parent of every worker process: they end with it.
@@ -283,23 +285,33 @@ async fn acquire_startup_lock() -> bool {
                 return true;
             }
             Err(_) => {
-                if let Ok(metadata) = std::fs::metadata(&lock) {
-                    if let Ok(modified) = metadata.modified() {
-                        if modified
-                            .elapsed()
-                            .map(|age| age.as_millis() > STALE_LOCK_MS as u128)
-                            .unwrap_or(false)
-                        {
-                            let _ = std::fs::remove_file(&lock);
-                            continue;
-                        }
-                    }
+                if startup_lock_is_stale(&lock) {
+                    let _ = std::fs::remove_file(&lock);
+                    continue;
                 }
                 tokio::time::sleep(Duration::from_millis(150)).await;
             }
         }
     }
     false
+}
+
+fn startup_lock_is_stale(lock: &std::path::Path) -> bool {
+    if let Ok(contents) = std::fs::read_to_string(lock) {
+        if let Ok(pid) = contents.trim().parse::<u32>() {
+            // Startup can take longer than the age threshold while adapters
+            // inspect local runtimes. A live owner still holds the lock.
+            return !is_process_alive(pid);
+        }
+    }
+
+    // A fresh, briefly empty lock is possible between create_new and writing
+    // the PID. Only malformed locks fall back to their age.
+    std::fs::metadata(lock)
+        .and_then(|metadata| metadata.modified())
+        .and_then(|modified| modified.elapsed().map_err(std::io::Error::other))
+        .map(|age| age.as_millis() > STALE_LOCK_MS as u128)
+        .unwrap_or(false)
 }
 
 fn random_token(bytes: usize) -> String {
@@ -319,7 +331,7 @@ fn random_token(bytes: usize) -> String {
     buffer.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(state: Arc<RelayServerState>) {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };
@@ -338,5 +350,32 @@ async fn shutdown_signal() {
         _ = ctrl_c => {}
         _ = terminate => {}
     }
+    // An inspector keeps an EventSource connection open indefinitely. End it
+    // first, otherwise Axum waits for that request forever and the daemon
+    // survives a normal desktop-app quit.
+    state.close_inspector_streams();
     println!("\nRelay daemon stopping");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_live_process_keeps_its_startup_lock_even_when_old() {
+        let directory = tempfile::tempdir().unwrap();
+        let lock = directory.path().join("daemon.lock");
+        std::fs::write(&lock, std::process::id().to_string()).unwrap();
+
+        assert!(!startup_lock_is_stale(&lock));
+    }
+
+    #[test]
+    fn a_dead_process_leaves_a_stale_startup_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let lock = directory.path().join("daemon.lock");
+        std::fs::write(&lock, "2147483647").unwrap();
+
+        assert!(startup_lock_is_stale(&lock));
+    }
 }

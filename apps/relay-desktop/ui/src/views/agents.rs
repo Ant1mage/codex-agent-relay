@@ -318,19 +318,9 @@ fn agent_editor(
     // list for all of its models still offers that list; a model that states its
     // own never borrows another model's.
     let levels_for = move |model: Option<&String>| -> Vec<relay_core::ReasoningLevel> {
-        let Some(loaded) = options() else {
-            return Vec::new();
-        };
-        let Some(model) = model else {
-            return loaded.levels;
-        };
-        loaded
-            .models
-            .iter()
-            .find(|option| &option.value == model)
-            .map(|option| option.reasoning_levels.clone())
-            .filter(|levels| !levels.is_empty())
-            .unwrap_or(loaded.levels)
+        options()
+            .map(|loaded| reasoning_levels_for(&loaded, model))
+            .unwrap_or_default()
     };
     let reasoning_choices = move || {
         let mut choices = vec![Choice::new(DEFAULT_MODEL, t.t("agents.runtimeDefault"))];
@@ -523,6 +513,24 @@ fn agent_editor(
     }
 }
 
+/// Returns the reasoning levels applicable to a model. An explicitly empty
+/// model-specific list means that model has no reasoning setting; it must not
+/// inherit a different model's runtime-wide fallback list.
+fn reasoning_levels_for(
+    options: &relay_core::RuntimeOptions,
+    model: Option<&String>,
+) -> Vec<relay_core::ReasoningLevel> {
+    match model {
+        None => options.levels.clone(),
+        Some(model) => options
+            .models
+            .iter()
+            .find(|option| &option.value == model)
+            .map(|option| option.reasoning_levels.clone())
+            .unwrap_or_else(|| options.levels.clone()),
+    }
+}
+
 fn capability(capabilities: CapabilitySet, key: &str) -> bool {
     match key {
         "read" => capabilities.read_workspace,
@@ -540,4 +548,49 @@ fn with_capability(mut capabilities: CapabilitySet, key: &str, value: bool) -> C
         _ => capabilities.network_access = value,
     }
     capabilities
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use relay_core::{ModelOption, OptionsSource, ReasoningLevel, RuntimeOptions};
+
+    fn level(value: &str) -> ReasoningLevel {
+        ReasoningLevel {
+            strength: 1,
+            label: value.to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_model_without_reasoning_does_not_inherit_another_models_levels() {
+        let options = RuntimeOptions {
+            runtime_id: "runtime:test".to_string(),
+            adapter_id: "test".to_string(),
+            models: vec![
+                ModelOption {
+                    value: "reasoning-model".to_string(),
+                    label: None,
+                    reasoning_levels: vec![level("high")],
+                    default_reasoning: None,
+                },
+                ModelOption::new("plain-model", None),
+            ],
+            levels: vec![level("medium")],
+            model_flag: Some("--model".to_string()),
+            reasoning_flag: Some("--reasoning".to_string()),
+            source: OptionsSource::Cli,
+            diagnostics: Vec::new(),
+        };
+
+        let reasoning_model = "reasoning-model".to_string();
+        let plain_model = "plain-model".to_string();
+        assert_eq!(
+            reasoning_levels_for(&options, Some(&reasoning_model)),
+            vec![level("high")]
+        );
+        assert!(reasoning_levels_for(&options, Some(&plain_model)).is_empty());
+        assert_eq!(reasoning_levels_for(&options, None), vec![level("medium")]);
+    }
 }

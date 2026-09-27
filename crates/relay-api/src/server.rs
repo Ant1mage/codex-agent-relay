@@ -117,6 +117,10 @@ pub struct RelayServerState {
     pub codex_ttl: Duration,
     codex_cache: RwLock<Option<CachedCodex>>,
     updates: broadcast::Sender<Arc<InspectorSnapshot>>,
+    /// A daemon shutdown has to end live inspector streams before Axum can
+    /// finish its graceful shutdown. Otherwise an open EventSource keeps the
+    /// HTTP server (and therefore relayd) alive indefinitely.
+    stream_shutdown: broadcast::Sender<()>,
 }
 
 /// Everything the daemon has to hand the HTTP layer.
@@ -138,6 +142,7 @@ pub struct RelayServerOptions {
 impl RelayServerState {
     pub fn new(options: RelayServerOptions) -> Arc<Self> {
         let (updates, _) = broadcast::channel(64);
+        let (stream_shutdown, _) = broadcast::channel(1);
         Arc::new(Self {
             store: options.store,
             service: options.service,
@@ -155,7 +160,15 @@ impl RelayServerState {
             codex_ttl: CODEX_STATUS_TTL,
             codex_cache: RwLock::new(None),
             updates,
+            stream_shutdown,
         })
+    }
+
+    /// Closes every currently connected inspector stream. Active request
+    /// handlers retain the server state, so graceful shutdown alone cannot
+    /// release an SSE request that is waiting for the next update.
+    pub fn close_inspector_streams(&self) {
+        let _ = self.stream_shutdown.send(());
     }
 
     /// The Codex status, probed at most once per TTL.
@@ -596,7 +609,7 @@ async fn refresh(State(state): State<Arc<RelayServerState>>) -> Response {
     .into_response()
 }
 
-const MIME: [(&str, &str); 11] = [
+const MIME: [(&str, &str); 12] = [
     ("html", "text/html; charset=utf-8"),
     ("js", "text/javascript; charset=utf-8"),
     ("mjs", "text/javascript; charset=utf-8"),
@@ -608,6 +621,7 @@ const MIME: [(&str, &str); 11] = [
     ("webp", "image/webp"),
     ("ico", "image/x-icon"),
     ("woff2", "font/woff2"),
+    ("wasm", "application/wasm"),
 ];
 
 fn mime_for(path: &Path) -> &'static str {
@@ -692,6 +706,7 @@ async fn stream(
     State(state): State<Arc<RelayServerState>>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let mut updates = state.updates.subscribe();
+    let mut shutdown = state.stream_shutdown.subscribe();
     // Start from "now": the client pulls history per run and de-duplicates by
     // sequence, so the stream only has to deliver what happens next.
     let mut cursors = state.store.cursors();
@@ -706,7 +721,11 @@ async fn stream(
         yield Ok(Event::default().data(serde_json::to_string(&StreamMessage::Snapshot { snapshot: Box::new(initial) }).unwrap()));
 
         loop {
-            match updates.recv().await {
+            let update = tokio::select! {
+                _ = shutdown.recv() => break,
+                update = updates.recv() => update,
+            };
+            match update {
                 Ok(snapshot) => {
                     let current = store.cursors();
                     for (run_id, seq) in current.iter() {
@@ -873,6 +892,11 @@ mod tests {
     }
 
     #[test]
+    fn wasm_assets_use_the_browser_required_mime_type() {
+        assert_eq!(mime_for(Path::new("relay-ui_bg.wasm")), "application/wasm");
+    }
+
+    #[test]
     fn the_token_is_accepted_as_a_query_parameter_or_a_bearer_header() {
         let state = test_state();
         let uri: Uri = "/api/health?token=secret".parse().unwrap();
@@ -887,9 +911,28 @@ mod tests {
         assert!(!authorized(&state, &headers, &uri));
     }
 
+    #[tokio::test]
+    async fn closing_inspector_streams_wakes_connected_sse_handlers() {
+        let state = test_state();
+        let mut shutdown = state.stream_shutdown.subscribe();
+
+        state.close_inspector_streams();
+
+        tokio::time::timeout(Duration::from_millis(100), shutdown.recv())
+            .await
+            .expect("an open inspector stream must be released during shutdown")
+            .expect("the shutdown notification must be delivered");
+    }
+
     pub(crate) fn test_state() -> Arc<RelayServerState> {
         use relay_storage::{Database, SqliteEventStore, SqliteHostSessionStore};
-        let directory = std::env::temp_dir().join(format!("relay-api-test-{}", std::process::id()));
+        static NEXT_TEST_DATABASE: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let database_id = NEXT_TEST_DATABASE.fetch_add(1, Ordering::SeqCst);
+        let directory = std::env::temp_dir().join(format!(
+            "relay-api-test-{}-{database_id}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&directory).unwrap();
         let database = Arc::new(Database::open(directory.join("relay.sqlite")).unwrap());
         let store = Arc::new(RelayStore::new(

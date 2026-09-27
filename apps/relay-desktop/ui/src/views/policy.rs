@@ -16,7 +16,13 @@ pub fn policy_view(store: PanelStore) -> AnyView {
     let overrides = RwSignal::new(
         store.config.get_untracked().map(|config| config.workspace_overrides).unwrap_or_default(),
     );
-    let workspace = RwSignal::new(String::new());
+    let workspace = RwSignal::new(
+        store
+            .snapshot
+            .get_untracked()
+            .and_then(|snapshot| snapshot.sessions.first().map(|view| view.session.cwd.clone()))
+            .unwrap_or_default(),
+    );
 
     // Policy is a boundary only where the runtime has one. Saying so is the
     // difference between a security setting and a wish.
@@ -58,23 +64,6 @@ pub fn policy_view(store: PanelStore) -> AnyView {
         }
         seen
     };
-
-    // Configuration is the source of truth: a save (or a rescan) resets the form.
-    Effect::new(move |_| {
-        if let Some(config) = store.config.get() {
-            policy.set(config.policy);
-            overrides.set(config.workspace_overrides);
-        }
-    });
-
-    // A workspace has to be selected before overrides make sense.
-    Effect::new(move |_| {
-        if workspace.get().is_empty() {
-            if let Some(first) = workspaces().first() {
-                workspace.set(first.clone());
-            }
-        }
-    });
 
     let patch_override = move |change: RelayPolicyOverride| {
         let key = workspace.get_untracked();

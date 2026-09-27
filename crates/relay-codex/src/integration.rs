@@ -184,7 +184,14 @@ pub fn relay_plugin_version(sources: &RelaySources) -> String {
 }
 
 /// Parses `codex plugin list` output for our own plugin.
-pub fn parse_installed_plugin(output: &str) -> Option<(Option<String>, Option<String>)> {
+///
+/// Current Codex prints a dedicated VERSION column, while older versions omit
+/// it. Keep both shapes so status is portable, but use the version whenever it
+/// is available: "installed, enabled" alone does not prove that the currently
+/// materialised Relay plugin was installed.
+pub fn parse_installed_plugin(
+    output: &str,
+) -> Option<(Option<String>, Option<String>, Option<String>)> {
     for line in output.lines() {
         let fields: Vec<&str> = line
             .split("  ")
@@ -194,10 +201,16 @@ pub fn parse_installed_plugin(output: &str) -> Option<(Option<String>, Option<St
         if fields.first() != Some(&format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}").as_str()) {
             continue;
         }
-        return Some((
-            fields.get(1).map(|value| value.to_string()),
-            fields.last().map(|value| value.to_string()),
-        ));
+        let status = fields.get(1).map(|value| value.to_string());
+        let (version, source) = if fields.len() >= 4 {
+            (
+                fields.get(2).map(|value| value.to_string()),
+                fields.last().map(|value| value.to_string()),
+            )
+        } else {
+            (None, fields.get(2).map(|value| value.to_string()))
+        };
+        return Some((status, version, source));
     }
     None
 }
@@ -403,7 +416,7 @@ async fn probe_relay_plugin(executable: Option<&CodexExecutable>) -> CodexCheck 
             hint: Some(listed.text.chars().take(200).collect()),
         };
     }
-    let Some((status, source)) = parse_installed_plugin(&listed.text) else {
+    let Some((status, version, source)) = parse_installed_plugin(&listed.text) else {
         return CodexCheck {
             id: CodexCheckId::RelayPlugin,
             ok: false,
@@ -430,6 +443,19 @@ async fn probe_relay_plugin(executable: Option<&CodexExecutable>) -> CodexCheck 
             detail: "插件已安装但被禁用".to_string(),
             hint: Some("在 Codex 中启用 relay 插件".to_string()),
         };
+    }
+    if let Some(expected) = relay_sources().map(|sources| relay_plugin_version(&sources)) {
+        if let Some(version) = version.filter(|version| !version.is_empty()) {
+            if version != expected {
+                return CodexCheck {
+                    id: CodexCheckId::RelayPlugin,
+                    ok: false,
+                    status: CodexCheckStatus::Outdated,
+                    detail: format!("已安装 {version}，当前 Relay 需要 {expected}"),
+                    hint: Some("运行\"更新\"或\"修复\"".to_string()),
+                };
+            }
+        }
     }
     CodexCheck {
         id: CodexCheckId::RelayPlugin,
@@ -557,30 +583,24 @@ pub fn materialise_plugin() -> Result<(PathBuf, String), String> {
     });
     write_json(&root.join(".agents/plugins/marketplace.json"), &marketplace)?;
 
-    let description = std::fs::read_to_string(&sources.plugin_manifest)
-        .ok()
-        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
-        .and_then(|value| {
-            value
-                .get("description")
-                .and_then(|value| value.as_str())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "Delegate bounded Codex tasks to local coding agents.".to_string());
-    let manifest = serde_json::json!({
-        "name": PLUGIN_NAME,
-        "version": version,
-        "description": description,
-        "skills": "./skills/",
-        "hooks": "./hooks/hooks.json",
-        "interface": {
-            "displayName": "Relay",
-            "shortDescription": "Delegate tasks to local coding agents",
-            "developerName": "Relay",
-            "category": "Developer Tools",
-            "capabilities": ["Read", "Write"],
-        }
-    });
+    let mut manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&sources.plugin_manifest).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("plugin.json 无法解析: {error}"))?;
+    let object = manifest
+        .as_object_mut()
+        .ok_or_else(|| "plugin.json 必须是 JSON object".to_string())?;
+    object.insert(
+        "name".to_string(),
+        serde_json::Value::String(PLUGIN_NAME.to_string()),
+    );
+    object.insert(
+        "version".to_string(),
+        serde_json::Value::String(version.clone()),
+    );
+    // Codex's marketplace loader reads `plugin.json` at the plugin root. The
+    // `.codex-plugin` copy keeps compatibility with older local installations.
+    write_json(&plugin.join("plugin.json"), &manifest)?;
     write_json(&plugin.join(".codex-plugin/plugin.json"), &manifest)?;
 
     let hooks_dir = sources
@@ -682,7 +702,7 @@ pub async fn install_codex() -> InstallResult {
     };
     if installed
         .as_ref()
-        .and_then(|(status, _)| status.clone())
+        .and_then(|(status, _, _)| status.clone())
         .map(|status| status.contains("installed"))
         .unwrap_or(false)
     {
@@ -717,11 +737,7 @@ pub async fn install_codex() -> InstallResult {
     let entry = std::fs::read_to_string(&config_file)
         .ok()
         .and_then(|body| read_mcp_entry(&body));
-    let matches = entry
-        .as_ref()
-        .map(|(command, args)| command == &desired.command && args == &desired.args)
-        .unwrap_or(false);
-    if !matches {
+    if !probe_relay_mcp().ok {
         if entry.is_some() {
             codex(&executable, &["mcp", "remove", PLUGIN_NAME]).await;
         }
@@ -746,10 +762,13 @@ pub async fn install_codex() -> InstallResult {
         messages.push("已清理旧版手工复制的 skill".to_string());
     }
 
-    InstallResult {
-        status: codex_status().await,
-        messages,
+    let status = codex_status().await;
+    if status.checks.iter().any(|check| {
+        matches!(check.id, CodexCheckId::RelayMcp | CodexCheckId::RelayPlugin) && !check.ok
+    }) {
+        messages.push("Codex 集成修复未完成；请查看失败的检查项".to_string());
     }
+    InstallResult { status, messages }
 }
 
 /// Undoes everything Relay installed into Codex.
@@ -835,6 +854,12 @@ impl CodexIntegration for CodexIntegrationService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn the_mcp_entry_parser_reads_only_our_table() {
@@ -886,10 +911,136 @@ command = "ignored"
     fn plugin_list_output_is_parsed() {
         let output =
             "relay@relay  installed, enabled  /Users/me/.relay/codex-plugin\nother@x  installed\n";
-        let (status, source) = parse_installed_plugin(output).unwrap();
+        let (status, version, source) = parse_installed_plugin(output).unwrap();
         assert_eq!(status.as_deref(), Some("installed, enabled"));
+        assert_eq!(version, None);
         assert_eq!(source.as_deref(), Some("/Users/me/.relay/codex-plugin"));
+
+        let current =
+            "relay@relay  installed, enabled  0.2.0+deadbeef  /Users/me/.relay/codex-plugin\n";
+        let (_, version, _) = parse_installed_plugin(current).unwrap();
+        assert_eq!(version.as_deref(), Some("0.2.0+deadbeef"));
         assert!(parse_installed_plugin("nothing here").is_none());
+    }
+
+    #[test]
+    fn materialised_plugin_has_the_marketplace_manifest_and_current_version() {
+        let _guard = env_lock().lock().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("marketplace");
+        let entry = directory.path().join("relay-mcp");
+        std::fs::write(&entry, b"fixture").unwrap();
+        let root_previous = std::env::var_os("RELAY_CODEX_PLUGIN_ROOT");
+        let entry_previous = std::env::var_os("RELAY_MCP_ENTRY");
+        std::env::set_var("RELAY_CODEX_PLUGIN_ROOT", &root);
+        std::env::set_var("RELAY_MCP_ENTRY", &entry);
+
+        let result = materialise_plugin();
+
+        match root_previous {
+            Some(value) => std::env::set_var("RELAY_CODEX_PLUGIN_ROOT", value),
+            None => std::env::remove_var("RELAY_CODEX_PLUGIN_ROOT"),
+        }
+        match entry_previous {
+            Some(value) => std::env::set_var("RELAY_MCP_ENTRY", value),
+            None => std::env::remove_var("RELAY_MCP_ENTRY"),
+        }
+
+        let (_, version) = result.unwrap();
+        for manifest in [
+            root.join("plugins/relay/plugin.json"),
+            root.join("plugins/relay/.codex-plugin/plugin.json"),
+        ] {
+            let installed: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(manifest).unwrap()).unwrap();
+            assert_eq!(installed["name"], PLUGIN_NAME);
+            assert_eq!(installed["version"], version);
+            assert!(installed["extensions"]["com.openai"]["hooks"].is_string());
+        }
+    }
+
+    #[tokio::test]
+    async fn repair_installs_current_plugin_and_mcp_then_stays_correct_on_repeat() {
+        let _guard = env_lock().lock().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let codex_home = directory.path().join("codex");
+        let marketplace = directory.path().join("marketplace");
+        let mcp = directory.path().join("relay-mcp");
+        let cli = directory.path().join("fixture-codex");
+        std::fs::create_dir_all(&codex_home).unwrap();
+        std::fs::write(&mcp, b"fixture").unwrap();
+        std::fs::write(
+            &cli,
+            r#"#!/bin/sh
+set -eu
+state="$CODEX_HOME/.relay-fixture"
+mkdir -p "$state"
+case "$1 $2 ${3:-}" in
+  "--version  ") printf 'codex-cli fixture\n' ;;
+  "plugin marketplace list")
+    [ -f "$state/marketplace" ] && printf 'relay  %s\n' "$(cat "$state/marketplace")" || true ;;
+  "plugin marketplace add") printf '%s' "$4" > "$state/marketplace" ;;
+  "plugin marketplace remove") rm -f "$state/marketplace" ;;
+  "plugin list ")
+    if [ -f "$state/plugin" ]; then
+      root="$(cat "$state/marketplace")"
+      version="$(sed -n 's/.*\"version\": \"\([^\"]*\)\".*/\1/p' "$root/plugins/relay/plugin.json")"
+      printf 'relay@relay  installed, enabled  %s  %s/plugins/relay\n' "$version" "$root"
+    fi ;;
+  "plugin remove") rm -f "$state/plugin" ;;
+  "plugin add")
+    root="$(cat "$state/marketplace")"
+    test -f "$root/plugins/relay/plugin.json"
+    printf installed > "$state/plugin" ;;
+  "mcp remove") rm -f "$state/mcp" ;;
+  "mcp add")
+    printf '%s' "$5" > "$state/mcp"
+    mkdir -p "$CODEX_HOME"
+    printf '[mcp_servers.relay]\ncommand = \"%s\"\n' "$5" > "$CODEX_HOME/config.toml" ;;
+  *) printf 'unexpected codex invocation: %s\n' "$*" >&2; exit 2 ;;
+esac
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let variables = [
+            ("CODEX_HOME", codex_home.as_os_str().to_owned()),
+            ("CODEX_PATH", cli.as_os_str().to_owned()),
+            (
+                "RELAY_CODEX_PLUGIN_ROOT",
+                marketplace.as_os_str().to_owned(),
+            ),
+            ("RELAY_MCP_ENTRY", mcp.as_os_str().to_owned()),
+        ];
+        let previous: Vec<(&str, Option<std::ffi::OsString>)> = variables
+            .iter()
+            .map(|(key, _)| (*key, std::env::var_os(key)))
+            .collect();
+        for (key, value) in &variables {
+            std::env::set_var(key, value);
+        }
+
+        let first = install_codex().await;
+        let second = install_codex().await;
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+
+        for result in [&first, &second] {
+            assert!(result.status.configured, "{:?}", result.messages);
+            assert!(result.status.checks.iter().all(|check| check.ok));
+        }
+        assert!(marketplace.join("plugins/relay/plugin.json").is_file());
+        assert!(codex_home.join("config.toml").is_file());
     }
 
     #[test]

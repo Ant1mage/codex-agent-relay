@@ -477,6 +477,8 @@ mod tests {
         let config = store.read();
         assert_eq!(config.profiles.len(), 2);
         assert_eq!(config.profiles[0].instructions.as_deref(), Some("Be brief"));
+        assert_eq!(config.profiles[0].model.as_deref(), Some("deepseek-chat"));
+        assert_eq!(config.profiles[0].reasoning.as_deref(), Some("high"));
         assert!(config.profiles[0].capabilities.write_workspace);
 
         store.remove_profile("agent-1").unwrap();

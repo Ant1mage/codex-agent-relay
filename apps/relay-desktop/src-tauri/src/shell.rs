@@ -29,7 +29,7 @@ use crate::updater::{self, UpdateState, UpdateStore};
 /// Matches the inspector's poll; both read the same cached projection server-side.
 const POLL_MS: u64 = 2_000;
 /// How long "starting" may last before the menu admits the daemon did not come up.
-const START_TIMEOUT_MS: u128 = 20_000;
+const START_TIMEOUT_MS: u64 = 60_000;
 
 /// Everything the shell remembers between refreshes.
 struct ShellState {
@@ -85,7 +85,9 @@ fn current_status(probe: DaemonStatus, starting_since: Option<Instant>) -> Daemo
         return DaemonStatus::Running;
     }
     match starting_since {
-        Some(since) if since.elapsed().as_millis() < START_TIMEOUT_MS => DaemonStatus::Starting,
+        Some(since) if since.elapsed() < Duration::from_millis(START_TIMEOUT_MS) => {
+            DaemonStatus::Starting
+        }
         _ => DaemonStatus::Stopped,
     }
 }
@@ -229,8 +231,52 @@ fn set_last_error(app: &AppHandle, error: Option<String>) {
     });
 }
 
-fn mark_starting(app: &AppHandle) {
-    with_state(app, |state| state.starting_since = Some(Instant::now()));
+fn mark_starting(app: &AppHandle) -> bool {
+    let started_at = Instant::now();
+    let locale = with_state(app, |state| {
+        if !can_begin_start(state.starting_since) {
+            return None;
+        }
+        state.starting_since = Some(started_at);
+        Some(state.locale)
+    });
+    let Some(locale) = locale else {
+        return false;
+    };
+
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(START_TIMEOUT_MS)).await;
+        let timed_out = with_state(&handle, |state| {
+            if state.starting_since == Some(started_at)
+                && state.probe.status != DaemonStatus::Running
+            {
+                state.starting_since = None;
+                true
+            } else {
+                false
+            }
+        });
+        if timed_out {
+            let message = match locale {
+                Locale::ZhCn => format!(
+                    "日志服务 60 秒内未就绪；查看日志：{}",
+                    daemon::daemon_log_path().display()
+                ),
+                _ => format!(
+                    "Log service did not become ready in 60 seconds; see {}",
+                    daemon::daemon_log_path().display()
+                ),
+            };
+            set_last_error(&handle, Some(message));
+            refresh(&handle, true).await;
+        }
+    });
+    true
+}
+
+fn can_begin_start(starting_since: Option<Instant>) -> bool {
+    !starting_since.is_some_and(|since| since.elapsed() < Duration::from_millis(START_TIMEOUT_MS))
 }
 
 /// Starts the daemon and remembers that this process owns it, so quitting stops
@@ -356,13 +402,20 @@ pub fn dispatch(app: &AppHandle, action: MenuBarAction) {
             });
         }
         MenuBarAction::StartDaemon => {
-            mark_starting(app);
+            if !mark_starting(app) {
+                return;
+            }
             let error = start_daemon(app);
+            if error.is_some() {
+                with_state(app, |state| state.starting_since = None);
+            }
             set_last_error(app, error);
             refresh_now(app);
         }
         MenuBarAction::RestartDaemon => {
-            mark_starting(app);
+            if !mark_starting(app) {
+                return;
+            }
             let handle = app.clone();
             tauri::async_runtime::spawn(async move {
                 // Only a daemon whose identity was verified is ever signalled.
@@ -375,6 +428,9 @@ pub fn dispatch(app: &AppHandle, action: MenuBarAction) {
                     }
                 }
                 let error = start_daemon(&handle);
+                if error.is_some() {
+                    with_state(&handle, |state| state.starting_since = None);
+                }
                 set_last_error(&handle, error);
                 refresh(&handle, true).await;
             });
@@ -545,8 +601,11 @@ async fn start(app: AppHandle) {
         .map(|value| value == "1")
         .unwrap_or(false);
     if !running && !autostart_disabled {
-        mark_starting(&app);
+        let _ = mark_starting(&app);
         let error = start_daemon(&app);
+        if error.is_some() {
+            with_state(&app, |state| state.starting_since = None);
+        }
         set_last_error(&app, error);
         refresh(&app, true).await;
     }
@@ -658,7 +717,7 @@ mod tests {
     }
 
     #[test]
-    fn starting_lasts_twenty_seconds_and_no_longer() {
+    fn starting_lasts_one_minute_and_no_longer() {
         assert_eq!(
             current_status(DaemonStatus::Running, None),
             DaemonStatus::Running
@@ -673,7 +732,7 @@ mod tests {
             DaemonStatus::Starting
         );
         let long_ago = Instant::now()
-            .checked_sub(Duration::from_millis(START_TIMEOUT_MS as u64 + 1))
+            .checked_sub(Duration::from_millis(START_TIMEOUT_MS + 1))
             .expect("monotonic clock is older than 20 s in this session");
         assert_eq!(
             current_status(DaemonStatus::Stopped, Some(long_ago)),
@@ -683,6 +742,17 @@ mod tests {
             current_status(DaemonStatus::Stopped, None),
             DaemonStatus::Stopped
         );
+    }
+
+    #[test]
+    fn a_pending_start_rejects_duplicate_menu_actions() {
+        assert!(!can_begin_start(Some(Instant::now())));
+        assert!(can_begin_start(None));
+
+        let timed_out = Instant::now()
+            .checked_sub(Duration::from_millis(START_TIMEOUT_MS + 1))
+            .unwrap();
+        assert!(can_begin_start(Some(timed_out)));
     }
 
     #[test]

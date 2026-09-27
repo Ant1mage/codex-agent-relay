@@ -99,6 +99,12 @@ pub fn server_info_path() -> PathBuf {
     relay_config::server_info_path()
 }
 
+/// Startup output is kept with the daemon state so a failed menu-bar launch
+/// has something actionable to inspect.
+pub fn daemon_log_path() -> PathBuf {
+    relay_config::relay_home().join("relayd.log")
+}
+
 /// The recorded server.json, or `None` when there is no usable daemon record.
 pub fn read_info() -> Option<ServerInfo> {
     read_server_info(&server_info_path())
@@ -236,12 +242,22 @@ pub fn start_daemon() -> Result<(), String> {
     let Some(command) = daemon_command() else {
         return Err("找不到 relayd 入口（既没有打包产物，也不在源码仓库里）".to_string());
     };
+    let log_path = daemon_log_path();
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|error| format!("无法写入日志 {}：{error}", log_path.display()))?;
+    let stdout = log.try_clone().map_err(|error| error.to_string())?;
     let mut process = Command::new(&command.program);
     process
         .args(&command.args)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
     for (name, value) in &command.env {
         process.env(name, value);
     }
