@@ -18,6 +18,35 @@ pub fn policy_view(store: PanelStore) -> AnyView {
     );
     let workspace = RwSignal::new(String::new());
 
+    // Policy is a boundary only where the runtime has one. Saying so is the
+    // difference between a security setting and a wish.
+    let enforcement_note = move || {
+        let runtimes = store
+            .snapshot
+            .with(|snapshot| snapshot.as_ref().map(|value| value.runtimes.clone()).unwrap_or_default());
+        if runtimes.is_empty() {
+            return None;
+        }
+        let enforcing: Vec<String> = runtimes
+            .iter()
+            .filter(|runtime| runtime.capabilities.enforcement.workspace)
+            .map(|runtime| runtime.adapter_id.clone())
+            .collect();
+        Some(if enforcing.is_empty() {
+            view! { <p class="field-hint wrap">{t.t("settings.policyAdvisory")}</p> }.into_any()
+        } else {
+            let mut names = enforcing;
+            names.sort();
+            names.dedup();
+            view! {
+                <p class="field-hint wrap">
+                    {t.t("settings.policyEnforced")} {names.join(", ")}
+                </p>
+            }
+            .into_any()
+        })
+    };
+
     let workspaces = move || {
         let mut seen: Vec<String> = Vec::new();
         if let Some(snapshot) = store.snapshot.get() {
@@ -121,6 +150,7 @@ pub fn policy_view(store: PanelStore) -> AnyView {
                             }
                         })
                         .collect_view()}
+                    {enforcement_note}
                 </div>
             </div>
 

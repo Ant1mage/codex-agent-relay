@@ -175,6 +175,16 @@ const MESSAGES: &[(&str, &str, &str)] = &[
     ("settings.allowWrite", "Allow workspace writes", "允许写入工作区"),
     ("settings.allowCommands", "Allow command execution", "允许执行命令"),
     ("settings.allowNetwork", "Allow network access", "允许访问网络"),
+    (
+        "settings.policyAdvisory",
+        "No detected runtime enforces these switches itself: Relay refuses to start a run that breaks them, but the agent CLI still runs with its own permissions.",
+        "当前检测到的 runtime 都无法自行执行这些开关：Relay 会拒绝启动违反策略的任务，但 Agent CLI 仍以它自己的权限运行。",
+    ),
+    (
+        "settings.policyEnforced",
+        "Workspace access is enforced by the runtime sandbox for: ",
+        "工作区访问由 runtime 沙箱实际执行，适用于：",
+    ),
     ("inspector.title", "Relay Inspector", "Relay 检查器"),
     ("inspector.live", "Live", "实时"),
     ("inspector.connecting", "Connecting…", "连接中…"),
