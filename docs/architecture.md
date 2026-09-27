@@ -26,7 +26,7 @@ does not merge these levels.
 crates/
 ├─ relay-core/        domain, events, projection, policy, run lifecycle, adapter trait
 ├─ relay-adapters/    DeepSeek Harness, Kimi, Z.ai, Antigravity (+ shared CLI plumbing)
-├─ relay-storage/     SQLite: event log, host sessions, control queue
+├─ relay-storage/     SQLite: event log, host sessions, startup reconciliation
 ├─ relay-config/      config.toml: agent profiles, policy, manual runtimes
 ├─ relay-api/         wire contract + the daemon's HTTP/SSE surface + projections
 └─ relay-codex/       Codex thread identity and the plugin/MCP integration lifecycle
@@ -45,25 +45,30 @@ of those does not change Core.
 
 | Process | Role | Owns | Must not |
 | --- | --- | --- | --- |
-| `relay-mcp` | stdio MCP server started by Codex | Execution: RunController, worker processes, event writes, the SQLite schema | Render UI, own configuration (it re-reads the config file on every call) |
-| `relayd` | Local daemon on `127.0.0.1` (default port 7352) | Configuration file (single writer), runtime scan, Codex integration lifecycle, read-only projection and SSE, control queue, static hosting (inspector and control panel), diagnostics | Create schema, start or retry workers, parse native stdout |
+| `relayd` | Local daemon on `127.0.0.1` (default port 7352) | **Execution**: RunController, worker processes, event writes, the SQLite schema — plus the configuration file (single writer), the runtime scan, the Codex integration lifecycle, the projection and SSE, static hosting (inspector and control panel) and diagnostics | Render UI, plan or reason |
+| `relay-mcp` | stdio MCP server started by Codex | The MCP protocol: tool schema and request/response translation to the daemon's HTTP API | Own a worker, an adapter or a RunController; own configuration |
 | `relay-desktop` | Tauri menu bar app | Status, quick actions, panel and inspector windows, daemon start/stop, app updates, launch at login | Touch the database or the configuration file directly, derive state |
 | UI (WASM) | Inspector and control panel served by `relayd` | Sessions, runs, console, changes, cancel, configuration forms, diagnostics | Write events, derive state |
 
-The daemon and the desktop shell hold no execution state, so either can restart
-at any time: running delegations continue inside `relay-mcp`, and pages resync
-from the event log.
+The desktop shell holds no execution state, so it can restart at any time and
+pages resync from the event log.
 
 Ownership rules that matter in practice:
 
-- **The MCP process is the only writer of runs, workers and events.** `relayd`
-  reads; it never creates a run.
+- **`relayd` is the only process that owns a worker.** It starts the external
+  Agent CLI, supervises the process, writes the events and cancels it. Nothing
+  else can, which is why no queue, claim, lease or owner routing exists between
+  processes: there is only one owner to route to.
 - **`relayd` is the only writer of `config.toml`.** The panel edits what the
-  daemon serves; the MCP process re-reads the file on every `list_agents` /
-  `run_agent`.
-- **Cancellation crosses processes through a queue in SQLite.** The daemon
-  appends a `cancel-worker` command, the MCP process claims it within ~250 ms and
-  applies it to the worker process it owns.
+  daemon serves; the daemon re-reads the file before each delegation.
+- **A front-end dying cannot take a worker with it.** `relay-mcp` is replaceable:
+  kill the MCP server Codex started, start another, and the same runs are still
+  there to query, wait on and cancel. Only the daemon stopping ends its workers,
+  and it ends them deliberately on the way out.
+- **A daemon that stopped mid-run is reconciled on the way up.** Runs left queued,
+  starting or running have `worker/orphaned` (the process is gone) or
+  `worker/interrupted` (it outlived the daemon that could read it) appended — never
+  a rewritten history.
 
 ## 3. Delegation path
 
@@ -72,17 +77,19 @@ Codex session
   │  SessionStart / SessionEnd hooks  →  trusted session identity (id, name, cwd)
   │  $relay skill + MCP tools
   ▼
-Relay Core (inside relay-mcp)
-  ├─ AdapterRegistry · RuntimeRegistry · ProfileRegistry
-  ├─ PolicyResolver        global → workspace → session, most specific wins
-  ├─ RunController         start, supervise, cancel, resume, accept
-  └─ Event store           append-only → ~/.relay/relay.sqlite
-  ▼
-Runtime adapter  →  native CLI process (dsh …)
+relay-mcp (stdio)  ── loopback HTTP + token ──▶  relayd
+                                                  ├─ AdapterRegistry · RuntimeRegistry · ProfileRegistry
+                                                  ├─ PolicyResolver   global → workspace → session
+                                                  ├─ RunController    start, supervise, cancel, resume, accept
+                                                  ├─ Event store      append-only → ~/.relay/relay.sqlite
+                                                  └─ Startup reconciliation
+                                                        ▼
+                                                  Runtime adapter  →  native CLI process (dsh …)
 ```
 
 `relayd` projects the same event log for the menu bar, the panel and the
-inspector. Neither surface talks to a worker directly.
+inspector. No surface talks to a worker directly, and every front-end reaches the
+same runs through the same API.
 
 ## 4. Host adapter (Codex)
 
@@ -123,7 +130,7 @@ trait AgentAdapter {
     fn id(&self) -> &str;
     fn capabilities(&self) -> AdapterCapabilities;
     async fn detect(&self) -> DetectionResult;
-    async fn report_options(&self, runtime_id: &str) -> RuntimeOptions;
+    async fn report_options(&self, runtime: &Runtime) -> RuntimeOptions;
     async fn start(&self, input: StartInput) -> Result<WorkerHandle>;
     async fn resume(&self, input: ResumeInput) -> Result<WorkerHandle>;
     async fn send(&self, native_session_id: &str, message: &str) -> Result<()>;
@@ -156,7 +163,7 @@ Configuration is a TOML file shared by both processes, stored under `~/.relay`
 | Path | Contents |
 | --- | --- |
 | `config.toml` | Agent Profiles, global policy, per-workspace overrides, hand-registered runtimes |
-| `relay.sqlite` | Event log, host sessions, control queue |
+| `relay.sqlite` | Event log and host sessions. The schema version is reset, not migrated, between releases. |
 | `server.json` | How to reach a running daemon (pid, port, token, nonce), mode 0600 |
 
 Writes are atomic (temp file + rename). A file that fails to parse is reported as
