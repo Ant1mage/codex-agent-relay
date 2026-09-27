@@ -2,7 +2,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-[![CI](https://github.com/Ant1mage/relay/actions/workflows/ci.yml/badge.svg)](https://github.com/Ant1mage/relay/actions/workflows/ci.yml)
+[![CI](https://github.com/Ant1mage/codex-agent-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/Ant1mage/codex-agent-relay/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 

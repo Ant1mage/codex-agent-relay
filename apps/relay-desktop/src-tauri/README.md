@@ -110,7 +110,7 @@ loaded the shell logs the reason and exits, exactly like the Electron app.
 ### Updater
 
 `plugins.updater.endpoints` is the GitHub releases endpoint for
-`Ant1mage/relay`; `RELAY_UPDATE_FEED` overrides it at runtime (that is how the
+`Ant1mage/codex-agent-relay`; `RELAY_UPDATE_FEED` overrides it at runtime (that is how the
 update path is tested locally). Two things must be filled in before a release:
 
 * `plugins.updater.pubkey` is intentionally empty. With no public key

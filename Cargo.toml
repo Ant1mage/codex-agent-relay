@@ -19,7 +19,7 @@ edition = "2021"
 rust-version = "1.85"
 license = "MIT"
 authors = ["Ant1mage"]
-repository = "https://github.com/Ant1mage/relay"
+repository = "https://github.com/Ant1mage/codex-agent-relay"
 
 [workspace.dependencies]
 relay-core = { path = "crates/relay-core" }

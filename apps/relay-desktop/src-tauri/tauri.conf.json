@@ -43,7 +43,7 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://github.com/Ant1mage/relay/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/Ant1mage/codex-agent-relay/releases/latest/download/latest.json"],
       "pubkey": ""
     }
   }
