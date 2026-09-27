@@ -26,7 +26,7 @@ use axum::{Json, Router};
 use futures::stream::Stream;
 use relay_core::{AgentProfile, HostSession, RuntimeOptions};
 use serde::Deserialize;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
 use crate::contract::{
     AdapterCatalog, ApiError, CancelResult, CodexAction, CodexStatus, EndSessionBody, Health,
@@ -116,6 +116,7 @@ pub struct RelayServerState {
     /// How long a probed Codex status stays valid. Zero disables the cache.
     pub codex_ttl: Duration,
     codex_cache: RwLock<Option<CachedCodex>>,
+    codex_probe_lock: AsyncMutex<()>,
     updates: broadcast::Sender<Arc<InspectorSnapshot>>,
     /// A daemon shutdown has to end live inspector streams before Axum can
     /// finish its graceful shutdown. Otherwise an open EventSource keeps the
@@ -159,6 +160,7 @@ impl RelayServerState {
             tick: Duration::from_millis(400),
             codex_ttl: CODEX_STATUS_TTL,
             codex_cache: RwLock::new(None),
+            codex_probe_lock: AsyncMutex::new(()),
             updates,
             stream_shutdown,
         })
@@ -176,9 +178,25 @@ impl RelayServerState {
         if let Some(cached) = self.cached_codex() {
             return cached;
         }
+        let _probe = self.codex_probe_lock.lock().await;
+        if let Some(cached) = self.cached_codex() {
+            return cached;
+        }
         let status = self.codex.status().await;
         self.store_codex(status.clone());
         status
+    }
+
+    /// Starts a stale Codex check without putting external CLI latency on the
+    /// menu request path. Repeated menu polls share the single-flight lock.
+    fn refresh_codex_status_in_background(self: &Arc<Self>) {
+        if self.cached_codex().is_some() {
+            return;
+        }
+        let state = Arc::clone(self);
+        tokio::spawn(async move {
+            let _ = state.codex_status().await;
+        });
     }
 
     fn cached_codex(&self) -> Option<CodexStatus> {
@@ -297,6 +315,18 @@ async fn snapshot_of(state: &RelayServerState) -> InspectorSnapshot {
     state.store.snapshot(state.codex_status().await)
 }
 
+/// Hands the service's environment to the store that projects it.
+///
+/// The store keeps the environment it was given, so every mutation has to
+/// publish the new one. Without that, `/api/menu` and `/api/snapshot` keep
+/// serving the environment the daemon started with: a profile saved in the
+/// control panel reached `/api/config` — which is what the panel renders —
+/// but never the menu bar, and neither the SSE revision nor the projection cache
+/// key (both stamped with the profile and runtime counts) ever moved.
+fn publish_environment(state: &RelayServerState) {
+    state.store.set_environment(state.service.environment());
+}
+
 /// `/api/health` stays cheap on purpose: identity, the counters the Status tab
 /// shows, and nothing that spawns a process. A health check must never be the
 /// reason a Codex CLI starts.
@@ -321,7 +351,8 @@ async fn snapshot(State(state): State<Arc<RelayServerState>>) -> Response {
 }
 
 async fn menu(State(state): State<Arc<RelayServerState>>) -> Response {
-    let codex = state.codex_status().await;
+    state.refresh_codex_status_in_background();
+    let codex = state.cached_codex().unwrap_or_else(CodexStatus::unknown);
     Json(state.store.menu(codex)).into_response()
 }
 
@@ -360,7 +391,10 @@ async fn save_profile(
 ) -> Response {
     profile.id = id;
     match state.service.save_profile(profile) {
-        Ok(config) => Json(config).into_response(),
+        Ok(config) => {
+            publish_environment(&state);
+            Json(config).into_response()
+        }
         Err(message) => failed(message),
     }
 }
@@ -370,7 +404,10 @@ async fn delete_profile(
     AxumPath(id): AxumPath<String>,
 ) -> Response {
     match state.service.delete_profile(&id) {
-        Ok(config) => Json(config).into_response(),
+        Ok(config) => {
+            publish_environment(&state);
+            Json(config).into_response()
+        }
         Err(message) => failed(message),
     }
 }
@@ -416,14 +453,18 @@ async fn save_runtime(
     if body.adapter_id.is_empty() || body.executable_path.is_empty() {
         return failed("Missing runtime body");
     }
-    Json(state.service.save_runtime(&id, body).await).into_response()
+    let mutation = state.service.save_runtime(&id, body).await;
+    publish_environment(&state);
+    Json(mutation).into_response()
 }
 
 async fn delete_runtime(
     State(state): State<Arc<RelayServerState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    Json(state.service.delete_runtime(&id)).into_response()
+    let config = state.service.delete_runtime(&id);
+    publish_environment(&state);
+    Json(config).into_response()
 }
 
 async fn diagnostics(State(state): State<Arc<RelayServerState>>) -> Response {
@@ -600,6 +641,7 @@ async fn codex_action(
 
 async fn refresh(State(state): State<Arc<RelayServerState>>) -> Response {
     let (environment, config) = state.service.refresh().await;
+    publish_environment(&state);
     state.invalidate_codex();
     Json(RefreshResult {
         runtimes: environment.runtimes.len() as u32,
@@ -1103,6 +1145,54 @@ mod tests {
                 messages: Vec::new(),
             }
         }
+    }
+
+    struct SlowCodex {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl CodexIntegration for SlowCodex {
+        async fn status(&self) -> CodexStatus {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            CodexStatus::unknown()
+        }
+        async fn run(&self, _action: CodexAction) -> InstallResult {
+            InstallResult {
+                status: CodexStatus::unknown(),
+                messages: Vec::new(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn menu_does_not_wait_for_slow_codex_cli_and_coalesces_background_probes() {
+        let mut state = test_state();
+        let codex = Arc::new(SlowCodex {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        Arc::get_mut(&mut state).unwrap().codex = codex.clone();
+
+        let started = Instant::now();
+        let response = menu(State(Arc::clone(&state))).await;
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Several tray polls during a single CLI probe must not start a probe
+        // storm, nor should any poll block on that CLI.
+        for _ in 0..10 {
+            let response = menu(State(Arc::clone(&state))).await;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while state.cached_codex().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the background Codex probe should eventually populate the cache");
+        assert_eq!(codex.calls.load(Ordering::SeqCst), 1);
     }
 
     /// A server state whose Codex integration counts every real probe, with the

@@ -25,23 +25,44 @@ use tower::ServiceExt;
 
 const TOKEN: &str = "test-token";
 
-struct TestService;
+/// The daemon's configuration, as the HTTP layer sees it.
+///
+/// A save really changes the profiles this stub reports, so a route that forgets
+/// to hand the new environment to the store fails here instead of only in the
+/// menu bar.
+#[derive(Default)]
+struct TestService {
+    profiles: Mutex<Vec<AgentProfile>>,
+}
 
-#[async_trait]
-impl EnvironmentService for TestService {
-    fn environment(&self) -> relay_api::environment::Environment {
-        relay_api::environment::Environment::default()
+impl TestService {
+    fn profiles(&self) -> Vec<AgentProfile> {
+        self.profiles.lock().unwrap().clone()
     }
 
-    fn config(&self) -> RelayConfigView {
+    fn view(&self, profiles: Vec<AgentProfile>) -> RelayConfigView {
         RelayConfigView {
-            profiles: Vec::new(),
+            profiles,
             policy: RelayPolicy::default(),
             workspace_overrides: Default::default(),
             manual_runtimes: Vec::new(),
             warnings: vec!["config.toml 无法解析".to_string()],
             revision: "revision-1".to_string(),
         }
+    }
+}
+
+#[async_trait]
+impl EnvironmentService for TestService {
+    fn environment(&self) -> relay_api::environment::Environment {
+        relay_api::environment::Environment {
+            profiles: self.profiles(),
+            ..Default::default()
+        }
+    }
+
+    fn config(&self) -> RelayConfigView {
+        self.view(self.profiles())
     }
 
     async fn refresh(&self) -> (relay_api::environment::Environment, RelayConfigView) {
@@ -75,12 +96,23 @@ impl EnvironmentService for TestService {
         self.config()
     }
 
-    fn save_profile(&self, _profile: AgentProfile) -> Result<RelayConfigView, String> {
-        Ok(self.config())
+    fn save_profile(&self, profile: AgentProfile) -> Result<RelayConfigView, String> {
+        let profiles = {
+            let mut profiles = self.profiles.lock().unwrap();
+            profiles.retain(|existing| existing.id != profile.id);
+            profiles.push(profile);
+            profiles.clone()
+        };
+        Ok(self.view(profiles))
     }
 
-    fn delete_profile(&self, _id: &str) -> Result<RelayConfigView, String> {
-        Ok(self.config())
+    fn delete_profile(&self, id: &str) -> Result<RelayConfigView, String> {
+        let profiles = {
+            let mut profiles = self.profiles.lock().unwrap();
+            profiles.retain(|existing| existing.id != id);
+            profiles.clone()
+        };
+        Ok(self.view(profiles))
     }
 
     fn save_policy(&self, _body: PolicyBody) -> Result<RelayConfigView, String> {
@@ -278,7 +310,7 @@ fn harness(directory: &std::path::Path) -> Harness {
     let codex_probes = Arc::new(AtomicUsize::new(0));
     let state = RelayServerState::new(RelayServerOptions {
         store,
-        service: Arc::new(TestService),
+        service: Arc::new(TestService::default()),
         runs: runs.clone(),
         codex: Arc::new(TestCodex {
             probes: Arc::clone(&codex_probes),
@@ -323,22 +355,25 @@ async fn get(
     (status, String::from_utf8_lossy(&body).to_string())
 }
 
-async fn post(
+async fn send(
     state: &Arc<RelayServerState>,
+    method: &str,
     path: &str,
-    body: serde_json::Value,
+    body: Option<serde_json::Value>,
 ) -> (StatusCode, String) {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("host", "127.0.0.1:7352")
+        .header("authorization", format!("Bearer {TOKEN}"));
+    if body.is_some() {
+        request = request.header("content-type", "application/json");
+    }
+    let body = body
+        .map(|body| Body::from(body.to_string()))
+        .unwrap_or_else(Body::empty);
     let response = router(Arc::clone(state))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(path)
-                .header("host", "127.0.0.1:7352")
-                .header("authorization", format!("Bearer {TOKEN}"))
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
+        .oneshot(request.body(body).unwrap())
         .await
         .unwrap();
     let status = response.status();
@@ -346,6 +381,26 @@ async fn post(
         .await
         .unwrap();
     (status, String::from_utf8_lossy(&bytes).to_string())
+}
+
+async fn post(
+    state: &Arc<RelayServerState>,
+    path: &str,
+    body: serde_json::Value,
+) -> (StatusCode, String) {
+    send(state, "POST", path, Some(body)).await
+}
+
+async fn put(
+    state: &Arc<RelayServerState>,
+    path: &str,
+    body: serde_json::Value,
+) -> (StatusCode, String) {
+    send(state, "PUT", path, Some(body)).await
+}
+
+async fn delete(state: &Arc<RelayServerState>, path: &str) -> (StatusCode, String) {
+    send(state, "DELETE", path, None).await
 }
 
 #[tokio::test]
@@ -510,6 +565,70 @@ async fn the_projection_routes_serve_what_the_surfaces_render() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, r#"{"runId":"run:1","events":[]}"#);
+}
+
+/// The control panel saves to `/api/config`; the menu bar reads `/api/menu`.
+/// A profile only reaches the tray because every mutation hands the store the
+/// environment the service just produced — the store projects what it was given,
+/// and it is given nothing at all until a mutation publishes one.
+#[tokio::test]
+async fn a_saved_profile_reaches_the_menu_and_the_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let harness = harness(directory.path());
+
+    let (_, body) = get(&harness.state, "/api/menu", "127.0.0.1:7352", Some(TOKEN)).await;
+    assert_eq!(menu_agents(&body).len(), 0);
+
+    let (status, _) = put(
+        &harness.state,
+        "/api/config/profiles/agent-menu",
+        serde_json::json!({
+            "id": "agent-menu",
+            "name": "Menu Check",
+            "description": "",
+            "runtimeId": "runtime:missing",
+            "capabilities": {
+                "readWorkspace": true,
+                "writeWorkspace": false,
+                "executeCommands": false,
+                "networkAccess": false
+            },
+            "enabled": true
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, body) = get(&harness.state, "/api/menu", "127.0.0.1:7352", Some(TOKEN)).await;
+    let agents = menu_agents(&body);
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["id"], "agent-menu");
+    assert_eq!(agents[0]["name"], "Menu Check");
+    // The runtime it names does not exist: the menu says why instead of hiding it.
+    assert_eq!(agents[0]["blocked"], "missing");
+
+    // The panel and the inspector read the snapshot, so it has to agree.
+    let (_, body) = get(
+        &harness.state,
+        "/api/snapshot",
+        "127.0.0.1:7352",
+        Some(TOKEN),
+    )
+    .await;
+    let snapshot: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(snapshot["profiles"][0]["name"], "Menu Check");
+
+    // A deleted agent must leave the menu too, or the tray keeps offering it.
+    let (status, _) = delete(&harness.state, "/api/config/profiles/agent-menu").await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = get(&harness.state, "/api/menu", "127.0.0.1:7352", Some(TOKEN)).await;
+    assert_eq!(menu_agents(&body).len(), 0);
+}
+
+/// The agents one menu payload offers, in the order the tray draws them.
+fn menu_agents(body: &str) -> Vec<serde_json::Value> {
+    let menu: serde_json::Value = serde_json::from_str(body).unwrap();
+    menu["agents"].as_array().cloned().unwrap_or_default()
 }
 
 /// Execution belongs to the daemon: every MCP tool has a route here, and the

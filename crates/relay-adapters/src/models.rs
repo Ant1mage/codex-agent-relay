@@ -4,8 +4,8 @@
 //! Relay asks the provider's official API instead.
 //!
 //! Two rules this module holds to:
-//!  * the API key is read from the environment only — never written to disk,
-//!    never sent to a renderer, never included in a diagnostic;
+//!  * the API key is read from the environment or supplied by the runtime's
+//!    local credential resolver — never sent to a renderer or diagnostic;
 //!  * a provider whose endpoint or response shape is not verified is left out
 //!    entirely rather than guessed at.
 
@@ -83,7 +83,36 @@ pub fn parse_model_payload(payload: &serde_json::Value) -> Vec<ModelOption> {
         if models.iter().any(|model| model.value == value) {
             continue;
         }
-        models.push(ModelOption::new(value, Some(label)));
+        let reasoning_levels = entry
+            .get("effort")
+            .and_then(|effort| effort.get("supported_levels"))
+            .and_then(|levels| levels.as_array())
+            .map(|levels| {
+                levels
+                    .iter()
+                    .filter_map(|level| level.as_str())
+                    .filter(|level| !level.is_empty())
+                    .enumerate()
+                    .map(|(index, value)| ReasoningLevel {
+                        strength: (index + 1) as u8,
+                        label: display_effort(value),
+                        value: value.to_string(),
+                    })
+                    .take(5)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let default_reasoning = entry
+            .get("effort")
+            .and_then(|effort| effort.get("default_level"))
+            .and_then(|level| level.as_str())
+            .map(str::to_string);
+        models.push(ModelOption {
+            value,
+            label: Some(label),
+            reasoning_levels,
+            default_reasoning,
+        });
     }
     models
 }
@@ -117,18 +146,20 @@ pub fn parse_reasoning_payload(payload: &serde_json::Value) -> Vec<ReasoningLeve
             .enumerate()
             .map(|(index, value)| ReasoningLevel {
                 strength: (index + 1) as u8,
-                label: {
-                    let mut chars = value.chars();
-                    match chars.next() {
-                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                        None => String::new(),
-                    }
-                },
+                label: display_effort(&value),
                 value,
             })
             .collect();
     }
     Vec::new()
+}
+
+fn display_effort(value: &str) -> String {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 fn api_key(query: &HttpModelQuery) -> Option<String> {
@@ -153,16 +184,29 @@ fn redact(message: &str, key: &str) -> String {
 }
 
 pub async fn list_models_over_http(key: &str) -> HttpModelsResult {
+    let credential = query_for(key).and_then(|query| api_key(&query));
+    list_models_over_http_with_key(key, credential.as_deref()).await
+}
+
+async fn list_models_over_http_with_key(key: &str, supplied: Option<&str>) -> HttpModelsResult {
     let Some(query) = query_for(key) else {
         return HttpModelsResult::default();
     };
-    let Some(credential) = api_key(&query) else {
+    request_models(query, supplied).await
+}
+
+async fn request_models(query: HttpModelQuery, supplied: Option<&str>) -> HttpModelsResult {
+    let Some(credential) = supplied.map(str::trim).filter(|value| !value.is_empty()) else {
         return HttpModelsResult {
             auth_required: true,
-            diagnostics: vec![format!(
-                "{} publishes no model list on its CLI. Set {} to let Relay read the model list from the official API",
-                query.provider, query.key_env[0]
-            )],
+            diagnostics: vec![if query.provider == "DeepSeek" {
+                "DeepSeek model discovery needs the DSH credential or DEEPSEEK_API_KEY in Relay's launching environment".to_string()
+            } else {
+                format!(
+                    "{} publishes no model list on its CLI. Set {} to let Relay read the model list from the official API",
+                    query.provider, query.key_env[0]
+                )
+            }],
             ..HttpModelsResult::default()
         };
     };
@@ -185,7 +229,7 @@ pub async fn list_models_over_http(key: &str) -> HttpModelsResult {
     let response = client
         .get(query.endpoint)
         .header("accept", "application/json")
-        .bearer_auth(&credential)
+        .bearer_auth(credential)
         .send()
         .await;
     let response = match response {
@@ -195,7 +239,7 @@ pub async fn list_models_over_http(key: &str) -> HttpModelsResult {
                 diagnostics: vec![format!(
                     "{} model list request failed: {}",
                     query.provider,
-                    redact(&error.to_string(), &credential)
+                    redact(&error.to_string(), credential)
                 )],
                 ..HttpModelsResult::default()
             }
@@ -218,7 +262,7 @@ pub async fn list_models_over_http(key: &str) -> HttpModelsResult {
                 diagnostics: vec![format!(
                     "{} model list request failed: {}",
                     query.provider,
-                    redact(&error.to_string(), &credential)
+                    redact(&error.to_string(), credential)
                 )],
                 ..HttpModelsResult::default()
             }
@@ -251,27 +295,88 @@ pub async fn with_model_fallback(
     cli: RuntimeOptions,
     provider_key: Option<&str>,
 ) -> RuntimeOptions {
-    let needs_models = cli.models.is_empty() && cli.model_flag.is_some();
-    let needs_levels = cli.levels.is_empty() && cli.reasoning_flag.is_some();
+    with_model_fallback_applicable(cli, provider_key, false).await
+}
+
+/// Uses the provider HTTP catalogue when the runtime applies selections through
+/// a mechanism other than CLI flags (for example DSH's per-run config overlay).
+pub async fn with_model_fallback_applicable(
+    cli: RuntimeOptions,
+    provider_key: Option<&str>,
+    applies_without_flags: bool,
+) -> RuntimeOptions {
+    let credential = provider_key
+        .and_then(query_for)
+        .and_then(|query| api_key(&query));
+    with_model_fallback_applicable_with_key(
+        cli,
+        provider_key,
+        applies_without_flags,
+        credential.as_deref(),
+    )
+    .await
+}
+
+/// Applies the same fallback using a credential resolved by the runtime's own
+/// local store. The caller keeps ownership; only the HTTP authorization header
+/// receives it.
+pub async fn with_model_fallback_applicable_with_key(
+    cli: RuntimeOptions,
+    provider_key: Option<&str>,
+    applies_without_flags: bool,
+    supplied: Option<&str>,
+) -> RuntimeOptions {
+    let needs_models = cli.models.is_empty() && (cli.model_flag.is_some() || applies_without_flags);
+    let needs_levels = (cli.levels.is_empty()
+        || cli
+            .models
+            .iter()
+            .any(|model| model.reasoning_levels.is_empty()))
+        && (cli.reasoning_flag.is_some() || applies_without_flags);
     let Some(provider_key) = provider_key else {
         return cli;
     };
     if !needs_models && !needs_levels {
         return cli;
     }
-    let http = list_models_over_http(provider_key).await;
+    let http = list_models_over_http_with_key(provider_key, supplied).await;
+    merge_http_fallback(cli, http, needs_models, needs_levels)
+}
+
+fn merge_http_fallback(
+    cli: RuntimeOptions,
+    http: HttpModelsResult,
+    needs_models: bool,
+    needs_levels: bool,
+) -> RuntimeOptions {
     let used_api =
         (needs_models && !http.models.is_empty()) || (needs_levels && !http.levels.is_empty());
+    let mut models = if needs_models {
+        http.models.clone()
+    } else {
+        cli.models.clone()
+    };
+    // The API can provide per-model effort metadata even when the CLI already
+    // reported its model names. Enrich matching entries without replacing the
+    // runtime's own labels, ordering, or model set.
+    if !needs_models {
+        for model in &mut models {
+            if let Some(reported) = http.models.iter().find(|item| item.value == model.value) {
+                if model.reasoning_levels.is_empty() {
+                    model.reasoning_levels = reported.reasoning_levels.clone();
+                }
+                if model.default_reasoning.is_none() {
+                    model.default_reasoning = reported.default_reasoning.clone();
+                }
+            }
+        }
+    }
     RuntimeOptions {
-        models: if needs_models {
-            http.models
-        } else {
-            cli.models
-        },
+        models,
         levels: if needs_levels {
-            http.levels
+            http.levels.clone()
         } else {
-            cli.levels
+            cli.levels.clone()
         },
         source: if used_api {
             OptionsSource::Api
@@ -292,11 +397,56 @@ pub async fn with_model_fallback(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn a_dsh_credential_authenticates_the_http_catalogue_request() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/models", listener.local_addr().unwrap());
+        let response = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0_u8; 4096];
+            let count = stream.read(&mut buffer).await.unwrap();
+            let request = String::from_utf8_lossy(&buffer[..count]);
+            assert!(
+                request.contains("Bearer local-test-key"),
+                "missing credential header"
+            );
+            assert!(request.starts_with("GET /models HTTP/1.1"));
+            let body = r#"{"data":[{"id":"deepseek-flash","effort":{"supported_levels":["low","high"],"default_level":"high"}}]}"#;
+            stream
+                .write_all(format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                ).as_bytes())
+                .await
+                .unwrap();
+        });
+        let query = HttpModelQuery {
+            provider: "DeepSeek",
+            endpoint: Box::leak(endpoint.into_boxed_str()),
+            key_env: &["DEEPSEEK_API_KEY"],
+        };
+        let result = request_models(query, Some("local-test-key")).await;
+        response.await.unwrap();
+
+        assert_eq!(result.models[0].value, "deepseek-flash");
+        assert_eq!(result.models[0].reasoning_levels[1].value, "high");
+        assert!(result.diagnostics.is_empty());
+    }
+
     #[test]
     fn openai_style_payloads_are_understood() {
         let payload = serde_json::json!({
             "data": [
-                { "id": "deepseek-chat", "display_name": "DeepSeek Chat" },
+                {
+                    "id": "deepseek-chat",
+                    "display_name": "DeepSeek Chat",
+                    "effort": {
+                        "supported_levels": ["low", "high", "max"],
+                        "default_level": "high"
+                    }
+                },
                 { "id": "models/deepseek-reasoner" },
                 { "id": "deepseek-chat" }
             ]
@@ -305,6 +455,15 @@ mod tests {
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].value, "deepseek-chat");
         assert_eq!(models[0].label.as_deref(), Some("DeepSeek Chat"));
+        assert_eq!(
+            models[0]
+                .reasoning_levels
+                .iter()
+                .map(|level| level.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["low", "high", "max"]
+        );
+        assert_eq!(models[0].default_reasoning.as_deref(), Some("high"));
         assert_eq!(models[1].value, "deepseek-reasoner");
     }
 
@@ -317,6 +476,37 @@ mod tests {
         assert_eq!(levels.len(), 3);
         assert_eq!(levels[2].strength, 3);
         assert_eq!(levels[2].label, "High");
+    }
+
+    #[test]
+    fn an_overlay_adapter_gets_model_specific_http_options_without_cli_flags() {
+        let api_model = ModelOption {
+            value: "deepseek-v4-pro".to_string(),
+            label: Some("DeepSeek-V4-Pro".to_string()),
+            reasoning_levels: vec![ReasoningLevel {
+                strength: 1,
+                label: "High".to_string(),
+                value: "high".to_string(),
+            }],
+            default_reasoning: Some("high".to_string()),
+        };
+        let cli = RuntimeOptions::empty("dsh", "deepseek-harness", "no CLI flags");
+        let merged = merge_http_fallback(
+            cli,
+            HttpModelsResult {
+                models: vec![api_model.clone()],
+                levels: api_model.reasoning_levels.clone(),
+                ..HttpModelsResult::default()
+            },
+            true,
+            true,
+        );
+
+        assert_eq!(merged.models, vec![api_model]);
+        assert_eq!(merged.levels[0].value, "high");
+        assert_eq!(merged.source, OptionsSource::Api);
+        assert_eq!(merged.model_flag, None);
+        assert_eq!(merged.reasoning_flag, None);
     }
 
     #[test]
@@ -341,6 +531,15 @@ mod tests {
         assert!(result.auth_required);
         assert!(result.models.is_empty());
         assert!(result.diagnostics[0].contains("DEEPSEEK_API_KEY"));
+
+        let dsh_overlay_options = RuntimeOptions::empty("dsh", "deepseek-harness", "no CLI list");
+        let dsh_options =
+            with_model_fallback_applicable(dsh_overlay_options, Some("deepseek"), true).await;
+        assert!(dsh_options.models.is_empty());
+        assert!(dsh_options
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("DEEPSEEK_API_KEY")));
     }
 
     #[tokio::test]

@@ -253,6 +253,7 @@ async fn confirmed_running_daemon() -> Option<ServerInfo> {
     let info = read_server_info(&server_info_path())?;
     let url = format!("{}/api/health?token={}", info.url, info.token);
     let client = reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(3))
         .build()
         .ok()?;

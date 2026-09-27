@@ -174,7 +174,11 @@ else
     echo "the Tauri CLI is missing: cargo install tauri-cli --version '^2' --locked" >&2
     exit 1
   }
-  announce_endpoints &
+  if [ "${RELAY_NO_AUTOSTART:-0}" != "1" ]; then
+    announce_endpoints &
+  else
+    echo "automatic daemon start is disabled; use the Relay menu to start it"
+  fi
   echo "starting the desktop shell (it starts relayd itself)…"
   # `tauri dev` rebuilds on change; the daemon it spawns is stopped on exit.
   env -u NO_COLOR cargo tauri dev

@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use relay_api::RunView;
 use relay_core::{RelayEvent, RelayEventType, RunStatus, StepStatus};
 use serde_json::{Map, Value};
+use wasm_bindgen::JsCast;
 
 use crate::dom;
 use crate::i18n::Translator;
@@ -140,8 +141,20 @@ pub fn date_time(timestamp: &str) -> String {
     if date.get_time().is_nan() {
         return timestamp.to_string();
     }
-    // `toLocaleString()` with no arguments: the default locale, default options.
-    String::from(date.to_locale_string("", &wasm_bindgen::JsValue::UNDEFINED))
+    // `toLocaleString()` — the zero-argument form, which is what the port meant.
+    //
+    // `Date::to_locale_string` cannot express it: its locale is a `&str`, and
+    // `toLocaleString("")` is a `RangeError: Invalid language tag` because the
+    // empty string is not a language tag. `Object::to_locale_string` is the
+    // binding with no arguments, and on a Date it still dispatches to
+    // `Date.prototype.toLocaleString`.
+    //
+    // This is not a cosmetic bug. A JS exception raised inside a render effect
+    // escapes through wasm without running a single Rust destructor, so the
+    // polling js-sys task keeps its borrow and panics with "RefCell already
+    // borrowed" the next time it runs — and from then on the panel's tab branch
+    // never renders again. That is the freeze the Status tab had.
+    String::from(js_sys::Object::to_locale_string(date.unchecked_ref::<js_sys::Object>()))
 }
 
 /// ✓ / ● / ◆ / ✕ / ○ status glyph.

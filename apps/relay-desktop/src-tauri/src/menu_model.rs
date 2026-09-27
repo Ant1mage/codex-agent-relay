@@ -390,6 +390,12 @@ pub fn build_menu_bar_items(view: &MenuBarView) -> Vec<MenuBarItem> {
                 .enabled(view.daemon != DaemonStatus::Starting)
                 .action(MenuBarAction::RestartDaemon),
         );
+        if let Some(error) = view.error.as_deref() {
+            items.push(MenuBarItem::header(format!(
+                "⚠︎ {}",
+                truncate_chars(error, ERROR_HEADER_CHARS)
+            )));
+        }
         items.push(MenuBarItem::separator());
         items.push(
             MenuBarItem::normal(t.t(i18n::key::MENU_DIAGNOSTICS))
@@ -1153,6 +1159,11 @@ mod tests {
 
     #[test]
     fn error_and_version_mismatch_headers_are_truncated_and_explicit() {
+        let mut down = view(DaemonStatus::Stopped, None);
+        down.error = Some("health request failed".into());
+        let items = build_menu_bar_items(&down);
+        assert!(labels(&items).contains(&"⚠︎ health request failed".to_string()));
+
         let mut broken = view(DaemonStatus::Running, Some(empty_menu("ready")));
         broken.error = Some("x".repeat(200));
         let items = build_menu_bar_items(&broken);

@@ -85,8 +85,15 @@ pub async fn detect_environment(config: &ConfigStore) -> Environment {
     let mut diagnostics: Vec<String> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
 
-    for adapter in adapters() {
-        let detection = adapter.detect().await;
+    // Runtime detection is independent per adapter; preserve registry order
+    // while avoiding N sequential CLI startup delays.
+    for detection in futures::future::join_all(
+        adapters()
+            .into_iter()
+            .map(|adapter| async move { adapter.detect().await }),
+    )
+    .await
+    {
         for diagnostic in detection.diagnostics {
             if !diagnostics.contains(&diagnostic) {
                 diagnostics.push(diagnostic);
@@ -101,11 +108,17 @@ pub async fn detect_environment(config: &ConfigStore) -> Environment {
         }
     }
 
-    for entry in &loaded.manual_runtimes {
+    let manual_probes = futures::future::join_all(
+        loaded
+            .manual_runtimes
+            .iter()
+            .map(|entry| async move { (entry, probe_executable(&entry.executable_path).await) }),
+    )
+    .await;
+    for (entry, probe) in manual_probes {
         if seen.contains(&entry.id) {
             continue;
         }
-        let probe = probe_executable(&entry.executable_path).await;
         if !probe.ok {
             diagnostics.push(format!(
                 "手动运行时 {} 不可用：{}",

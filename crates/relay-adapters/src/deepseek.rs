@@ -16,8 +16,8 @@
 //!
 //! Core never sees any of this: only the mapped Relay events leave this module.
 
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,8 +27,10 @@ use relay_core::{
     OptionsSource, ReasoningLevel, RelayError, RelayEventType, Result, ResumeInput, Runtime,
     RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
+use serde::Deserialize;
 
 use crate::cli::{run_cli, ParsedOutput, ProcessSupervisor, StreamMode, StreamOutcome, StreamSpec};
+use crate::models::with_model_fallback_applicable_with_key;
 use crate::probe::{
     capture_with, discover_executable, probe_runtime_options, probe_target, read_help_with,
     version_of, with_selection_args, Selection,
@@ -36,6 +38,81 @@ use crate::probe::{
 
 pub const ADAPTER_ID: &str = "deepseek-harness";
 pub const RUNTIME_ID: &str = "runtime:deepseek-harness";
+
+const DEFAULT_API_KEY_REF: &str = "DEEPSEEK_API_KEY";
+const CREDENTIAL_FILE: &str = ".credentials.yaml";
+
+#[derive(Deserialize)]
+struct DshCredentials {
+    version: u8,
+    #[serde(default)]
+    refs: std::collections::HashMap<String, String>,
+}
+
+/// DSH refuses credential files readable by other users. Match that check and
+/// the versioned `refs` format before using a key for the official model API.
+fn stored_api_key(path: &Path, reference: &str) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > 1024 * 1024 {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return None;
+        }
+    }
+    let mut body = String::new();
+    file.take(1024 * 1024 + 1).read_to_string(&mut body).ok()?;
+    if body.len() > 1024 * 1024 {
+        return None;
+    }
+    let document: DshCredentials = serde_yaml::from_str(&body).ok()?;
+    if document.version != 1 {
+        return None;
+    }
+    document
+        .refs
+        .get(reference)
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+}
+
+fn credential_reference(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+fn add_deepseek_off(options: &mut RuntimeOptions, selected_model: Option<&str>) {
+    let off = || ReasoningLevel {
+        strength: 0,
+        label: "Off".to_string(),
+        value: "off".to_string(),
+    };
+    for model in &mut options.models {
+        if !model
+            .reasoning_levels
+            .iter()
+            .any(|level| level.value == "off")
+        {
+            model.reasoning_levels.insert(0, off());
+        }
+    }
+    if let Some(selected) = selected_model {
+        if let Some(model) = options.models.iter().find(|model| model.value == selected) {
+            options.levels = model.reasoning_levels.clone();
+        }
+    }
+    if !options.levels.iter().any(|level| level.value == "off") {
+        options.levels.insert(0, off());
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* How model, reasoning and instructions reach a dsh run               */
 /* ------------------------------------------------------------------ */
@@ -86,6 +163,8 @@ pub struct DshComposition {
     pub model: Option<String>,
     /// The reasoning effort that selection names, when it names one.
     pub reasoning_effort: Option<String>,
+    /// Name of the credential reference used by the official API route.
+    pub api_key_env: Option<String>,
     /// The levels the provider route itself accepts.
     pub route_efforts: Vec<String>,
     /// The level the route falls back to, when the profile states one.
@@ -145,6 +224,9 @@ pub fn parse_composition(text: &str) -> DshComposition {
     composition.models = catalogue_of(&rows, &provider);
     if let Some(row) = provider_row_of(&rows, &provider) {
         let config = row.config();
+        if provider == "deepseek-official" {
+            composition.api_key_env = config.and_then(|config| text_of(config, "apiKeyEnv"));
+        }
         let thinking = config.and_then(|config| text_of(config, "thinking"));
         // A route that runs with thinking disabled accepts exactly one effort,
         // which is what its own adapter reports for every model it serves.
@@ -790,6 +872,54 @@ impl DeepSeekAdapter {
         self
     }
 
+    fn environment_value(&self, name: &str) -> Option<String> {
+        self.environment
+            .iter()
+            .rev()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.clone())
+            .or_else(|| std::env::var(name).ok())
+    }
+
+    fn dsh_home(&self) -> Option<PathBuf> {
+        let home = dirs::home_dir()?;
+        let configured = self.environment_value("DSH_HOME");
+        let path = configured
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".dsh"));
+        let expanded = if path == Path::new("~") {
+            home
+        } else if let Ok(relative) = path.strip_prefix("~") {
+            home.join(relative)
+        } else {
+            path
+        };
+        if expanded.is_absolute() {
+            Some(expanded)
+        } else {
+            std::env::current_dir().ok().map(|cwd| cwd.join(expanded))
+        }
+    }
+
+    fn model_api_key(&self, composition: &DshComposition) -> Option<String> {
+        let reference = composition
+            .api_key_env
+            .as_deref()
+            .unwrap_or(DEFAULT_API_KEY_REF);
+        if !credential_reference(reference) {
+            return None;
+        }
+        if let Some(value) = self
+            .environment_value(reference)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(value);
+        }
+        stored_api_key(&self.dsh_home()?.join(CREDENTIAL_FILE), reference)
+    }
+
     /// `dsh` may be installed through npx rather than on `PATH`.
     fn executable(&self) -> Option<String> {
         if let Some(configured) = &self.configured_executable {
@@ -1200,9 +1330,10 @@ impl AgentAdapter for DeepSeekAdapter {
         diagnostics.append(&mut options.diagnostics);
         options.diagnostics = diagnostics;
 
-        // The profile is the only authority for which models the route accepts, and
-        // the entry schema is the only authority for the levels each model takes.
-        match read_composition(&executable, &self.prefix_args, &self.environment).await {
+        // Prefer any catalogue or constraints the profile itself exposes. DSH's
+        // CLI release in use has no schema dump, so the provider API fills gaps.
+        let composition = read_composition(&executable, &self.prefix_args, &self.environment).await;
+        match composition.as_ref() {
             Some(composition) => match composition.provider {
                 Some(ref provider) if !composition.models.is_empty() => {
                     options.models = composition
@@ -1231,8 +1362,8 @@ impl AgentAdapter for DeepSeekAdapter {
                         ));
                     }
                 }
-                Some(provider) => options.diagnostics.push(format!(
-                    "This dsh profile declares no model catalogue for the {provider} route, so Relay cannot offer a model list"
+                Some(ref provider) => options.diagnostics.push(format!(
+                    "This dsh profile declares no model catalogue for the {provider} route; Relay will try the provider API"
                 )),
                 None => options.diagnostics.push(
                     "This dsh profile declares no default model selection, so Relay cannot offer a model list"
@@ -1243,6 +1374,30 @@ impl AgentAdapter for DeepSeekAdapter {
                 "dsh did not report a composed configuration, so Relay cannot offer a model list"
                     .to_string(),
             ),
+        }
+        // `dsh --help` has no model or reasoning flags, and this DSH release
+        // also has no config-schema dump command. Its per-run --patch overlay
+        // does apply both values, so use DeepSeek's documented /models API for
+        // the missing catalogue and per-model effort capabilities.
+        let provider_key = composition
+            .as_ref()
+            .and_then(|composition| composition.provider.as_deref())
+            .filter(|provider| *provider == "deepseek-official")
+            .map(|_| "deepseek");
+        let credential =
+            provider_key.and_then(|_| composition.as_ref().and_then(|c| self.model_api_key(c)));
+        let mut options = with_model_fallback_applicable_with_key(
+            options,
+            provider_key,
+            true,
+            credential.as_deref(),
+        )
+        .await;
+        if provider_key.is_some() {
+            let selected = composition
+                .as_ref()
+                .and_then(|composition| composition.model.as_deref());
+            add_deepseek_off(&mut options, selected);
         }
         options
     }
@@ -1287,6 +1442,138 @@ impl AgentAdapter for DeepSeekAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires an installed and authenticated DSH, and calls the official models API"]
+    async fn installed_dsh_reports_models_from_its_saved_credential() {
+        let adapter = DeepSeekAdapter::new();
+        let executable = adapter.executable().expect("dsh must be installed");
+        let options = adapter.report_options(&runtime_with(&executable)).await;
+        assert!(
+            !options.models.is_empty(),
+            "DSH model discovery failed: {:?}",
+            options.diagnostics
+        );
+        assert_eq!(options.source, OptionsSource::Api);
+        assert!(options
+            .models
+            .iter()
+            .any(|model| model.reasoning_levels.len() > 1));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn model_catalogue_reuses_dshs_owner_only_credential_store() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(CREDENTIAL_FILE);
+        std::fs::write(
+            &path,
+            "version: 1\nrefs:\n  DEEPSEEK_API_KEY: 'local-test-key'\nrecords: {}\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let adapter = DeepSeekAdapter::new().with_environment(vec![
+            ("DSH_HOME".to_string(), home.path().display().to_string()),
+            (DEFAULT_API_KEY_REF.to_string(), String::new()),
+        ]);
+        let composition = parse_composition(DUMP_WITHOUT_CATALOGUE);
+
+        assert_eq!(
+            adapter.model_api_key(&composition).as_deref(),
+            Some("local-test-key")
+        );
+
+        let overridden = DeepSeekAdapter::new().with_environment(vec![
+            ("DSH_HOME".to_string(), home.path().display().to_string()),
+            (
+                DEFAULT_API_KEY_REF.to_string(),
+                "environment-key".to_string(),
+            ),
+        ]);
+        assert_eq!(
+            overridden.model_api_key(&composition).as_deref(),
+            Some("environment-key"),
+            "DSH gives the inherited environment priority over its store"
+        );
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(adapter.model_api_key(&composition), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn model_catalogue_honours_a_custom_dsh_credential_reference() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(CREDENTIAL_FILE);
+        std::fs::write(
+            &path,
+            "version: 1\nrefs:\n  CUSTOM_DEEPSEEK_KEY: custom-key\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let adapter = DeepSeekAdapter::new().with_environment(vec![
+            ("DSH_HOME".to_string(), home.path().display().to_string()),
+            ("CUSTOM_DEEPSEEK_KEY".to_string(), String::new()),
+        ]);
+        let composition = parse_composition(
+            "- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: deepseek-flash\n- id: llm-deepseek\n  config:\n    apiKeyEnv: CUSTOM_DEEPSEEK_KEY\n",
+        );
+        assert_eq!(
+            composition.api_key_env.as_deref(),
+            Some("CUSTOM_DEEPSEEK_KEY")
+        );
+        assert_eq!(
+            adapter.model_api_key(&composition).as_deref(),
+            Some("custom-key")
+        );
+    }
+
+    #[test]
+    fn dsh_options_keep_efforts_per_model_and_add_the_runtime_off_choice() {
+        let level = |value: &str| ReasoningLevel {
+            strength: 1,
+            label: value.to_string(),
+            value: value.to_string(),
+        };
+        let mut options = RuntimeOptions {
+            runtime_id: RUNTIME_ID.to_string(),
+            adapter_id: ADAPTER_ID.to_string(),
+            models: vec![
+                ModelOption {
+                    value: "reasoning-model".to_string(),
+                    label: None,
+                    reasoning_levels: vec![level("high"), level("max")],
+                    default_reasoning: Some("high".to_string()),
+                },
+                ModelOption::new("plain-model", None),
+            ],
+            levels: vec![level("low")],
+            model_flag: None,
+            reasoning_flag: None,
+            source: OptionsSource::Api,
+            diagnostics: Vec::new(),
+        };
+
+        add_deepseek_off(&mut options, Some("reasoning-model"));
+
+        assert_eq!(
+            options.models[0]
+                .reasoning_levels
+                .iter()
+                .map(|level| level.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["off", "high", "max"]
+        );
+        assert_eq!(
+            options.models[1].reasoning_levels[0].value, "off",
+            "DSH exposes off even when the model has no effort levels"
+        );
+        assert_eq!(options.levels, options.models[0].reasoning_levels);
+    }
 
     #[test]
     fn the_documented_stream_maps_to_stable_relay_events() {

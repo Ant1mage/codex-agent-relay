@@ -34,6 +34,7 @@ impl DaemonClient {
 
     pub fn from_info(info: &ServerInfo) -> Result<Self, String> {
         let http = reqwest::Client::builder()
+            .no_proxy()
             .connect_timeout(Duration::from_secs(5))
             .build()
             .map_err(|error| error.to_string())?;

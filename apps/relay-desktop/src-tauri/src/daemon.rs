@@ -51,8 +51,8 @@ pub struct DaemonProbe {
     pub menu: Option<MenuView>,
     pub error: Option<String>,
     /// True only when the daemon answered with the nonce from server.json.
-    /// Restart and "already running" both key off this: a PID on its own proves
-    /// nothing.
+    /// Restart, "already running" and quitting all key off this: a PID on its own
+    /// proves nothing.
     pub verified: bool,
     /// The daemon answered, but with a different Relay version than this app.
     /// After an update the previous version keeps running until it is restarted,
@@ -127,21 +127,40 @@ pub async fn probe(app_version: &str) -> DaemonProbe {
             Some("server.json 与运行的 daemon 不匹配（已过期）".to_string()),
         );
     }
-    let menu = match client.menu().await {
-        Ok(menu) => menu,
-        Err(error) => return DaemonProbe::stopped(Some(info), Some(error.message)),
+    // Identity is proven from here on: the daemon answered with the nonce from its
+    // own record. A menu that cannot be fetched is a rendering problem, not a
+    // reason to forget which process this is — quitting still has to stop it.
+    let (menu, error) = match client.menu().await {
+        Ok(menu) => (Some(menu), None),
+        Err(error) => (None, Some(error.message)),
     };
     let version_mismatch = !app_version.is_empty() && health.version != app_version;
     DaemonProbe {
-        status: DaemonStatus::Running,
+        status: if error.is_none() {
+            DaemonStatus::Running
+        } else {
+            DaemonStatus::Stopped
+        },
         info: Some(info),
-        menu: Some(menu),
-        error: None,
+        menu,
+        error,
         verified: true,
         version_mismatch,
         running_version: Some(health.version),
         app_version: Some(app_version.to_string()),
     }
+}
+
+/// A cheap identity check: the record in `server.json`, confirmed by
+/// `/api/health`.
+///
+/// `probe` applies the same rule and then fetches the menu; quitting only needs
+/// to know whether there is a daemon it is allowed to signal.
+pub async fn verify() -> Option<ServerInfo> {
+    let info = read_info()?;
+    let client = RelayClient::new(info.url.clone(), info.token.clone());
+    let health = client.health().await.ok()?;
+    identity_verified(&info, &health).then_some(info)
 }
 
 /// True when this process runs from an installed `.app` bundle.
@@ -236,8 +255,11 @@ fn daemon_command() -> Option<DaemonCommand> {
     )
 }
 
-/// Starts the daemon detached so it outlives the tray. Failures are reported as a
-/// string instead of a panic — the menu bar is the one surface the user has left.
+/// Starts the daemon detached, so a tray that is killed (or a terminal that
+/// closes) cannot take a running worker down with it: the daemon ends on an
+/// explicit stop, not with whoever happens to be its parent. Failures are
+/// reported as a string instead of a panic — the menu bar is the one surface the
+/// user has left.
 pub fn start_daemon() -> Result<(), String> {
     let Some(command) = daemon_command() else {
         return Err("找不到 relayd 入口（既没有打包产物，也不在源码仓库里）".to_string());

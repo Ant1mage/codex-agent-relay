@@ -30,8 +30,15 @@ impl RuntimeConfigReloader {
     pub async fn refresh(&self) -> relay_core::Result<()> {
         let mut runtimes: Vec<Runtime> = Vec::new();
         let mut diagnostics: Vec<String> = Vec::new();
-        for adapter in adapters() {
-            let detection = adapter.detect().await;
+        // Each adapter probes an independent local executable. Run those
+        // probes concurrently so one slow CLI does not hold up every runtime.
+        for detection in futures::future::join_all(
+            adapters()
+                .into_iter()
+                .map(|adapter| async move { adapter.detect().await }),
+        )
+        .await
+        {
             diagnostics.extend(detection.diagnostics);
             runtimes.extend(detection.runtimes);
         }

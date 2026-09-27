@@ -63,6 +63,9 @@ impl RelayClient {
         timeout: Duration,
     ) -> Self {
         let http = reqwest::Client::builder()
+            // server.json always points to relayd on loopback. macOS system
+            // proxies can intercept reqwest's default client even for 127.0.0.1.
+            .no_proxy()
             .timeout(timeout)
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
@@ -199,6 +202,8 @@ pub fn encode_segment(value: &str) -> String {
 mod tests {
     use super::*;
 
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     #[test]
     fn request_urls_carry_the_token_both_ways_and_encode_ids() {
         let client = RelayClient::new("http://127.0.0.1:7352/", "abc123");
@@ -215,5 +220,40 @@ mod tests {
             "http://127.0.0.1:7352/api/workers/codex%3As%201/cancel?token=abc123"
         );
         assert_eq!(encode_segment("run/1"), "run%2F1");
+    }
+
+    #[tokio::test]
+    async fn health_reaches_the_loopback_daemon_without_a_system_proxy() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            let body = serde_json::to_string(&Health {
+                ok: true,
+                pid: 42,
+                nonce: "nonce".into(),
+                port: address.port(),
+                started_at: "now".into(),
+                version: "0.2.0".into(),
+                database: "/tmp/relay.sqlite".into(),
+                sessions: 0,
+                runs: 0,
+            })
+            .unwrap();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let health = RelayClient::new(format!("http://{address}"), "token")
+            .health()
+            .await
+            .expect("the tray must reach relayd directly on loopback");
+        assert_eq!(health.pid, 42);
+        server.await.unwrap();
     }
 }

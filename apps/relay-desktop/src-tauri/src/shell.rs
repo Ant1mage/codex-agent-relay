@@ -28,6 +28,9 @@ use crate::updater::{self, UpdateState, UpdateStore};
 
 /// Matches the inspector's poll; both read the same cached projection server-side.
 const POLL_MS: u64 = 2_000;
+/// How long a quit waits for the daemon to prove its identity before leaving
+/// without it. A daemon that does not answer is never signalled.
+const QUIT_VERIFY: Duration = Duration::from_millis(1_000);
 /// How long "starting" may last before the menu admits the daemon did not come up.
 const START_TIMEOUT_MS: u64 = 60_000;
 
@@ -40,9 +43,6 @@ struct ShellState {
     /// When that failure was recorded, so a healthy probe cannot wipe it before
     /// the menu has had a chance to show it.
     last_error_at: Option<Instant>,
-    /// True when this process launched the running daemon. Only that daemon is
-    /// stopped on quit: a daemon the user started themselves keeps serving.
-    started_by_us: bool,
     /// Serialized previous model, so an unchanged menu is not rebuilt.
     last_model: String,
     busy: bool,
@@ -56,7 +56,6 @@ impl Default for ShellState {
             starting_since: None,
             last_error: None,
             last_error_at: None,
-            started_by_us: false,
             last_model: String::new(),
             busy: false,
             locale: Locale::En,
@@ -279,18 +278,6 @@ fn can_begin_start(starting_since: Option<Instant>) -> bool {
     !starting_since.is_some_and(|since| since.elapsed() < Duration::from_millis(START_TIMEOUT_MS))
 }
 
-/// Starts the daemon and remembers that this process owns it, so quitting stops
-/// it and a daemon the user started themselves keeps serving.
-fn start_daemon(app: &AppHandle) -> Option<String> {
-    match daemon::start_daemon() {
-        Ok(()) => {
-            with_state(app, |state| state.started_by_us = true);
-            None
-        }
-        Err(error) => Some(error),
-    }
-}
-
 fn client(app: &AppHandle) -> Option<RelayClient> {
     with_state(app, |state| state.probe.info.clone())
         .map(|info| RelayClient::new(info.url, info.token))
@@ -405,7 +392,7 @@ pub fn dispatch(app: &AppHandle, action: MenuBarAction) {
             if !mark_starting(app) {
                 return;
             }
-            let error = start_daemon(app);
+            let error = daemon::start_daemon().err();
             if error.is_some() {
                 with_state(app, |state| state.starting_since = None);
             }
@@ -427,7 +414,7 @@ pub fn dispatch(app: &AppHandle, action: MenuBarAction) {
                         daemon::stop_daemon_and_wait(&info).await;
                     }
                 }
-                let error = start_daemon(&handle);
+                let error = daemon::start_daemon().err();
                 if error.is_some() {
                     with_state(&handle, |state| state.starting_since = None);
                 }
@@ -537,7 +524,10 @@ pub fn dispatch(app: &AppHandle, action: MenuBarAction) {
             }
             refresh_now(app);
         }
-        MenuBarAction::Quit => app.exit(0),
+        MenuBarAction::Quit => {
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move { quit(&handle).await });
+        }
     }
 }
 
@@ -571,20 +561,38 @@ pub fn show_panel(app: &AppHandle) {
     );
 }
 
-/// The tray owns the process lifetime, so quitting is the only place the daemon
-/// this app started is stopped.
+/// The daemon a quit may signal: the one this shell verified. A PID on its own is
+/// not identity, so a record that was never proven is left alone.
+fn verified_daemon(probe: &DaemonProbe) -> Option<relay_api::server_info::ServerInfo> {
+    probe.verified.then(|| probe.info.clone()).flatten()
+}
+
+/// Quits Relay: the daemon goes first, then the app.
+///
+/// The daemon owns every worker, so asking it to stop is what ends the whole
+/// tree — the tray never signals a worker itself, and no layer reaches into
+/// another's process. Identity is checked now rather than reused from the last
+/// poll, so a poll that happened to fail cannot leave a daemon behind, and the
+/// check is bounded so an unresponsive daemon cannot hold up the quit.
+async fn quit(app: &AppHandle) {
+    let verified = tokio::time::timeout(QUIT_VERIFY, daemon::verify())
+        .await
+        .ok()
+        .flatten();
+    if let Some(info) = verified {
+        daemon::stop_daemon_and_wait(&info).await;
+    }
+    // Nothing is left to stop, and the record is dropped so the exit path cannot
+    // signal a PID that has already been reused.
+    with_state(app, |state| state.probe = DaemonProbe::default());
+    app.exit(0);
+}
+
+/// Backstop for an exit that does not come through the menu (a failed start, the
+/// updater, an OS request): the daemon this shell verified is asked to stop too.
 pub fn on_exit(app: &AppHandle) {
-    let (verified, started_by_us, info) = with_state(app, |state| {
-        (
-            state.probe.verified,
-            state.started_by_us,
-            state.probe.info.clone(),
-        )
-    });
-    if verified && started_by_us {
-        if let Some(info) = info {
-            daemon::stop_daemon(&info);
-        }
+    if let Some(info) = with_state(app, |state| verified_daemon(&state.probe)) {
+        daemon::stop_daemon(&info);
     }
 }
 
@@ -602,7 +610,7 @@ async fn start(app: AppHandle) {
         .unwrap_or(false);
     if !running && !autostart_disabled {
         let _ = mark_starting(&app);
-        let error = start_daemon(&app);
+        let error = daemon::start_daemon().err();
         if error.is_some() {
             with_state(&app, |state| state.starting_since = None);
         }
@@ -687,6 +695,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use relay_api::server_info::ServerInfo;
     use relay_api::{CodexStatus, MenuSession, MenuStatus, MenuView, MenuWorker};
 
     fn menu(status: MenuStatus, running_workers: u32) -> MenuView {
@@ -822,5 +831,34 @@ mod tests {
             },
         );
         assert_eq!(view.daemon_version_mismatch, None);
+    }
+
+    #[test]
+    fn a_quit_only_signals_a_daemon_that_proved_its_identity() {
+        let info = ServerInfo {
+            pid: 42,
+            port: 7352,
+            url: "http://127.0.0.1:7352".into(),
+            token: "token".into(),
+            nonce: "nonce".into(),
+            started_at: "2026-09-27T00:00:00.000Z".into(),
+            version: "0.2.0".into(),
+            database: "/tmp/relay.sqlite".into(),
+        };
+
+        // A record on its own is a PID, and a PID is not identity.
+        let probe = DaemonProbe {
+            info: Some(info.clone()),
+            ..DaemonProbe::default()
+        };
+        assert!(verified_daemon(&probe).is_none());
+
+        // Verified: this is the daemon the exit path may signal.
+        let probe = DaemonProbe {
+            info: Some(info.clone()),
+            verified: true,
+            ..DaemonProbe::default()
+        };
+        assert_eq!(verified_daemon(&probe).map(|info| info.pid), Some(42));
     }
 }
