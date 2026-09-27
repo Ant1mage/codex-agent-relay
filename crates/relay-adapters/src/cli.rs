@@ -162,9 +162,9 @@ pub async fn run_cli(
     // Own process group: cancellation reaches the CLI's own children too.
     command.process_group(0);
 
-    let mut child: Child = command
-        .spawn()
-        .map_err(|error| RelayError::new("ADAPTER_FAILURE", format!("{}: {error}", spec.executable)))?;
+    let mut child: Child = command.spawn().map_err(|error| {
+        RelayError::new("ADAPTER_FAILURE", format!("{}: {error}", spec.executable))
+    })?;
     let pid = child.id().map(|id| id as i32);
     if let Some(pid) = pid {
         supervisor.register(&spec.supervisor_key, pid);
@@ -212,7 +212,8 @@ pub async fn run_cli(
     // must not be the same await: a pipe that has not been drained yet can keep a
     // finished process unreaped, and a reader that waits for EOF would then wait
     // forever.
-    let (exit_sender, mut exit_receiver) = oneshot::channel::<std::io::Result<std::process::ExitStatus>>();
+    let (exit_sender, mut exit_receiver) =
+        oneshot::channel::<std::io::Result<std::process::ExitStatus>>();
     tokio::spawn(async move {
         let status = child.wait().await;
         let _ = exit_sender.send(status);
@@ -233,7 +234,9 @@ pub async fn run_cli(
                         // The process is gone: take whatever is already buffered,
                         // then stop instead of waiting for an EOF that may never be
                         // observed.
-                        match tokio::time::timeout(Duration::from_millis(250), lines.next_line()).await {
+                        match tokio::time::timeout(Duration::from_millis(250), lines.next_line())
+                            .await
+                        {
                             Ok(result) => result,
                             Err(_) => break,
                         }
@@ -250,7 +253,14 @@ pub async fn run_cli(
                     match next {
                         Ok(Some(line)) => {
                             let parsed = parse_for_task(&line);
-                            absorb(&mut outcome, &parsed, &session_for_task, &mut ready_sender, &supervisor_for_task, &key);
+                            absorb(
+                                &mut outcome,
+                                &parsed,
+                                &session_for_task,
+                                &mut ready_sender,
+                                &supervisor_for_task,
+                                &key,
+                            );
                             for event in parsed.events {
                                 if sender.send(event).await.is_err() {
                                     break;
@@ -273,7 +283,14 @@ pub async fn run_cli(
                     outcome.spawn_error = Some(error.to_string());
                 }
                 let parsed = parse_for_task(&buffer);
-                absorb(&mut outcome, &parsed, &session_for_task, &mut ready_sender, &supervisor_for_task, &key);
+                absorb(
+                    &mut outcome,
+                    &parsed,
+                    &session_for_task,
+                    &mut ready_sender,
+                    &supervisor_for_task,
+                    &key,
+                );
                 for event in parsed.events {
                     if sender.send(event).await.is_err() {
                         break;
@@ -330,7 +347,11 @@ pub async fn run_cli(
         None
     };
 
-    Ok(WorkerHandle { native_session_id, process_id: pid.map(|pid| pid as u32), events: receiver })
+    Ok(WorkerHandle {
+        native_session_id,
+        process_id: pid.map(|pid| pid as u32),
+        events: receiver,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -387,12 +408,19 @@ mod tests {
     use relay_core::RelayEventType;
 
     fn parse_line(line: &str) -> ParsedOutput {
-        let value: serde_json::Value = serde_json::from_str(line).unwrap_or(serde_json::Value::Null);
+        let value: serde_json::Value =
+            serde_json::from_str(line).unwrap_or(serde_json::Value::Null);
         let mut parsed = ParsedOutput::default();
         match value.get("type").and_then(|value| value.as_str()) {
-            Some("session") => parsed.session_id = value.get("id").and_then(|v| v.as_str()).map(str::to_string),
+            Some("session") => {
+                parsed.session_id = value.get("id").and_then(|v| v.as_str()).map(str::to_string)
+            }
             Some("text") => {
-                let text = value.get("text").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                let text = value
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
                 parsed.final_text = Some(text.clone());
                 parsed.events.push(AdapterEvent::new(
                     RelayEventType::WorkerMessage,

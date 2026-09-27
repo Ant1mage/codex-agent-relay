@@ -14,7 +14,8 @@ pub const SCHEMA_VERSION: i64 = 1;
 const TABLES: [&str; 3] = ["relay_events", "host_sessions", "relay_control_commands"];
 
 pub fn migrate(database: &Database) -> Result<()> {
-    let version: i64 = database.with(|connection| connection.query_row("PRAGMA user_version", [], |row| row.get(0)))?;
+    let version: i64 = database
+        .with(|connection| connection.query_row("PRAGMA user_version", [], |row| row.get(0)))?;
 
     if version != SCHEMA_VERSION {
         if version != 0 {
@@ -22,7 +23,9 @@ pub fn migrate(database: &Database) -> Result<()> {
                 "relay.sqlite carries schema version {version}; resetting Relay's tables to version {SCHEMA_VERSION}"
             );
             for table in TABLES {
-                database.with(|connection| connection.execute(&format!("DROP TABLE IF EXISTS {table}"), []))?;
+                database.with(|connection| {
+                    connection.execute(&format!("DROP TABLE IF EXISTS {table}"), [])
+                })?;
             }
         }
         create(database)?;

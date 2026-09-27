@@ -27,12 +27,17 @@ fn main() {
 
 /// `bundle.resources` copies these two into `Contents/Resources`.
 fn check_sidecars() {
-    let release = std::env::var("PROFILE").map(|profile| profile == "release").unwrap_or(false);
+    let release = std::env::var("PROFILE")
+        .map(|profile| profile == "release")
+        .unwrap_or(false);
     let target = std::env::var("TARGET").unwrap_or_else(|_| "aarch64-apple-darwin".to_string());
     let _ = target;
     for name in ["relayd", "relay-mcp"] {
         let binary = manifest_dir().join("../../../target/release").join(name);
-        let staged = binary.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+        let staged = binary
+            .metadata()
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
         if staged > 100_000 {
             continue;
         }

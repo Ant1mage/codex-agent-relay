@@ -20,8 +20,8 @@ use relay_core::{AccessMode, Isolation, RunController};
 use relay_storage::{SqliteControlQueue, SqliteEventStore, SqliteHostSessionStore};
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::io::stdio;
@@ -55,7 +55,8 @@ fn worker_schema(extra: Option<(&str, &str)>) -> serde_json::Value {
     });
     let mut required = vec![serde_json::json!("worker_session_id")];
     if let Some((name, description)) = extra {
-        properties[name] = serde_json::json!({ "type": "string", "minLength": 1, "description": description });
+        properties[name] =
+            serde_json::json!({ "type": "string", "minLength": 1, "description": description });
         required.push(serde_json::json!(name));
     }
     serde_json::json!({
@@ -141,7 +142,10 @@ fn tool_definitions() -> Vec<Tool> {
     ]
 }
 
-fn argument<'a>(arguments: Option<&'a serde_json::Map<String, serde_json::Value>>, key: &str) -> Option<&'a str> {
+fn argument<'a>(
+    arguments: Option<&'a serde_json::Map<String, serde_json::Value>>,
+    key: &str,
+) -> Option<&'a str> {
     arguments?.get(key)?.as_str()
 }
 
@@ -162,10 +166,15 @@ impl RelayMcp {
     ) -> Result<crate::context::CodexInvocationContext, McpError> {
         let environment: Vec<(String, String)> = std::env::vars().collect();
         let metadata = arguments.map(|arguments| serde_json::Value::Object(arguments.clone()));
-        invocation_context(metadata.as_ref(), &environment).map_err(|message| McpError::invalid_params(message, None))
+        invocation_context(metadata.as_ref(), &environment)
+            .map_err(|message| McpError::invalid_params(message, None))
     }
 
-    async fn dispatch(&self, request: CallToolRequestParams, _context: RequestContext<RoleServer>) -> CallToolResult {
+    async fn dispatch(
+        &self,
+        request: CallToolRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
         let arguments = request.arguments.clone();
         let name = request.name.to_string();
         match name.as_str() {
@@ -210,7 +219,15 @@ impl RelayMcp {
                 };
                 match self
                     .service
-                    .run_agent(&invocation, RunAgentInput { agent_id, task, access_mode, isolation })
+                    .run_agent(
+                        &invocation,
+                        RunAgentInput {
+                            agent_id,
+                            task,
+                            access_mode,
+                            isolation,
+                        },
+                    )
                     .await
                 {
                     Ok(value) => match serde_json::to_value(&value) {
@@ -308,7 +325,9 @@ impl RelayMcp {
                 // The hook supplies the session id it saw; it must match.
                 if let Some(session_id) = argument(arguments.as_ref(), "session_id") {
                     if session_id != invocation.thread_id {
-                        return failure("Hook session identity does not match the Codex request identity");
+                        return failure(
+                            "Hook session identity does not match the Codex request identity",
+                        );
                     }
                 }
                 match self.service.sync_session(&invocation).await {
@@ -326,7 +345,9 @@ impl RelayMcp {
                 };
                 if let Some(session_id) = argument(arguments.as_ref(), "session_id") {
                     if session_id != invocation.thread_id {
-                        return failure("Hook session identity does not match the Codex request identity");
+                        return failure(
+                            "Hook session identity does not match the Codex request identity",
+                        );
                     }
                 }
                 match self.service.end_session(&invocation).await {
@@ -341,7 +362,9 @@ impl RelayMcp {
 
 /// The projection Codex reviews: run, steps, workers, the terminal result and
 /// the last event.
-fn projection_payload(projection: &relay_core::RunProjection) -> Result<serde_json::Value, serde_json::Error> {
+fn projection_payload(
+    projection: &relay_core::RunProjection,
+) -> Result<serde_json::Value, serde_json::Error> {
     let mut value = serde_json::json!({
         "run": projection.run,
         "steps": projection.steps,
@@ -371,12 +394,12 @@ impl ServerHandler for RelayMcp {
         std::future::ready(Ok(ListToolsResult::with_all_items(tool_definitions())))
     }
 
-    fn call_tool(
+    async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CallToolResponse, McpError>> + Send + '_ {
-        async move { Ok(self.dispatch(request, context).await.into()) }
+    ) -> Result<CallToolResponse, McpError> {
+        Ok(self.dispatch(request, context).await.into())
     }
 }
 
@@ -392,18 +415,27 @@ async fn main() {
         .init();
 
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    if arguments.iter().any(|argument| argument == "--version" || argument == "-V") {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--version" || argument == "-V")
+    {
         println!("relay-mcp {}", relay_version());
         return;
     }
-    if arguments.iter().any(|argument| argument == "--help" || argument == "-h") {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
         println!(
             "relay-mcp {} — Relay's MCP server\n\nUSAGE: relay-mcp [--session-end-hook]\n\nCodex starts this process over stdio and calls its MCP tools.\n--session-end-hook marks a Codex session as ended from the SessionEnd hook.",
             relay_version()
         );
         return;
     }
-    if arguments.iter().any(|argument| argument == "--session-end-hook") {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--session-end-hook")
+    {
         if let Err(error) = run_session_end_hook().await {
             eprintln!("[relay] session end hook: {error}");
             std::process::exit(1);
@@ -434,7 +466,10 @@ async fn run_session_end_hook() -> Result<(), String> {
     let session_id = context::session_id_from_hook(&payload)
         .ok_or_else(|| "SessionEnd hook did not include a session id".to_string())?;
 
-    let database = Arc::new(relay_storage::Database::open(database_path()).map_err(|error| error.message().to_string())?);
+    let database = Arc::new(
+        relay_storage::Database::open(database_path())
+            .map_err(|error| error.message().to_string())?,
+    );
     let sessions = Arc::new(SqliteHostSessionStore::new(database));
     let service = build_service(Arc::clone(&sessions))?;
     service
@@ -444,15 +479,23 @@ async fn run_session_end_hook() -> Result<(), String> {
 }
 
 fn build_service(sessions: Arc<SqliteHostSessionStore>) -> Result<Arc<RelayService>, String> {
-    let database = Arc::new(relay_storage::Database::open(database_path()).map_err(|error| error.message().to_string())?);
-    let controller = Arc::new(RunController::new(Arc::new(SqliteEventStore::new(Arc::clone(&database)))));
+    let database = Arc::new(
+        relay_storage::Database::open(database_path())
+            .map_err(|error| error.message().to_string())?,
+    );
+    let controller = Arc::new(RunController::new(Arc::new(SqliteEventStore::new(
+        Arc::clone(&database),
+    ))));
     for adapter in adapters() {
         controller
             .adapters
             .register(adapter)
             .map_err(|error| error.message().to_string())?;
     }
-    let reloader = Arc::new(RuntimeConfigReloader::new(Arc::clone(&controller), ConfigStore::new(config_path())));
+    let reloader = Arc::new(RuntimeConfigReloader::new(
+        Arc::clone(&controller),
+        ConfigStore::new(config_path()),
+    ));
     Ok(Arc::new(RelayService {
         controller,
         sessions,
@@ -470,7 +513,10 @@ async fn serve() -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
 
-    let database = Arc::new(relay_storage::Database::open(&database_path).map_err(|error| error.message().to_string())?);
+    let database = Arc::new(
+        relay_storage::Database::open(&database_path)
+            .map_err(|error| error.message().to_string())?,
+    );
     let sessions = Arc::new(SqliteHostSessionStore::new(Arc::clone(&database)));
     let commands = Arc::new(SqliteControlQueue::new(Arc::clone(&database)));
     let service = build_service(Arc::clone(&sessions))?;
@@ -507,7 +553,9 @@ async fn serve() -> Result<(), String> {
     };
 
     let handler = RelayMcp { service };
-    let running = serve_server(handler, stdio()).await.map_err(|error| error.to_string())?;
+    let running = serve_server(handler, stdio())
+        .await
+        .map_err(|error| error.to_string())?;
     let _ = running.waiting().await;
     drain.abort();
     Ok(())

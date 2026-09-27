@@ -8,23 +8,35 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType, ResumeInput,
-    Result, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType,
+    Result, ResumeInput, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
 
 use crate::cli::{run_cli, ParsedOutput, ProcessSupervisor, StreamMode, StreamOutcome, StreamSpec};
-use crate::probe::{discover_executable, probe_runtime_options, read_help, version_of, with_selection_args, Selection};
+use crate::probe::{
+    discover_executable, probe_runtime_options, read_help, version_of, with_selection_args,
+    Selection,
+};
 
 pub const ADAPTER_ID: &str = "antigravity-cli";
 pub const RUNTIME_ID: &str = "runtime:antigravity-cli";
 
 fn tool_event_type(tool: &str) -> RelayEventType {
     let name = tool.to_lowercase();
-    if ["search", "grep", "glob", "find"].iter().any(|needle| name.contains(needle)) {
+    if ["search", "grep", "glob", "find"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
         RelayEventType::ToolSearch
-    } else if ["edit", "write", "patch", "replace", "delete", "move"].iter().any(|needle| name.contains(needle)) {
+    } else if ["edit", "write", "patch", "replace", "delete", "move"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
         RelayEventType::ToolEdit
-    } else if ["read", "view", "open", "list"].iter().any(|needle| name.contains(needle)) {
+    } else if ["read", "view", "open", "list"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
         RelayEventType::ToolRead
     } else if name.contains("test") {
         RelayEventType::TestResult
@@ -34,7 +46,10 @@ fn tool_event_type(tool: &str) -> RelayEventType {
 }
 
 fn string_field(value: &serde_json::Value, key: &str) -> Option<String> {
-    value.get(key).and_then(|value| value.as_str()).map(str::to_string)
+    value
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
 }
 
 pub fn parse_line(line: &str) -> ParsedOutput {
@@ -93,8 +108,12 @@ pub fn parse_line(line: &str) -> ParsedOutput {
             }
 
             if string_field(&step, "step_type").as_deref() == Some("tool") {
-                let tool = string_field(&step, "tool_name").unwrap_or_else(|| "unknown".to_string());
-                let info = step.get("tool_info").cloned().unwrap_or(serde_json::Value::Null);
+                let tool =
+                    string_field(&step, "tool_name").unwrap_or_else(|| "unknown".to_string());
+                let info = step
+                    .get("tool_info")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
                 parsed.events.push(AdapterEvent::with_native(
                     tool_event_type(&tool),
                     serde_json::json!({
@@ -120,9 +139,16 @@ pub fn parse_line(line: &str) -> ParsedOutput {
 
             let mut data = step.clone();
             if let Some(object) = data.as_object_mut() {
-                object.insert("kind".to_string(), serde_json::Value::String("status".to_string()));
+                object.insert(
+                    "kind".to_string(),
+                    serde_json::Value::String("status".to_string()),
+                );
             }
-            parsed.events.push(AdapterEvent::with_native(RelayEventType::WorkerMessage, data, raw));
+            parsed.events.push(AdapterEvent::with_native(
+                RelayEventType::WorkerMessage,
+                data,
+                raw,
+            ));
         }
         Some("result") => {
             let Some(result) = event.get("result") else {
@@ -207,7 +233,10 @@ impl AntigravityAdapter {
     }
 
     pub fn with_executable(executable: impl Into<String>) -> Self {
-        Self { configured_executable: Some(executable.into()), ..Self::new() }
+        Self {
+            configured_executable: Some(executable.into()),
+            ..Self::new()
+        }
     }
 
     pub fn with_supervisor(mut self, supervisor: Arc<ProcessSupervisor>) -> Self {
@@ -225,17 +254,27 @@ impl AntigravityAdapter {
         discover_executable("agy", &extra).map(|path| path.to_string_lossy().to_string())
     }
 
-    async fn launch(&self, input: StartInput, conversation_id: Option<String>) -> Result<WorkerHandle> {
+    async fn launch(
+        &self,
+        input: StartInput,
+        conversation_id: Option<String>,
+    ) -> Result<WorkerHandle> {
         let executable = input
             .executable_path
             .clone()
             .or_else(|| self.executable())
-            .ok_or_else(|| RelayError::new("ADAPTER_FAILURE", "Antigravity CLI executable `agy` was not found"))?;
+            .ok_or_else(|| {
+                RelayError::new(
+                    "ADAPTER_FAILURE",
+                    "Antigravity CLI executable `agy` was not found",
+                )
+            })?;
         let evidence = read_help(&executable, &self.prefix_args).await;
-        let (_, options) = probe_runtime_options(self.capabilities(), &evidence, RUNTIME_ID, ADAPTER_ID);
+        let (_, options) =
+            probe_runtime_options(self.capabilities(), &evidence, RUNTIME_ID, ADAPTER_ID);
         *self.options.lock().unwrap() = Some(options.clone());
 
-        let mut base = vec![
+        let mut base = [
             self.prefix_args.clone(),
             vec![
                 "-p".to_string(),
@@ -249,7 +288,10 @@ impl AntigravityAdapter {
             base.push("--conversation".to_string());
             base.push(conversation_id.clone());
         }
-        let selection = Selection { model: input.model.clone(), reasoning: input.reasoning.clone() };
+        let selection = Selection {
+            model: input.model.clone(),
+            reasoning: input.reasoning.clone(),
+        };
         let args = with_selection_args(&base, &selection, &options);
 
         let require_session = conversation_id.is_none();
@@ -329,7 +371,8 @@ impl AgentAdapter for AntigravityAdapter {
             );
         };
         let evidence = read_help(&executable, &self.prefix_args).await;
-        let (_, options) = probe_runtime_options(self.capabilities(), &evidence, runtime_id, ADAPTER_ID);
+        let (_, options) =
+            probe_runtime_options(self.capabilities(), &evidence, runtime_id, ADAPTER_ID);
         options
     }
 
@@ -406,7 +449,9 @@ mod tests {
 
     #[test]
     fn the_result_event_decides_completion() {
-        let success = parse_line(r#"{"event":"result","result":{"conversation_id":"c","response":"done","status":"SUCCESS"}}"#);
+        let success = parse_line(
+            r#"{"event":"result","result":{"conversation_id":"c","response":"done","status":"SUCCESS"}}"#,
+        );
         assert_eq!(success.final_text.as_deref(), Some("done"));
         assert_eq!(success.result_status.as_deref(), Some("SUCCESS"));
         let event = terminal_event(&StreamOutcome {

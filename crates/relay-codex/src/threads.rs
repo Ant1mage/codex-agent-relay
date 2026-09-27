@@ -39,11 +39,17 @@ impl Default for CodexAppServerThreadResolver {
 
 impl CodexAppServerThreadResolver {
     pub fn new() -> Self {
-        Self { executable_path: None, timeout: Duration::from_secs(5) }
+        Self {
+            executable_path: None,
+            timeout: Duration::from_secs(5),
+        }
     }
 
     pub fn with_executable(executable: impl Into<String>, timeout: Duration) -> Self {
-        Self { executable_path: Some(executable.into()), timeout }
+        Self {
+            executable_path: Some(executable.into()),
+            timeout,
+        }
     }
 
     async fn resolve_with(&self, executable: &str, thread_id: &str) -> Result<CodexThreadMetadata> {
@@ -57,14 +63,15 @@ impl CodexAppServerThreadResolver {
         let mut child = command.spawn().map_err(|error| {
             RelayError::new("RUNTIME_NOT_FOUND", format!("{executable}: {error}"))
         })?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| RelayError::new("RUNTIME_NOT_FOUND", "codex app-server stdin is unavailable"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| RelayError::new("RUNTIME_NOT_FOUND", "codex app-server stdout is unavailable"))?;
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            RelayError::new("RUNTIME_NOT_FOUND", "codex app-server stdin is unavailable")
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            RelayError::new(
+                "RUNTIME_NOT_FOUND",
+                "codex app-server stdout is unavailable",
+            )
+        })?;
 
         let initialize = serde_json::json!({
             "method": "initialize",
@@ -75,12 +82,14 @@ impl CodexAppServerThreadResolver {
             }
         });
         let write = async {
-            stdin.write_all(format!("{initialize}\n").as_bytes()).await?;
+            stdin
+                .write_all(format!("{initialize}\n").as_bytes())
+                .await?;
             stdin.flush().await
         };
-        write
-            .await
-            .map_err(|error| RelayError::new("RUNTIME_NOT_FOUND", format!("codex app-server: {error}")))?;
+        write.await.map_err(|error| {
+            RelayError::new("RUNTIME_NOT_FOUND", format!("codex app-server: {error}"))
+        })?;
 
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
@@ -104,7 +113,10 @@ impl CodexAppServerThreadResolver {
                     ))
                 }
                 Ok(Err(error)) => {
-                    return Err(RelayError::new("SESSION_NAME_UNAVAILABLE", error.to_string()))
+                    return Err(RelayError::new(
+                        "SESSION_NAME_UNAVAILABLE",
+                        error.to_string(),
+                    ))
                 }
                 Err(_) => {
                     return Err(RelayError::new(
@@ -141,7 +153,9 @@ impl CodexAppServerThreadResolver {
                             .to_string();
                         return Err(RelayError::new("SESSION_NAME_UNAVAILABLE", message));
                     }
-                    let thread = response.get("result").and_then(|result| result.get("thread"));
+                    let thread = response
+                        .get("result")
+                        .and_then(|result| result.get("thread"));
                     let Some(thread) = thread else {
                         return Err(RelayError::new(
                             "SESSION_NAME_UNAVAILABLE",
@@ -175,7 +189,10 @@ impl CodexAppServerThreadResolver {
                         id: id.to_string(),
                         display_name: display_name.to_string(),
                         cwd: cwd.to_string(),
-                        model: thread.get("model").and_then(|value| value.as_str()).map(str::to_string),
+                        model: thread
+                            .get("model")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_string),
                     });
                 }
                 _ => {}
@@ -209,7 +226,8 @@ impl CodexThreadMetadataResolver for CodexAppServerThreadResolver {
             match self.resolve_with(&candidate, thread_id).await {
                 Ok(metadata) => return Ok(metadata),
                 Err(error) => {
-                    let missing = error.message().contains("No such file") || error.message().contains("not found");
+                    let missing = error.message().contains("No such file")
+                        || error.message().contains("not found");
                     last_error = Some(error);
                     // Only a missing binary is worth retrying with the next candidate.
                     if !missing {
@@ -218,8 +236,7 @@ impl CodexThreadMetadataResolver for CodexAppServerThreadResolver {
                 }
             }
         }
-        Err(last_error.unwrap_or_else(|| {
-            RelayError::new("RUNTIME_NOT_FOUND", "Codex CLI was not found")
-        }))
+        Err(last_error
+            .unwrap_or_else(|| RelayError::new("RUNTIME_NOT_FOUND", "Codex CLI was not found")))
     }
 }

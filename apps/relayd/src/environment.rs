@@ -15,7 +15,7 @@ use relay_api::{
 };
 use relay_config::{ConfigStore, RelayConfig};
 use relay_core::{
-    AdapterCapabilities, AgentProfile, ManualRuntime, RelayPolicyOverride, Runtime, RuntimeHealth, RuntimeOptions,
+    AgentProfile, ManualRuntime, RelayPolicyOverride, Runtime, RuntimeHealth, RuntimeOptions,
 };
 
 use relay_api::environment::Environment;
@@ -24,17 +24,33 @@ use relay_api::environment::Environment;
 /// broken" from "registered and working" before anything is saved.
 pub async fn probe_executable(executable_path: &str) -> RuntimeProbe {
     if !std::path::Path::new(executable_path).is_file() {
-        return RuntimeProbe { ok: false, version: None, error: Some(format!("找不到可执行文件: {executable_path}")) };
+        return RuntimeProbe {
+            ok: false,
+            version: None,
+            error: Some(format!("找不到可执行文件: {executable_path}")),
+        };
     }
     let args = vec!["--version".to_string()];
     match relay_adapters::probe::capture(executable_path, &args).await {
         Some((code, stdout, stderr)) => {
             if code == 0 {
                 let version = stdout.lines().next().unwrap_or_default().trim().to_string();
-                RuntimeProbe { ok: true, version: (!version.is_empty()).then_some(version), error: None }
+                RuntimeProbe {
+                    ok: true,
+                    version: (!version.is_empty()).then_some(version),
+                    error: None,
+                }
             } else {
-                let message = if stderr.trim().is_empty() { stdout } else { stderr };
-                RuntimeProbe { ok: false, version: None, error: Some(truncate(message.trim(), 200)) }
+                let message = if stderr.trim().is_empty() {
+                    stdout
+                } else {
+                    stderr
+                };
+                RuntimeProbe {
+                    ok: false,
+                    version: None,
+                    error: Some(truncate(message.trim(), 200)),
+                }
             }
         }
         None => RuntimeProbe {
@@ -49,7 +65,7 @@ pub async fn probe_executable(executable_path: &str) -> RuntimeProbe {
 pub fn runtime_from_manual(entry: &ManualRuntime, probe: &RuntimeProbe) -> Runtime {
     let capabilities = relay_adapters::adapter_by_id(&entry.adapter_id)
         .map(|adapter| adapter.capabilities())
-        .unwrap_or_else(AdapterCapabilities::default);
+        .unwrap_or_default();
     Runtime {
         id: entry.id.clone(),
         adapter_id: entry.adapter_id.clone(),
@@ -103,13 +119,21 @@ pub async fn detect_environment(config: &ConfigStore) -> Environment {
     }
 
     diagnostics.extend(loaded.warnings);
-    Environment { runtimes, profiles: loaded.profiles, diagnostics }
+    Environment {
+        runtimes,
+        profiles: loaded.profiles,
+        diagnostics,
+    }
 }
 
 /// Model and reasoning values a runtime's CLI advertises, for the profile editor.
 pub async fn runtime_options(runtime_id: &str, runtimes: &[Runtime]) -> RuntimeOptions {
     let Some(runtime) = runtimes.iter().find(|runtime| runtime.id == runtime_id) else {
-        return RuntimeOptions::empty(runtime_id, "unknown", "Unknown runtime; Relay cannot read its options");
+        return RuntimeOptions::empty(
+            runtime_id,
+            "unknown",
+            "Unknown runtime; Relay cannot read its options",
+        );
     };
     match relay_adapters::adapter_by_id(&runtime.adapter_id) {
         Some(adapter) => adapter.report_options(runtime_id).await,
@@ -130,7 +154,10 @@ pub struct DaemonService {
 impl DaemonService {
     pub async fn new(config: ConfigStore) -> Self {
         let environment = detect_environment(&config).await;
-        Self { config, environment: RwLock::new(environment) }
+        Self {
+            config,
+            environment: RwLock::new(environment),
+        }
     }
 
     pub fn environment(&self) -> Environment {
@@ -159,7 +186,6 @@ impl DaemonService {
         *self.environment.write().unwrap() = environment.clone();
         (environment, view)
     }
-
 }
 
 #[async_trait]
@@ -188,7 +214,10 @@ impl EnvironmentService for DaemonService {
     async fn save_runtime(&self, id: &str, body: RuntimeBody) -> RuntimeMutation {
         let probe = probe_executable(&body.executable_path).await;
         if !probe.ok {
-            return RuntimeMutation { config: self.view(&self.config.read()), probe };
+            return RuntimeMutation {
+                config: self.view(&self.config.read()),
+                probe,
+            };
         }
         let entry = ManualRuntime {
             id: id.to_string(),
@@ -199,11 +228,18 @@ impl EnvironmentService for DaemonService {
         match self.config.upsert_manual_runtime(&entry) {
             Ok(_) => {
                 let (_, view) = self.redetect().await;
-                RuntimeMutation { config: view, probe }
+                RuntimeMutation {
+                    config: view,
+                    probe,
+                }
             }
             Err(error) => RuntimeMutation {
                 config: self.view(&self.config.read()),
-                probe: RuntimeProbe { ok: false, version: None, error: Some(error.message().to_string()) },
+                probe: RuntimeProbe {
+                    ok: false,
+                    version: None,
+                    error: Some(error.message().to_string()),
+                },
             },
         }
     }
@@ -233,7 +269,10 @@ impl EnvironmentService for DaemonService {
     }
 
     fn delete_profile(&self, id: &str) -> Result<RelayConfigView, String> {
-        let config = self.config.remove_profile(id).map_err(|error| error.message().to_string())?;
+        let config = self
+            .config
+            .remove_profile(id)
+            .map_err(|error| error.message().to_string())?;
         self.set_profiles(config.profiles.clone());
         Ok(self.view(&config))
     }
@@ -255,4 +294,3 @@ impl EnvironmentService for DaemonService {
 fn truncate(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
 }
-

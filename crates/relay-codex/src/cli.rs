@@ -34,7 +34,10 @@ pub fn codex_candidates() -> Vec<String> {
     candidates.push(home.join(".npm-global/bin/codex").display().to_string());
     candidates.push("/usr/local/bin/codex".to_string());
     candidates.push("/opt/homebrew/bin/codex".to_string());
-    for root in [home.join(".vscode/extensions"), home.join(".vscode-insiders/extensions")] {
+    for root in [
+        home.join(".vscode/extensions"),
+        home.join(".vscode-insiders/extensions"),
+    ] {
         let Ok(entries) = std::fs::read_dir(&root) else {
             continue;
         };
@@ -51,8 +54,20 @@ pub fn codex_candidates() -> Vec<String> {
         versions.sort();
         versions.reverse();
         for version in versions {
-            for target in ["macos-aarch64", "macos-x86_64", "linux-x86_64", "linux-aarch64"] {
-                candidates.push(version.join("bin").join(target).join("codex").display().to_string());
+            for target in [
+                "macos-aarch64",
+                "macos-x86_64",
+                "linux-x86_64",
+                "linux-aarch64",
+            ] {
+                candidates.push(
+                    version
+                        .join("bin")
+                        .join(target)
+                        .join("codex")
+                        .display()
+                        .to_string(),
+                );
             }
         }
     }
@@ -65,7 +80,10 @@ pub async fn find_codex_cli() -> Option<CodexExecutable> {
             continue;
         }
         if let Some(version) = version_of(&candidate).await {
-            return Some(CodexExecutable { path: candidate, version });
+            return Some(CodexExecutable {
+                path: candidate,
+                version,
+            });
         }
     }
     None
@@ -80,7 +98,11 @@ async fn version_of(executable: &str) -> Option<String> {
         return None;
     }
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Some(if text.is_empty() { "unknown version".to_string() } else { text })
+    Some(if text.is_empty() {
+        "unknown version".to_string()
+    } else {
+        text
+    })
 }
 
 pub struct CodexOutput {
@@ -89,7 +111,12 @@ pub struct CodexOutput {
 }
 
 pub async fn codex(executable: &CodexExecutable, args: &[&str]) -> CodexOutput {
-    match tokio::time::timeout(COMMAND_TIMEOUT, Command::new(&executable.path).args(args).output()).await {
+    match tokio::time::timeout(
+        COMMAND_TIMEOUT,
+        Command::new(&executable.path).args(args).output(),
+    )
+    .await
+    {
         Ok(Ok(output)) => CodexOutput {
             ok: output.status.success(),
             text: format!(
@@ -98,8 +125,14 @@ pub async fn codex(executable: &CodexExecutable, args: &[&str]) -> CodexOutput {
                 String::from_utf8_lossy(&output.stderr)
             ),
         },
-        Ok(Err(error)) => CodexOutput { ok: false, text: error.to_string() },
-        Err(_) => CodexOutput { ok: false, text: "codex command timed out".to_string() },
+        Ok(Err(error)) => CodexOutput {
+            ok: false,
+            text: error.to_string(),
+        },
+        Err(_) => CodexOutput {
+            ok: false,
+            text: "codex command timed out".to_string(),
+        },
     }
 }
 
@@ -111,7 +144,11 @@ mod tests {
     fn candidates_include_the_ide_extension_locations() {
         let candidates = codex_candidates();
         assert!(candidates.contains(&"codex".to_string()));
-        assert!(candidates.iter().any(|candidate| candidate.contains(".codex/bin/codex")));
-        assert!(candidates.iter().any(|candidate| candidate.contains(".local/bin/codex")));
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.contains(".codex/bin/codex")));
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.contains(".local/bin/codex")));
     }
 }

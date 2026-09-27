@@ -4,7 +4,10 @@
 //! what `wait_agent` hands back to Codex for review. Losing that link would break
 //! the delegation contract, so it is asserted in the tests below.
 
-use crate::domain::{now, AccessMode, Isolation, RelayError, Result, Run, RunStatus, Step, StepStatus, WorkerSession, WorkerStatus};
+use crate::domain::{
+    now, AccessMode, Isolation, RelayError, Result, Run, RunStatus, Step, StepStatus,
+    WorkerSession, WorkerStatus,
+};
 use crate::event::{RelayEvent, RelayEventType};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,7 +36,11 @@ fn as_object(value: &serde_json::Value) -> Option<&serde_json::Map<String, serde
 
 /// Steps and workers are kept in the order they were first seen: the log is the
 /// order, and a UI that shows "the last worker" depends on it.
-fn insert_step(steps: &mut Vec<Step>, index: &mut std::collections::HashMap<String, usize>, step: Step) {
+fn insert_step(
+    steps: &mut Vec<Step>,
+    index: &mut std::collections::HashMap<String, usize>,
+    step: Step,
+) {
     match index.get(&step.id).copied() {
         Some(position) => steps[position] = step,
         None => {
@@ -58,39 +65,56 @@ fn insert_worker(
 }
 
 fn step_mut<'a>(
-    steps: &'a mut Vec<Step>,
+    steps: &'a mut [Step],
     index: &std::collections::HashMap<String, usize>,
     id: &str,
 ) -> Option<&'a mut Step> {
-    index.get(id).copied().and_then(move |position| steps.get_mut(position))
+    index
+        .get(id)
+        .copied()
+        .and_then(move |position| steps.get_mut(position))
 }
 
 fn worker_mut<'a>(
-    workers: &'a mut Vec<WorkerSession>,
+    workers: &'a mut [WorkerSession],
     index: &std::collections::HashMap<String, usize>,
     id: &str,
 ) -> Option<&'a mut WorkerSession> {
-    index.get(id).copied().and_then(move |position| workers.get_mut(position))
+    index
+        .get(id)
+        .copied()
+        .and_then(move |position| workers.get_mut(position))
 }
 
 pub fn project_run(events: &[RelayEvent]) -> Result<RunProjection> {
     let Some(first) = events.first() else {
-        return Err(RelayError::new("RUN_NOT_FOUND", "Run projection requires run/created"));
+        return Err(RelayError::new(
+            "RUN_NOT_FOUND",
+            "Run projection requires run/created",
+        ));
     };
     if first.event_type != RelayEventType::RunCreated {
-        return Err(RelayError::new("INVALID_STATE", "Run projection requires run/created"));
+        return Err(RelayError::new(
+            "INVALID_STATE",
+            "Run projection requires run/created",
+        ));
     }
     let raw_run = as_object(&first.data)
         .and_then(|data| data.get("run"))
         .cloned()
-        .ok_or_else(|| RelayError::new("INVALID_STATE", "run/created is missing its run payload"))?;
+        .ok_or_else(|| {
+            RelayError::new("INVALID_STATE", "run/created is missing its run payload")
+        })?;
     let mut run: Run = serde_json::from_value(raw_run)?;
 
     let mut steps: Vec<Step> = Vec::new();
     let mut step_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut workers: Vec<WorkerSession> = Vec::new();
-    let mut worker_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let uses_step_lifecycle = events.iter().any(|event| event.event_type == RelayEventType::StepCreated);
+    let mut worker_index: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let uses_step_lifecycle = events
+        .iter()
+        .any(|event| event.event_type == RelayEventType::StepCreated);
 
     for event in events.iter().skip(1) {
         run.updated_at = event.timestamp.clone();
@@ -107,7 +131,8 @@ pub fn project_run(events: &[RelayEvent]) -> Result<RunProjection> {
                 continue;
             }
             RelayEventType::WorkerStarted => {
-                if let Some(raw_worker) = as_object(&event.data).and_then(|data| data.get("worker")) {
+                if let Some(raw_worker) = as_object(&event.data).and_then(|data| data.get("worker"))
+                {
                     let mut worker: WorkerSession = serde_json::from_value(raw_worker.clone())?;
                     let step_id = event
                         .step_id
@@ -141,7 +166,11 @@ pub fn project_run(events: &[RelayEvent]) -> Result<RunProjection> {
         let step_target = step_id.clone();
         match event.event_type {
             RelayEventType::WorkerCompleted => {
-                run.status = if uses_step_lifecycle { RunStatus::AwaitingHost } else { RunStatus::Completed };
+                run.status = if uses_step_lifecycle {
+                    RunStatus::AwaitingHost
+                } else {
+                    RunStatus::Completed
+                };
                 if let Some(worker) = worker_id
                     .as_ref()
                     .and_then(|id| worker_mut(&mut workers, &worker_index, id))
@@ -153,47 +182,75 @@ pub fn project_run(events: &[RelayEvent]) -> Result<RunProjection> {
                     .as_ref()
                     .and_then(|id| step_mut(&mut steps, &step_index, id))
                 {
-                    step.status = if uses_step_lifecycle { StepStatus::AwaitingHost } else { StepStatus::Completed };
+                    step.status = if uses_step_lifecycle {
+                        StepStatus::AwaitingHost
+                    } else {
+                        StepStatus::Completed
+                    };
                     step.updated_at = event.timestamp.clone();
                 }
             }
             RelayEventType::WorkerFailed => {
                 run.status = RunStatus::Failed;
-                if let Some(worker) = worker_id.as_ref().and_then(|id| worker_mut(&mut workers, &worker_index, id)) {
+                if let Some(worker) = worker_id
+                    .as_ref()
+                    .and_then(|id| worker_mut(&mut workers, &worker_index, id))
+                {
                     worker.status = WorkerStatus::Failed;
                     worker.ended_at = Some(event.timestamp.clone());
                 }
-                if let Some(step) = step_target.as_ref().and_then(|id| step_mut(&mut steps, &step_index, id)) {
+                if let Some(step) = step_target
+                    .as_ref()
+                    .and_then(|id| step_mut(&mut steps, &step_index, id))
+                {
                     step.status = StepStatus::Failed;
                     step.updated_at = event.timestamp.clone();
                 }
             }
             RelayEventType::WorkerCancelled => {
                 run.status = RunStatus::Cancelled;
-                if let Some(worker) = worker_id.as_ref().and_then(|id| worker_mut(&mut workers, &worker_index, id)) {
+                if let Some(worker) = worker_id
+                    .as_ref()
+                    .and_then(|id| worker_mut(&mut workers, &worker_index, id))
+                {
                     worker.status = WorkerStatus::Cancelled;
                     worker.ended_at = Some(event.timestamp.clone());
                 }
-                if let Some(step) = step_target.as_ref().and_then(|id| step_mut(&mut steps, &step_index, id)) {
+                if let Some(step) = step_target
+                    .as_ref()
+                    .and_then(|id| step_mut(&mut steps, &step_index, id))
+                {
                     step.status = StepStatus::Cancelled;
                     step.updated_at = event.timestamp.clone();
                 }
             }
             RelayEventType::WorkerInterrupted => {
                 run.status = RunStatus::Interrupted;
-                if let Some(worker) = worker_id.as_ref().and_then(|id| worker_mut(&mut workers, &worker_index, id)) {
+                if let Some(worker) = worker_id
+                    .as_ref()
+                    .and_then(|id| worker_mut(&mut workers, &worker_index, id))
+                {
                     worker.status = WorkerStatus::Interrupted;
                 }
-                if let Some(step) = step_target.as_ref().and_then(|id| step_mut(&mut steps, &step_index, id)) {
+                if let Some(step) = step_target
+                    .as_ref()
+                    .and_then(|id| step_mut(&mut steps, &step_index, id))
+                {
                     step.status = StepStatus::Interrupted;
                 }
             }
             RelayEventType::WorkerOrphaned => {
                 run.status = RunStatus::Orphaned;
-                if let Some(worker) = worker_id.as_ref().and_then(|id| worker_mut(&mut workers, &worker_index, id)) {
+                if let Some(worker) = worker_id
+                    .as_ref()
+                    .and_then(|id| worker_mut(&mut workers, &worker_index, id))
+                {
                     worker.status = WorkerStatus::Orphaned;
                 }
-                if let Some(step) = step_target.as_ref().and_then(|id| step_mut(&mut steps, &step_index, id)) {
+                if let Some(step) = step_target
+                    .as_ref()
+                    .and_then(|id| step_mut(&mut steps, &step_index, id))
+                {
                     step.status = StepStatus::Orphaned;
                 }
             }
@@ -271,8 +328,20 @@ mod tests {
         let worker = serde_json::json!({ "worker": worker_payload("worker:1", "run:1", "step:1") });
         vec![
             event(1, RelayEventType::RunCreated, Some(run), None, None),
-            event(2, RelayEventType::StepCreated, Some(step), Some("step:1"), None),
-            event(3, RelayEventType::WorkerStarted, Some(worker), Some("step:1"), Some("worker:1")),
+            event(
+                2,
+                RelayEventType::StepCreated,
+                Some(step),
+                Some("step:1"),
+                None,
+            ),
+            event(
+                3,
+                RelayEventType::WorkerStarted,
+                Some(worker),
+                Some("step:1"),
+                Some("worker:1"),
+            ),
             event(
                 4,
                 RelayEventType::WorkerMessage,
@@ -287,7 +356,13 @@ mod tests {
                 Some("step:1"),
                 Some("worker:1"),
             ),
-            event(6, RelayEventType::RunAwaitingHost, Some(serde_json::json!({ "stepId": "step:1" })), None, None),
+            event(
+                6,
+                RelayEventType::RunAwaitingHost,
+                Some(serde_json::json!({ "stepId": "step:1" })),
+                None,
+                None,
+            ),
         ]
     }
 
@@ -298,7 +373,10 @@ mod tests {
         assert_eq!(projection.steps[0].status, StepStatus::AwaitingHost);
         assert_eq!(projection.workers[0].status, WorkerStatus::Completed);
         assert_eq!(projection.result.unwrap()["summary"], "done");
-        assert_eq!(projection.last_event.unwrap().event_type, RelayEventType::RunAwaitingHost);
+        assert_eq!(
+            projection.last_event.unwrap().event_type,
+            RelayEventType::RunAwaitingHost
+        );
     }
 
     #[test]

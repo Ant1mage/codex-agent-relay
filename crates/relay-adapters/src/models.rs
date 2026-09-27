@@ -83,7 +83,10 @@ pub fn parse_model_payload(payload: &serde_json::Value) -> Vec<ModelOption> {
         if models.iter().any(|model| model.value == value) {
             continue;
         }
-        models.push(ModelOption { value, label: Some(label) });
+        models.push(ModelOption {
+            value,
+            label: Some(label),
+        });
     }
     models
 }
@@ -167,11 +170,17 @@ pub async fn list_models_over_http(key: &str) -> HttpModelsResult {
         };
     };
 
-    let client = match reqwest::Client::builder().timeout(Duration::from_secs(8)).build() {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+    {
         Ok(client) => client,
         Err(error) => {
             return HttpModelsResult {
-                diagnostics: vec![format!("{} model list request failed: {error}", query.provider)],
+                diagnostics: vec![format!(
+                    "{} model list request failed: {error}",
+                    query.provider
+                )],
                 ..HttpModelsResult::default()
             }
         }
@@ -238,7 +247,10 @@ pub async fn list_models_over_http(key: &str) -> HttpModelsResult {
 
 /// Merges CLI-reported options with the official API. The CLI wins for each list
 /// it can actually enumerate; the API fills only a missing list.
-pub async fn with_model_fallback(cli: RuntimeOptions, provider_key: Option<&str>) -> RuntimeOptions {
+pub async fn with_model_fallback(
+    cli: RuntimeOptions,
+    provider_key: Option<&str>,
+) -> RuntimeOptions {
     let needs_models = cli.models.is_empty();
     let needs_levels = cli.levels.is_empty();
     let Some(provider_key) = provider_key else {
@@ -248,13 +260,30 @@ pub async fn with_model_fallback(cli: RuntimeOptions, provider_key: Option<&str>
         return cli;
     }
     let http = list_models_over_http(provider_key).await;
-    let used_api = (needs_models && !http.models.is_empty()) || (needs_levels && !http.levels.is_empty());
+    let used_api =
+        (needs_models && !http.models.is_empty()) || (needs_levels && !http.levels.is_empty());
     RuntimeOptions {
-        models: if needs_models { http.models } else { cli.models },
-        levels: if needs_levels { http.levels } else { cli.levels },
-        source: if used_api { OptionsSource::Api } else { cli.source },
+        models: if needs_models {
+            http.models
+        } else {
+            cli.models
+        },
+        levels: if needs_levels {
+            http.levels
+        } else {
+            cli.levels
+        },
+        source: if used_api {
+            OptionsSource::Api
+        } else {
+            cli.source
+        },
         // CLI-derived notes stay first: they explain why the fallback ran.
-        diagnostics: cli.diagnostics.into_iter().chain(http.diagnostics).collect(),
+        diagnostics: cli
+            .diagnostics
+            .into_iter()
+            .chain(http.diagnostics)
+            .collect(),
         ..cli
     }
 }
@@ -298,7 +327,10 @@ mod tests {
 
     #[test]
     fn credentials_are_never_echoed() {
-        assert_eq!(redact("failed with key sk-secret", "sk-secret"), "failed with key <redacted>");
+        assert_eq!(
+            redact("failed with key sk-secret", "sk-secret"),
+            "failed with key <redacted>"
+        );
         assert_eq!(redact("plain failure", ""), "plain failure");
     }
 
@@ -316,8 +348,15 @@ mod tests {
         let cli = RuntimeOptions {
             runtime_id: "r".into(),
             adapter_id: "a".into(),
-            models: vec![ModelOption { value: "m".into(), label: None }],
-            levels: vec![ReasoningLevel { strength: 1, label: "Low".into(), value: "low".into() }],
+            models: vec![ModelOption {
+                value: "m".into(),
+                label: None,
+            }],
+            levels: vec![ReasoningLevel {
+                strength: 1,
+                label: "Low".into(),
+                value: "low".into(),
+            }],
             model_flag: None,
             reasoning_flag: None,
             source: OptionsSource::Cli,

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use crate::domain::{
-    AdapterCapabilities, RelayError, ResumeInput, Result, Runtime, RuntimeOptions, StartInput,
+    AdapterCapabilities, RelayError, Result, ResumeInput, Runtime, RuntimeOptions, StartInput,
 };
 use crate::event::RelayEventType;
 
@@ -26,11 +26,23 @@ pub struct AdapterEvent {
 
 impl AdapterEvent {
     pub fn new(event_type: RelayEventType, data: serde_json::Value) -> Self {
-        Self { event_type, data, native_event: None }
+        Self {
+            event_type,
+            data,
+            native_event: None,
+        }
     }
 
-    pub fn with_native(event_type: RelayEventType, data: serde_json::Value, native: serde_json::Value) -> Self {
-        Self { event_type, data, native_event: Some(native) }
+    pub fn with_native(
+        event_type: RelayEventType,
+        data: serde_json::Value,
+        native: serde_json::Value,
+    ) -> Self {
+        Self {
+            event_type,
+            data,
+            native_event: Some(native),
+        }
     }
 }
 
@@ -127,6 +139,10 @@ mod tests {
         );
         assert_eq!(event.event_type, RelayEventType::ToolRead);
         assert_eq!(event.native_event.unwrap()["raw"], true);
-        assert!(AdapterEvent::new(RelayEventType::WorkerMessage, serde_json::json!({})).native_event.is_none());
+        assert!(
+            AdapterEvent::new(RelayEventType::WorkerMessage, serde_json::json!({}))
+                .native_event
+                .is_none()
+        );
     }
 }

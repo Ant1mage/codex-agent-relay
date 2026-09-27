@@ -109,7 +109,11 @@ pub struct RuntimeOptions {
 }
 
 impl RuntimeOptions {
-    pub fn empty(runtime_id: impl Into<String>, adapter_id: impl Into<String>, diagnostic: impl Into<String>) -> Self {
+    pub fn empty(
+        runtime_id: impl Into<String>,
+        adapter_id: impl Into<String>,
+        diagnostic: impl Into<String>,
+    ) -> Self {
         Self {
             runtime_id: runtime_id.into(),
             adapter_id: adapter_id.into(),
@@ -181,17 +185,12 @@ impl AccessMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Isolation {
+    #[default]
     Shared,
     Worktree,
-}
-
-impl Default for Isolation {
-    fn default() -> Self {
-        Isolation::Shared
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -446,8 +445,12 @@ pub struct RelayPolicyOverride {
 impl RelayPolicyOverride {
     pub fn apply_to(&self, policy: RelayPolicy) -> RelayPolicy {
         RelayPolicy {
-            max_concurrent_runs: self.max_concurrent_runs.unwrap_or(policy.max_concurrent_runs),
-            max_concurrent_writers: self.max_concurrent_writers.unwrap_or(policy.max_concurrent_writers),
+            max_concurrent_runs: self
+                .max_concurrent_runs
+                .unwrap_or(policy.max_concurrent_runs),
+            max_concurrent_writers: self
+                .max_concurrent_writers
+                .unwrap_or(policy.max_concurrent_writers),
             require_worktree_for_parallel_writers: self
                 .require_worktree_for_parallel_writers
                 .unwrap_or(policy.require_worktree_for_parallel_writers),
@@ -478,7 +481,10 @@ pub enum RelayError {
 
 impl RelayError {
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self::Coded { code, message: message.into() }
+        Self::Coded {
+            code,
+            message: message.into(),
+        }
     }
 
     pub fn code(&self) -> &'static str {
@@ -553,7 +559,10 @@ mod tests {
     #[test]
     fn policy_override_keeps_unspecified_fields() {
         let base = RelayPolicy::default();
-        let patch = RelayPolicyOverride { allow_write: Some(false), ..Default::default() };
+        let patch = RelayPolicyOverride {
+            allow_write: Some(false),
+            ..Default::default()
+        };
         let merged = patch.apply_to(base);
         assert!(!merged.allow_write);
         assert_eq!(merged.max_concurrent_runs, base.max_concurrent_runs);

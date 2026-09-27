@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
-use crate::domain::{AgentProfile, RelayError, RelayPolicy, RelayPolicyOverride, Result, RunRequest};
+use crate::domain::{
+    AgentProfile, RelayError, RelayPolicy, RelayPolicyOverride, Result, RunRequest,
+};
 
 /// Resolves the effective policy for a scope.
 #[derive(Debug, Default)]
@@ -42,11 +44,17 @@ impl PolicyResolver {
     }
 
     pub fn set_workspace(&self, workspace: &str, patch: RelayPolicyOverride) {
-        self.workspace.write().unwrap().insert(normalize_path(workspace), patch);
+        self.workspace
+            .write()
+            .unwrap()
+            .insert(normalize_path(workspace), patch);
     }
 
     pub fn clear_workspace(&self, workspace: &str) {
-        self.workspace.write().unwrap().remove(&normalize_path(workspace));
+        self.workspace
+            .write()
+            .unwrap()
+            .remove(&normalize_path(workspace));
     }
 
     pub fn set_all_workspaces(
@@ -61,7 +69,10 @@ impl PolicyResolver {
     }
 
     pub fn set_session(&self, host_session_id: &str, patch: RelayPolicyOverride) {
-        self.session.write().unwrap().insert(host_session_id.to_string(), patch);
+        self.session
+            .write()
+            .unwrap()
+            .insert(host_session_id.to_string(), patch);
     }
 
     pub fn clear_session(&self, host_session_id: &str) {
@@ -71,7 +82,12 @@ impl PolicyResolver {
     pub fn resolve(&self, scope: PolicyScope<'_>) -> RelayPolicy {
         let mut policy = self.global();
         if let Some(workspace) = scope.workspace {
-            if let Some(patch) = self.workspace.read().unwrap().get(&normalize_path(workspace)) {
+            if let Some(patch) = self
+                .workspace
+                .read()
+                .unwrap()
+                .get(&normalize_path(workspace))
+            {
                 policy = patch.apply_to(policy);
             }
         }
@@ -85,15 +101,28 @@ impl PolicyResolver {
 }
 
 /// Rejects a request the policy forbids, before any process is started.
-pub fn assert_policy_allows(policy: RelayPolicy, request: &RunRequest, profile: &AgentProfile) -> Result<()> {
+pub fn assert_policy_allows(
+    policy: RelayPolicy,
+    request: &RunRequest,
+    profile: &AgentProfile,
+) -> Result<()> {
     if request.access_mode.is_write() && !policy.allow_write {
-        return Err(RelayError::new("CAPABILITY_DENIED", "Workspace writes are disabled by policy"));
+        return Err(RelayError::new(
+            "CAPABILITY_DENIED",
+            "Workspace writes are disabled by policy",
+        ));
     }
     if profile.capabilities.execute_commands && !policy.allow_commands {
-        return Err(RelayError::new("CAPABILITY_DENIED", "Command execution is disabled by policy"));
+        return Err(RelayError::new(
+            "CAPABILITY_DENIED",
+            "Command execution is disabled by policy",
+        ));
     }
     if profile.capabilities.network_access && !policy.allow_network {
-        return Err(RelayError::new("CAPABILITY_DENIED", "Network access is disabled by policy"));
+        return Err(RelayError::new(
+            "CAPABILITY_DENIED",
+            "Network access is disabled by policy",
+        ));
     }
     Ok(())
 }
@@ -108,7 +137,9 @@ pub fn normalize_path(value: &str) -> String {
     let absolute: PathBuf = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")).join(path)
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(path)
     };
     let mut normalized = PathBuf::new();
     for component in absolute.components() {
@@ -144,7 +175,11 @@ mod tests {
         let resolver = PolicyResolver::new(base_policy());
         resolver.set_workspace(
             "/tmp/project",
-            RelayPolicyOverride { allow_write: Some(true), max_concurrent_runs: Some(3), ..Default::default() },
+            RelayPolicyOverride {
+                allow_write: Some(true),
+                max_concurrent_runs: Some(3),
+                ..Default::default()
+            },
         );
         resolver.set_session(
             "codex:session",
@@ -168,16 +203,42 @@ mod tests {
     #[test]
     fn clearing_a_session_removes_temporary_policy() {
         let resolver = PolicyResolver::new(RelayPolicy::default());
-        resolver.set_session("codex:session", RelayPolicyOverride { allow_write: Some(false), ..Default::default() });
+        resolver.set_session(
+            "codex:session",
+            RelayPolicyOverride {
+                allow_write: Some(false),
+                ..Default::default()
+            },
+        );
         resolver.clear_session("codex:session");
-        assert!(resolver.resolve(PolicyScope { host_session_id: Some("codex:session"), ..Default::default() }).allow_write);
+        assert!(
+            resolver
+                .resolve(PolicyScope {
+                    host_session_id: Some("codex:session"),
+                    ..Default::default()
+                })
+                .allow_write
+        );
     }
 
     #[test]
     fn trailing_slashes_do_not_create_a_second_workspace() {
         let resolver = PolicyResolver::new(RelayPolicy::default());
-        resolver.set_workspace("/tmp/project/", RelayPolicyOverride { allow_write: Some(false), ..Default::default() });
-        assert!(!resolver.resolve(PolicyScope { workspace: Some("/tmp/project"), ..Default::default() }).allow_write);
+        resolver.set_workspace(
+            "/tmp/project/",
+            RelayPolicyOverride {
+                allow_write: Some(false),
+                ..Default::default()
+            },
+        );
+        assert!(
+            !resolver
+                .resolve(PolicyScope {
+                    workspace: Some("/tmp/project"),
+                    ..Default::default()
+                })
+                .allow_write
+        );
     }
 
     #[test]

@@ -30,7 +30,9 @@ pub fn apply_upsert(
         cwd: input.cwd.clone(),
         model,
         status,
-        started_at: existing.map(|session| session.started_at.clone()).unwrap_or_else(|| timestamp.to_string()),
+        started_at: existing
+            .map(|session| session.started_at.clone())
+            .unwrap_or_else(|| timestamp.to_string()),
         updated_at: timestamp.to_string(),
         ended_at: if status == HostSessionStatus::Ended {
             existing
@@ -48,11 +50,18 @@ pub trait HostSessionStore: Send + Sync {
     fn get(&self, id: &str) -> Result<Option<HostSession>>;
     fn list(&self) -> Result<Vec<HostSession>>;
 
-    fn rename_from_codex(&self, native_session_id: &str, display_name: &str) -> Result<HostSession> {
+    fn rename_from_codex(
+        &self,
+        native_session_id: &str,
+        display_name: &str,
+    ) -> Result<HostSession> {
         let id = format!("codex:{native_session_id}");
-        let existing = self
-            .get(&id)?
-            .ok_or_else(|| RelayError::new("HOST_SESSION_NOT_FOUND", format!("Unknown host session {id}")))?;
+        let existing = self.get(&id)?.ok_or_else(|| {
+            RelayError::new(
+                "HOST_SESSION_NOT_FOUND",
+                format!("Unknown host session {id}"),
+            )
+        })?;
         self.upsert_codex(HostSessionUpsert {
             native_session_id: native_session_id.to_string(),
             display_name: display_name.to_string(),
@@ -89,7 +98,8 @@ impl HostSessionStore for HostSessionRegistry {
     }
 
     fn list(&self) -> Result<Vec<HostSession>> {
-        let mut sessions: Vec<HostSession> = self.sessions.read().unwrap().values().cloned().collect();
+        let mut sessions: Vec<HostSession> =
+            self.sessions.read().unwrap().values().cloned().collect();
         sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
         Ok(sessions)
     }
@@ -112,7 +122,9 @@ mod tests {
     #[test]
     fn session_ids_are_derived_from_the_host() {
         let store = HostSessionRegistry::new();
-        let session = store.upsert_codex(upsert("thread-1", "First", HostSessionStatus::Active)).unwrap();
+        let session = store
+            .upsert_codex(upsert("thread-1", "First", HostSessionStatus::Active))
+            .unwrap();
         assert_eq!(session.id, "codex:thread-1");
         assert_eq!(session.name_source, "codex");
         assert!(session.ended_at.is_none());
@@ -134,8 +146,12 @@ mod tests {
     #[test]
     fn ending_a_session_records_the_end_time() {
         let store = HostSessionRegistry::new();
-        store.upsert_codex(upsert("thread-3", "Work", HostSessionStatus::Active)).unwrap();
-        let ended = store.upsert_codex(upsert("thread-3", "Work", HostSessionStatus::Ended)).unwrap();
+        store
+            .upsert_codex(upsert("thread-3", "Work", HostSessionStatus::Active))
+            .unwrap();
+        let ended = store
+            .upsert_codex(upsert("thread-3", "Work", HostSessionStatus::Ended))
+            .unwrap();
         assert_eq!(ended.status, HostSessionStatus::Ended);
         assert!(ended.ended_at.is_some());
         assert_eq!(store.list().unwrap().len(), 1);

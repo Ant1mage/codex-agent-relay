@@ -24,9 +24,9 @@ use serde::Deserialize;
 use tokio::sync::broadcast;
 
 use crate::contract::{
-    AdapterCatalog, ApiError, CancelResult, CodexAction, CodexStatus, Health, InstallResult,
-    InspectorSnapshot, PolicyBody, ProbeBody, RefreshResult, RelayConfigView, RuntimeBody, RuntimeMutation,
-    RuntimeProbe, StreamMessage,
+    AdapterCatalog, ApiError, CancelResult, CodexAction, CodexStatus, Health, InspectorSnapshot,
+    InstallResult, PolicyBody, ProbeBody, RefreshResult, RelayConfigView, RuntimeBody,
+    RuntimeMutation, RuntimeProbe, StreamMessage,
 };
 use crate::diagnostics::{build_diagnostics_report, DiagnosticsInput};
 use crate::store_view::RelayStore;
@@ -161,7 +161,10 @@ fn request_allowed(headers: &HeaderMap, port: u16) -> bool {
     }
     match headers.get("origin").and_then(|value| value.to_str().ok()) {
         None => true,
-        Some(origin) => match origin.strip_prefix("http://").or_else(|| origin.strip_prefix("https://")) {
+        Some(origin) => match origin
+            .strip_prefix("http://")
+            .or_else(|| origin.strip_prefix("https://"))
+        {
             Some(rest) => allowed.iter().any(|candidate| candidate == rest),
             None => false,
         },
@@ -195,7 +198,11 @@ async fn snapshot_of(state: &RelayServerState) -> InspectorSnapshot {
 
 async fn health(State(state): State<Arc<RelayServerState>>) -> Response {
     let snapshot = snapshot_of(&state).await;
-    let runs: u32 = snapshot.sessions.iter().map(|session| session.runs.len() as u32).sum();
+    let runs: u32 = snapshot
+        .sessions
+        .iter()
+        .map(|session| session.runs.len() as u32)
+        .sum();
     Json(Health {
         ok: true,
         pid: std::process::id(),
@@ -224,11 +231,20 @@ async fn config(State(state): State<Arc<RelayServerState>>) -> Response {
 }
 
 async fn adapters(State(state): State<Arc<RelayServerState>>) -> Response {
-    Json(AdapterCatalog { adapters: state.service.adapter_ids() }).into_response()
+    Json(AdapterCatalog {
+        adapters: state.service.adapter_ids(),
+    })
+    .into_response()
 }
 
 fn failed(message: impl Into<String>) -> Response {
-    (StatusCode::BAD_REQUEST, Json(ApiError { error: message.into() })).into_response()
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ApiError {
+            error: message.into(),
+        }),
+    )
+        .into_response()
 }
 
 async fn save_profile(
@@ -243,29 +259,47 @@ async fn save_profile(
     }
 }
 
-async fn delete_profile(State(state): State<Arc<RelayServerState>>, AxumPath(id): AxumPath<String>) -> Response {
+async fn delete_profile(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
     match state.service.delete_profile(&id) {
         Ok(config) => Json(config).into_response(),
         Err(message) => failed(message),
     }
 }
 
-async fn save_policy(State(state): State<Arc<RelayServerState>>, Json(body): Json<PolicyBody>) -> Response {
+async fn save_policy(
+    State(state): State<Arc<RelayServerState>>,
+    Json(body): Json<PolicyBody>,
+) -> Response {
     match state.service.save_policy(body) {
         Ok(config) => Json(config).into_response(),
         Err(message) => failed(message),
     }
 }
 
-async fn runtime_options(State(state): State<Arc<RelayServerState>>, AxumPath(id): AxumPath<String>) -> Response {
+async fn runtime_options(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
     Json(state.service.runtime_options(&id).await).into_response()
 }
 
-async fn probe_runtime(State(state): State<Arc<RelayServerState>>, Json(body): Json<ProbeBody>) -> Response {
+async fn probe_runtime(
+    State(state): State<Arc<RelayServerState>>,
+    Json(body): Json<ProbeBody>,
+) -> Response {
     if body.executable_path.is_empty() {
         return failed("Missing executablePath");
     }
-    Json(state.service.probe(&body.adapter_id, &body.executable_path).await).into_response()
+    Json(
+        state
+            .service
+            .probe(&body.adapter_id, &body.executable_path)
+            .await,
+    )
+    .into_response()
 }
 
 async fn save_runtime(
@@ -279,7 +313,10 @@ async fn save_runtime(
     Json(state.service.save_runtime(&id, body).await).into_response()
 }
 
-async fn delete_runtime(State(state): State<Arc<RelayServerState>>, AxumPath(id): AxumPath<String>) -> Response {
+async fn delete_runtime(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
     Json(state.service.delete_runtime(&id)).into_response()
 }
 
@@ -297,7 +334,10 @@ async fn diagnostics(State(state): State<Arc<RelayServerState>>) -> Response {
     });
     (
         StatusCode::OK,
-        [("content-type", "text/plain; charset=utf-8"), ("cache-control", "no-store")],
+        [
+            ("content-type", "text/plain; charset=utf-8"),
+            ("cache-control", "no-store"),
+        ],
         report,
     )
         .into_response()
@@ -317,7 +357,10 @@ async fn run_events(
     Json(state.store.events_for(&run_id, query.after)).into_response()
 }
 
-async fn cancel_worker(State(state): State<Arc<RelayServerState>>, AxumPath(id): AxumPath<String>) -> Response {
+async fn cancel_worker(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
     match state.store.cancel_worker(&id) {
         Ok(()) => Json(CancelResult {
             accepted: true,
@@ -334,9 +377,17 @@ async fn cancel_worker(State(state): State<Arc<RelayServerState>>, AxumPath(id):
     }
 }
 
-async fn cancel_session(State(state): State<Arc<RelayServerState>>, AxumPath(id): AxumPath<String>) -> Response {
+async fn cancel_session(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
     match state.store.cancel_session(&id) {
-        Ok(count) => Json(CancelResult { accepted: true, count: Some(count), message: None }).into_response(),
+        Ok(count) => Json(CancelResult {
+            accepted: true,
+            count: Some(count),
+            message: None,
+        })
+        .into_response(),
         Err(error) => Json(CancelResult {
             accepted: false,
             count: None,
@@ -346,7 +397,10 @@ async fn cancel_session(State(state): State<Arc<RelayServerState>>, AxumPath(id)
     }
 }
 
-async fn codex_action(State(state): State<Arc<RelayServerState>>, AxumPath(action): AxumPath<String>) -> Response {
+async fn codex_action(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(action): AxumPath<String>,
+) -> Response {
     match CodexAction::parse(&action) {
         Some(action) => Json(state.codex.run(action).await).into_response(),
         None => failed(format!("Unknown Codex action: {action}")),
@@ -378,7 +432,10 @@ const MIME: [(&str, &str); 11] = [
 ];
 
 fn mime_for(path: &Path) -> &'static str {
-    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default();
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
     MIME.iter()
         .find(|(candidate, _)| *candidate == extension)
         .map(|(_, mime)| *mime)
@@ -389,21 +446,38 @@ fn mime_for(path: &Path) -> &'static str {
 /// API calls pass the Origin guard without special cases.
 async fn serve_static(state: &RelayServerState, pathname: &str) -> Response {
     let is_panel = pathname == "/panel" || pathname.starts_with("/panel/");
-    let root = if is_panel { &state.panel_root } else { &state.web_root };
+    let root = if is_panel {
+        &state.panel_root
+    } else {
+        &state.web_root
+    };
     let relative = if is_panel {
-        pathname.trim_start_matches("/panel").trim_start_matches('/')
+        pathname
+            .trim_start_matches("/panel")
+            .trim_start_matches('/')
     } else {
         pathname.trim_start_matches('/')
     };
-    let relative = if relative.is_empty() { "index.html" } else { relative };
+    let relative = if relative.is_empty() {
+        "index.html"
+    } else {
+        relative
+    };
     let candidate = root.join(relative);
     let inside = candidate.starts_with(root);
-    let target = if inside { candidate } else { root.join("index.html") };
+    let target = if inside {
+        candidate
+    } else {
+        root.join("index.html")
+    };
 
     match tokio::fs::read(&target).await {
         Ok(body) => (
             StatusCode::OK,
-            [("content-type", mime_for(&target)), ("cache-control", "no-store")],
+            [
+                ("content-type", mime_for(&target)),
+                ("cache-control", "no-store"),
+            ],
             body,
         )
             .into_response(),
@@ -413,7 +487,10 @@ async fn serve_static(state: &RelayServerState, pathname: &str) -> Response {
                 if let Ok(body) = tokio::fs::read(root.join("index.html")).await {
                     return (
                         StatusCode::OK,
-                        [("content-type", "text/html; charset=utf-8"), ("cache-control", "no-store")],
+                        [
+                            ("content-type", "text/html; charset=utf-8"),
+                            ("cache-control", "no-store"),
+                        ],
                         body,
                     )
                         .into_response();
@@ -481,7 +558,11 @@ async fn stream(
         }
     };
 
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping"))
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("ping"),
+    )
 }
 
 /* ------------------------------------------------------------------ */
@@ -489,27 +570,35 @@ async fn stream(
 /* ------------------------------------------------------------------ */
 
 pub fn router(state: Arc<RelayServerState>) -> Router {
-    let api = Router::new()
-        .route("/health", get(health))
-        .route("/snapshot", get(snapshot))
-        .route("/menu", get(menu))
-        .route("/config", get(config))
-        .route("/config/profiles/{id}", put(save_profile).delete(delete_profile))
-        .route("/config/policy", put(save_policy))
-        .route("/config/runtimes/{id}", put(save_runtime).delete(delete_runtime))
-        .route("/adapters", get(adapters))
-        .route("/runtimes/probe", post(probe_runtime))
-        .route("/runtimes/{id}/options", get(runtime_options))
-        .route("/diagnostics", get(diagnostics))
-        .route("/runs/{id}/events", get(run_events))
-        .route("/workers/{id}/cancel", post(cancel_worker))
-        .route("/sessions/{id}/cancel", post(cancel_session))
-        .route("/codex/{action}", post(codex_action))
-        .route("/refresh", post(refresh))
-        .route("/stream", get(stream));
-
+    // Routes carry their own `/api` prefix instead of being nested: a nested
+    // router rewrites the path, and the 404 for an unknown API route has to
+    // report what the caller actually asked for.
     Router::new()
-        .nest("/api", api)
+        .route("/api/health", get(health))
+        .route("/api/snapshot", get(snapshot))
+        .route("/api/menu", get(menu))
+        .route("/api/config", get(config))
+        .route(
+            "/api/config/profiles/{id}",
+            put(save_profile).delete(delete_profile),
+        )
+        .route("/api/config/policy", put(save_policy))
+        .route(
+            "/api/config/runtimes/{id}",
+            put(save_runtime).delete(delete_runtime),
+        )
+        .route("/api/adapters", get(adapters))
+        .route("/api/runtimes/probe", post(probe_runtime))
+        .route("/api/runtimes/{id}/options", get(runtime_options))
+        .route("/api/diagnostics", get(diagnostics))
+        .route("/api/runs/{id}/events", get(run_events))
+        .route("/api/workers/{id}/cancel", post(cancel_worker))
+        .route("/api/sessions/{id}/cancel", post(cancel_session))
+        .route("/api/codex/{action}", post(codex_action))
+        .route("/api/refresh", post(refresh))
+        .route("/api/stream", get(stream))
+        // An unknown API route answers as an API, never as the SPA.
+        .route("/api/{*rest}", axum::routing::any(unknown_api_route))
         .fallback(get(fallback))
         .with_state(Arc::clone(&state))
         .layer(axum::middleware::from_fn_with_state(state, guard))
@@ -517,6 +606,16 @@ pub fn router(state: Arc<RelayServerState>) -> Router {
 
 async fn fallback(State(state): State<Arc<RelayServerState>>, uri: Uri) -> Response {
     serve_static(&state, uri.path()).await
+}
+
+async fn unknown_api_route(uri: Uri) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(ApiError {
+            error: format!("Unknown Relay API route: {}", uri.path()),
+        }),
+    )
+        .into_response()
 }
 
 /// One place for both local-only guards and token auth, so no route can forget
@@ -534,19 +633,18 @@ async fn guard(
         )
             .into_response();
     }
-    if request.uri().path().starts_with("/api/") && !authorized(&state, request.headers(), request.uri()) {
-        return (StatusCode::UNAUTHORIZED, Json(ApiError { error: "Missing or invalid Relay token".into() }))
-            .into_response();
-    }
-    let response = next.run(request).await;
-    if response.status() == StatusCode::NOT_FOUND {
+    if request.uri().path().starts_with("/api/")
+        && !authorized(&state, request.headers(), request.uri())
+    {
         return (
-            StatusCode::NOT_FOUND,
-            Json(ApiError { error: "Unknown Relay API route".into() }),
+            StatusCode::UNAUTHORIZED,
+            Json(ApiError {
+                error: "Missing or invalid Relay token".into(),
+            }),
         )
             .into_response();
     }
-    response
+    next.run(request).await
 }
 
 /// Binds the first free port in the block, so a second daemon never fails hard.
@@ -602,7 +700,9 @@ mod tests {
     }
 
     fn test_state() -> Arc<RelayServerState> {
-        use relay_storage::{Database, SqliteControlQueue, SqliteEventStore, SqliteHostSessionStore};
+        use relay_storage::{
+            Database, SqliteControlQueue, SqliteEventStore, SqliteHostSessionStore,
+        };
         let directory = std::env::temp_dir().join(format!("relay-api-test-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let database = Arc::new(Database::open(directory.join("relay.sqlite")).unwrap());
@@ -650,12 +750,20 @@ mod tests {
             RuntimeOptions::empty(runtime_id, "none", "no adapter")
         }
         async fn probe(&self, _adapter_id: &str, _executable_path: &str) -> RuntimeProbe {
-            RuntimeProbe { ok: false, version: None, error: Some("unsupported".into()) }
+            RuntimeProbe {
+                ok: false,
+                version: None,
+                error: Some("unsupported".into()),
+            }
         }
         async fn save_runtime(&self, _id: &str, _body: RuntimeBody) -> RuntimeMutation {
             RuntimeMutation {
                 config: self.config(),
-                probe: RuntimeProbe { ok: false, version: None, error: Some("unsupported".into()) },
+                probe: RuntimeProbe {
+                    ok: false,
+                    version: None,
+                    error: Some("unsupported".into()),
+                },
             }
         }
         fn delete_runtime(&self, _id: &str) -> RelayConfigView {
@@ -683,7 +791,10 @@ mod tests {
             CodexStatus::unknown()
         }
         async fn run(&self, _action: CodexAction) -> InstallResult {
-            InstallResult { status: CodexStatus::unknown(), messages: Vec::new() }
+            InstallResult {
+                status: CodexStatus::unknown(),
+                messages: Vec::new(),
+            }
         }
     }
 }

@@ -37,7 +37,10 @@ impl Database {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent).map_err(|error| {
-                    RelayError::new("STORAGE_FAILURE", format!("cannot create {}: {error}", parent.display()))
+                    RelayError::new(
+                        "STORAGE_FAILURE",
+                        format!("cannot create {}: {error}", parent.display()),
+                    )
                 })?;
             }
         }
@@ -52,7 +55,10 @@ impl Database {
         connection
             .busy_timeout(std::time::Duration::from_secs(5))
             .map_err(storage_error)?;
-        let database = Self { connection: Mutex::new(connection), path: path.display().to_string() };
+        let database = Self {
+            connection: Mutex::new(connection),
+            path: path.display().to_string(),
+        };
         schema::migrate(&database)?;
         Ok(database)
     }
@@ -68,7 +74,10 @@ impl Database {
     }
 
     /// Runs `work` inside a transaction.
-    pub fn transaction<T>(&self, work: impl FnOnce(&rusqlite::Transaction<'_>) -> rusqlite::Result<T>) -> Result<T> {
+    pub fn transaction<T>(
+        &self,
+        work: impl FnOnce(&rusqlite::Transaction<'_>) -> rusqlite::Result<T>,
+    ) -> Result<T> {
         let mut guard = self.connection.lock().unwrap();
         let transaction = guard.transaction().map_err(storage_error)?;
         let value = work(&transaction).map_err(storage_error)?;

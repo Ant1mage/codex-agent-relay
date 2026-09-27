@@ -31,7 +31,10 @@ pub fn adapters() -> Vec<Arc<dyn AgentAdapter>> {
 
 /// Adapter ids the control panel may offer when registering a runtime by hand.
 pub fn adapter_ids() -> Vec<String> {
-    adapters().iter().map(|adapter| adapter.id().to_string()).collect()
+    adapters()
+        .iter()
+        .map(|adapter| adapter.id().to_string())
+        .collect()
 }
 
 /// Finds the adapter that owns an id.
@@ -46,7 +49,15 @@ mod tests {
     #[test]
     fn the_catalog_matches_the_supported_runtimes() {
         let ids = adapter_ids();
-        assert_eq!(ids, vec!["deepseek-harness", "antigravity-cli", "kimi-code", "zai-cli"]);
+        assert_eq!(
+            ids,
+            vec![
+                "deepseek-harness",
+                "antigravity-cli",
+                "kimi-code",
+                "zai-cli"
+            ]
+        );
         assert!(adapter_by_id("deepseek-harness").is_some());
         assert!(adapter_by_id("missing").is_none());
     }

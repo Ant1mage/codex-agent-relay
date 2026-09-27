@@ -75,7 +75,9 @@ impl PolicyDocument {
         Self {
             max_concurrent_runs: Some(policy.max_concurrent_runs),
             max_concurrent_writers: Some(policy.max_concurrent_writers),
-            require_worktree_for_parallel_writers: Some(policy.require_worktree_for_parallel_writers),
+            require_worktree_for_parallel_writers: Some(
+                policy.require_worktree_for_parallel_writers,
+            ),
             allow_write: Some(policy.allow_write),
             allow_commands: Some(policy.allow_commands),
             allow_network: Some(policy.allow_network),
@@ -265,7 +267,9 @@ impl ConfigStore {
     fn read_document(&self, warnings: &mut Vec<String>) -> Option<ConfigDocument> {
         let contents = match std::fs::read_to_string(&self.path) {
             Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(ConfigDocument::default()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Some(ConfigDocument::default())
+            }
             Err(error) => {
                 warnings.push(format!("{} 无法读取：{error}", self.path.display()));
                 return None;
@@ -300,7 +304,10 @@ impl ConfigStore {
     fn write_document(&self, document: &ConfigDocument) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
-                relay_core::RelayError::new("CONFIG_WRITE_FAILED", format!("{}: {error}", parent.display()))
+                relay_core::RelayError::new(
+                    "CONFIG_WRITE_FAILED",
+                    format!("{}: {error}", parent.display()),
+                )
             })?;
         }
         let body = toml::to_string_pretty(document).map_err(|error| {
@@ -308,10 +315,16 @@ impl ConfigStore {
         })?;
         let temporary = self.path.with_extension("toml.tmp");
         std::fs::write(&temporary, body).map_err(|error| {
-            relay_core::RelayError::new("CONFIG_WRITE_FAILED", format!("{}: {error}", temporary.display()))
+            relay_core::RelayError::new(
+                "CONFIG_WRITE_FAILED",
+                format!("{}: {error}", temporary.display()),
+            )
         })?;
         std::fs::rename(&temporary, &self.path).map_err(|error| {
-            relay_core::RelayError::new("CONFIG_WRITE_FAILED", format!("{}: {error}", self.path.display()))
+            relay_core::RelayError::new(
+                "CONFIG_WRITE_FAILED",
+                format!("{}: {error}", self.path.display()),
+            )
         })?;
         Ok(())
     }
@@ -327,9 +340,15 @@ impl ConfigStore {
 
     pub fn upsert_profile(&self, profile: &AgentProfile) -> Result<RelayConfig> {
         let document = AgentDocument::from(profile);
-        self.mutate(|config| match config.agents.iter_mut().find(|agent| agent.id == document.id) {
-            Some(existing) => *existing = document,
-            None => config.agents.push(document),
+        self.mutate(|config| {
+            match config
+                .agents
+                .iter_mut()
+                .find(|agent| agent.id == document.id)
+            {
+                Some(existing) => *existing = document,
+                None => config.agents.push(document),
+            }
         })
     }
 
@@ -352,7 +371,8 @@ impl ConfigStore {
                         PolicyDocument {
                             max_concurrent_runs: patch.max_concurrent_runs,
                             max_concurrent_writers: patch.max_concurrent_writers,
-                            require_worktree_for_parallel_writers: patch.require_worktree_for_parallel_writers,
+                            require_worktree_for_parallel_writers: patch
+                                .require_worktree_for_parallel_writers,
                             allow_write: patch.allow_write,
                             allow_commands: patch.allow_commands,
                             allow_network: patch.allow_network,
@@ -365,9 +385,15 @@ impl ConfigStore {
 
     pub fn upsert_manual_runtime(&self, runtime: &ManualRuntime) -> Result<RelayConfig> {
         let document = RuntimeDocument::from(runtime);
-        self.mutate(|config| match config.runtimes.iter_mut().find(|entry| entry.id == document.id) {
-            Some(existing) => *existing = document,
-            None => config.runtimes.push(document),
+        self.mutate(|config| {
+            match config
+                .runtimes
+                .iter_mut()
+                .find(|entry| entry.id == document.id)
+            {
+                Some(existing) => *existing = document,
+                None => config.runtimes.push(document),
+            }
         })
     }
 
@@ -431,7 +457,10 @@ mod tests {
     fn a_missing_file_reads_as_an_empty_configuration() {
         let (_directory, store) = store();
         let config = store.read();
-        assert!(config.profiles.is_empty(), "detection must not create agents");
+        assert!(
+            config.profiles.is_empty(),
+            "detection must not create agents"
+        );
         assert_eq!(config.policy, RelayPolicy::default());
         assert!(config.warnings.is_empty());
         assert_eq!(config.revision, "absent");
@@ -456,18 +485,28 @@ mod tests {
     #[test]
     fn policy_and_workspace_overrides_round_trip() {
         let (_directory, store) = store();
-        let policy = RelayPolicy { max_concurrent_runs: 6, allow_network: false, ..RelayPolicy::default() };
+        let policy = RelayPolicy {
+            max_concurrent_runs: 6,
+            allow_network: false,
+            ..RelayPolicy::default()
+        };
         let mut overrides = BTreeMap::new();
         overrides.insert(
             "/tmp/project".to_string(),
-            RelayPolicyOverride { allow_write: Some(false), ..Default::default() },
+            RelayPolicyOverride {
+                allow_write: Some(false),
+                ..Default::default()
+            },
         );
         store.write_policy(policy, overrides).unwrap();
 
         let config = store.read();
         assert_eq!(config.policy.max_concurrent_runs, 6);
         assert!(!config.policy.allow_network);
-        assert_eq!(config.workspace_overrides["/tmp/project"].allow_write, Some(false));
+        assert_eq!(
+            config.workspace_overrides["/tmp/project"].allow_write,
+            Some(false)
+        );
     }
 
     #[test]
@@ -491,15 +530,21 @@ mod tests {
     #[test]
     fn a_broken_file_is_reported_and_never_overwritten() {
         let (directory, store) = store();
-        std::fs::write(directory.path().join("config.toml"), "this is not toml = = =").unwrap();
+        std::fs::write(
+            directory.path().join("config.toml"),
+            "this is not toml = = =",
+        )
+        .unwrap();
         let config = store.read();
         assert_eq!(config.warnings.len(), 1);
         let error = store.upsert_profile(&profile("agent-1")).unwrap_err();
         assert_eq!(error.code(), "CONFIG_UNREADABLE");
         // The original bytes survive.
-        assert!(std::fs::read_to_string(directory.path().join("config.toml"))
-            .unwrap()
-            .contains("not toml"));
+        assert!(
+            std::fs::read_to_string(directory.path().join("config.toml"))
+                .unwrap()
+                .contains("not toml")
+        );
     }
 
     #[test]

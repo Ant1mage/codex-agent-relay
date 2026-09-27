@@ -43,7 +43,12 @@ impl McpClient {
             .expect("relay-mcp must start");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Self { child, stdin, stdout, next_id: 1 }
+        Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+        }
     }
 
     async fn send(&mut self, method: &str, params: Option<serde_json::Value>) -> serde_json::Value {
@@ -53,23 +58,36 @@ impl McpClient {
         if let Some(params) = params {
             request["params"] = params;
         }
-        self.stdin.write_all(format!("{request}\n").as_bytes()).await.unwrap();
+        self.stdin
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .unwrap();
         self.stdin.flush().await.unwrap();
         self.read_response(id).await
     }
 
     async fn notify(&mut self, method: &str) {
         let message = serde_json::json!({ "jsonrpc": "2.0", "method": method });
-        self.stdin.write_all(format!("{message}\n").as_bytes()).await.unwrap();
+        self.stdin
+            .write_all(format!("{message}\n").as_bytes())
+            .await
+            .unwrap();
         self.stdin.flush().await.unwrap();
     }
 
     async fn read_response(&mut self, id: u64) -> serde_json::Value {
         loop {
             let mut line = String::new();
-            let read = tokio::time::timeout(Duration::from_secs(30), self.stdout.read_line(&mut line)).await;
-            let count = read.expect("relay-mcp must answer in time").expect("relay-mcp must stay alive");
-            assert!(count > 0, "relay-mcp closed the stream while waiting for response {id}");
+            let read =
+                tokio::time::timeout(Duration::from_secs(30), self.stdout.read_line(&mut line))
+                    .await;
+            let count = read
+                .expect("relay-mcp must answer in time")
+                .expect("relay-mcp must stay alive");
+            assert!(
+                count > 0,
+                "relay-mcp closed the stream while waiting for response {id}"
+            );
             let Ok(message) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
                 continue;
             };
@@ -81,11 +99,18 @@ impl McpClient {
 
     async fn call_tool(&mut self, name: &str, arguments: serde_json::Value) -> serde_json::Value {
         let response = self
-            .send("tools/call", Some(serde_json::json!({ "name": name, "arguments": arguments })))
+            .send(
+                "tools/call",
+                Some(serde_json::json!({ "name": name, "arguments": arguments })),
+            )
             .await;
         assert!(response.get("error").is_none(), "{name} failed: {response}");
         let result = response["result"].clone();
-        assert_ne!(result.get("isError").and_then(|value| value.as_bool()), Some(true), "{name} returned an error: {result}");
+        assert_ne!(
+            result.get("isError").and_then(|value| value.as_bool()),
+            Some(true),
+            "{name} returned an error: {result}"
+        );
         result["structuredContent"]["result"].clone()
     }
 
@@ -198,7 +223,10 @@ async fn codex_can_delegate_wait_and_accept_over_mcp() {
 
     // Wait for the worker, then read the summary Codex reviews.
     let waited = client
-        .call_tool("wait_agent", serde_json::json!({ "worker_session_id": worker_id }))
+        .call_tool(
+            "wait_agent",
+            serde_json::json!({ "worker_session_id": worker_id }),
+        )
         .await;
     assert_eq!(waited["run"]["status"], "awaiting_host");
     assert_eq!(waited["result"]["summary"], "work complete");
@@ -207,7 +235,10 @@ async fn codex_can_delegate_wait_and_accept_over_mcp() {
 
     // Review, then accept.
     let accepted = client
-        .call_tool("accept_agent", serde_json::json!({ "worker_session_id": worker_id }))
+        .call_tool(
+            "accept_agent",
+            serde_json::json!({ "worker_session_id": worker_id }),
+        )
         .await;
     assert_eq!(accepted["run"]["status"], "completed");
     assert_eq!(accepted["steps"][0]["status"], "completed");
@@ -218,7 +249,10 @@ async fn codex_can_delegate_wait_and_accept_over_mcp() {
     let database = relay_storage::Database::open(home.path().join("relay.sqlite")).unwrap();
     let store = relay_storage::SqliteEventStore::new(std::sync::Arc::new(database));
     let events = relay_core::EventStore::list(&store, &run_id).unwrap();
-    let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
+    let types: Vec<&str> = events
+        .iter()
+        .map(|event| event.event_type.as_str())
+        .collect();
     assert_eq!(
         types,
         vec![
@@ -238,7 +272,13 @@ async fn codex_can_delegate_wait_and_accept_over_mcp() {
         ]
     );
     assert!(events.iter().all(|event| event.seq >= 1));
-    assert_eq!(events.iter().filter(|event| event.event_type == relay_core::RelayEventType::RunAccepted).count(), 1);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == relay_core::RelayEventType::RunAccepted)
+            .count(),
+        1
+    );
 
     // The host session was registered with Codex's own name.
     let sessions = relay_storage::SqliteHostSessionStore::new(std::sync::Arc::new(
@@ -279,7 +319,10 @@ async fn a_failing_worker_reports_its_message_and_never_awaits_the_host() {
     let worker_id = started["workerSessionId"].as_str().unwrap().to_string();
 
     let waited = client
-        .call_tool("wait_agent", serde_json::json!({ "worker_session_id": worker_id }))
+        .call_tool(
+            "wait_agent",
+            serde_json::json!({ "worker_session_id": worker_id }),
+        )
         .await;
     assert_eq!(waited["run"]["status"], "failed");
     assert_eq!(waited["result"]["message"], "fixture failed");
@@ -334,12 +377,18 @@ async fn cancelling_a_worker_ends_the_run_as_cancelled() {
     // Give the supervisor a moment to publish worker/started.
     tokio::time::sleep(Duration::from_millis(300)).await;
     let cancelled = client
-        .call_tool("cancel_agent", serde_json::json!({ "worker_session_id": worker_id }))
+        .call_tool(
+            "cancel_agent",
+            serde_json::json!({ "worker_session_id": worker_id }),
+        )
         .await;
     assert_eq!(cancelled["cancelled"], true);
 
     let status = client
-        .call_tool("get_agent_status", serde_json::json!({ "worker_session_id": worker_id }))
+        .call_tool(
+            "get_agent_status",
+            serde_json::json!({ "worker_session_id": worker_id }),
+        )
         .await;
     assert_eq!(status["run"]["status"], "cancelled");
     assert!(status["lastEvent"]["type"] == "worker/cancelled");

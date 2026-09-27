@@ -6,8 +6,8 @@
 //! without pulling in a server.
 
 use relay_core::{
-    AgentProfile, HostSession, ManualRuntime, RelayEvent, RelayPolicy, RelayPolicyOverride, Run, Runtime,
-    RuntimeOptions, Step, WorkerSession,
+    AgentProfile, HostSession, ManualRuntime, RelayEvent, RelayPolicy, RelayPolicyOverride, Run,
+    Runtime, RuntimeOptions, Step, WorkerSession,
 };
 use serde::{Deserialize, Serialize};
 
@@ -94,7 +94,10 @@ pub struct CodexStatus {
 
 impl CodexStatus {
     pub fn unknown() -> Self {
-        Self { checks: Vec::new(), configured: false }
+        Self {
+            checks: Vec::new(),
+            configured: false,
+        }
     }
 }
 
@@ -258,9 +261,17 @@ pub struct EventBatch {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum StreamMessage {
-    Hello { port: u16, started_at: String },
-    Snapshot { snapshot: Box<InspectorSnapshot> },
-    Events { batch: EventBatch },
+    #[serde(rename_all = "camelCase")]
+    Hello {
+        port: u16,
+        started_at: String,
+    },
+    Snapshot {
+        snapshot: Box<InspectorSnapshot>,
+    },
+    Events {
+        batch: EventBatch,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -334,13 +345,21 @@ mod tests {
             codex: CodexStatus::unknown(),
             generated_at: "2026-01-01T00:00:00.000Z".into(),
         };
-        let message = StreamMessage::Snapshot { snapshot: Box::new(snapshot) };
+        let message = StreamMessage::Snapshot {
+            snapshot: Box::new(snapshot),
+        };
         let json = serde_json::to_value(&message).unwrap();
         assert_eq!(json["type"], "snapshot");
         assert!(json["snapshot"]["generatedAt"].is_string());
 
-        let hello = StreamMessage::Hello { port: 7352, started_at: "2026-01-01T00:00:00.000Z".into() };
-        assert_eq!(serde_json::to_value(&hello).unwrap()["type"], "hello");
+        let hello = StreamMessage::Hello {
+            port: 7352,
+            started_at: "2026-01-01T00:00:00.000Z".into(),
+        };
+        let json = serde_json::to_value(&hello).unwrap();
+        assert_eq!(json["type"], "hello");
+        assert_eq!(json["port"], 7352);
+        assert_eq!(json["startedAt"], "2026-01-01T00:00:00.000Z");
     }
 
     #[test]
@@ -357,7 +376,11 @@ mod tests {
             created_at: "2026-01-01T00:00:00.000Z".into(),
             updated_at: "2026-01-01T00:00:00.000Z".into(),
         };
-        let view = RunView { run, steps: Vec::new(), workers: Vec::new() };
+        let view = RunView {
+            run,
+            steps: Vec::new(),
+            workers: Vec::new(),
+        };
         let json = serde_json::to_value(&view).unwrap();
         assert_eq!(json["run"]["accessMode"], "read_only");
         assert_eq!(json["run"]["hostSessionId"], "codex:s");

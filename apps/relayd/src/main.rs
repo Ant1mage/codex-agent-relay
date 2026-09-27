@@ -16,10 +16,15 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use relay_api::server_info::{clear_server_info, read_server_info, write_server_info, ServerInfo, DEFAULT_PORT, HOST};
+use relay_api::server_info::{
+    clear_server_info, read_server_info, write_server_info, ServerInfo, DEFAULT_PORT, HOST,
+};
 use relay_api::{RelayServerState, RelayStore};
 use relay_codex::CodexIntegrationService;
-use relay_config::{config_path, database_path, relay_home, relay_version, resources_dir, server_info_path, ConfigStore};
+use relay_config::{
+    config_path, database_path, relay_home, relay_version, resources_dir, server_info_path,
+    ConfigStore,
+};
 use relay_storage::{Database, SqliteControlQueue, SqliteEventStore, SqliteHostSessionStore};
 use std::io::Write;
 
@@ -41,11 +46,17 @@ async fn main() {
     // `--version` and `--help` must answer and exit: a release check that starts
     // a daemon and waits forever is worse than no check.
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    if arguments.iter().any(|argument| argument == "--version" || argument == "-V") {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--version" || argument == "-V")
+    {
         println!("relayd {}", relay_version());
         return;
     }
-    if arguments.iter().any(|argument| argument == "--help" || argument == "-h") {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
         println!(
             "relayd {} — Relay's local daemon\n\nUSAGE: relayd [--version] [--help]\n\nEnvironment:\n  RELAY_HOME            state directory (default ~/.relay)\n  RELAY_PORT            first port to try (default {DEFAULT_PORT})\n  RELAY_TOKEN           fixed API token instead of a random one\n  RELAY_DB_PATH         event log location\n  RELAY_CONFIG_PATH     configuration file location\n  RELAY_WEB_ROOT        built UI directory\n  RELAY_RESOURCES_DIR   packaged resources directory",
             relay_version()
@@ -63,7 +74,10 @@ async fn run() -> Result<(), String> {
     // Only a daemon that answers with the recorded nonce counts as running: a PID
     // is not identity, and a stale server.json must never block a fresh start.
     if let Some(info) = confirmed_running_daemon().await {
-        println!("Relay daemon is already running at {} (pid {})", info.url, info.pid);
+        println!(
+            "Relay daemon is already running at {} (pid {})",
+            info.url, info.pid
+        );
         return Ok(());
     }
     if !acquire_startup_lock().await {
@@ -76,7 +90,8 @@ async fn run() -> Result<(), String> {
     let token = std::env::var("RELAY_TOKEN").unwrap_or_else(|_| random_token(24));
     let started_at = relay_core::now();
 
-    let database = Arc::new(Database::open(database_path()).map_err(|error| error.message().to_string())?);
+    let database =
+        Arc::new(Database::open(database_path()).map_err(|error| error.message().to_string())?);
     let events = Arc::new(SqliteEventStore::new(Arc::clone(&database)));
     let sessions = Arc::new(SqliteHostSessionStore::new(Arc::clone(&database)));
     let commands = Arc::new(SqliteControlQueue::new(Arc::clone(&database)));
@@ -102,7 +117,9 @@ async fn run() -> Result<(), String> {
         database.path().to_string(),
     );
 
-    let (listener, bound_port) = relay_api::bind(configured_port).await.map_err(|error| error.to_string())?;
+    let (listener, bound_port) = relay_api::bind(configured_port)
+        .await
+        .map_err(|error| error.to_string())?;
     port.store(bound_port, Ordering::SeqCst);
 
     let info = ServerInfo {
@@ -163,7 +180,8 @@ fn web_root() -> PathBuf {
             candidates.push(directory.join("../../../apps/relay-desktop/ui/dist"));
         }
     }
-    let fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/relay-desktop/ui/dist");
+    let fallback =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/relay-desktop/ui/dist");
     candidates.push(fallback.clone());
     candidates
         .into_iter()
@@ -182,7 +200,10 @@ fn panel_root() -> PathBuf {
 async fn confirmed_running_daemon() -> Option<ServerInfo> {
     let info = read_server_info(&server_info_path())?;
     let url = format!("{}/api/health?token={}", info.url, info.token);
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(3)).build().ok()?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .ok()?;
     let response = client.get(url).send().await.ok()?;
     let health: relay_api::Health = response.json().await.ok()?;
     if health.pid == info.pid && !info.nonce.is_empty() && health.nonce == info.nonce {
@@ -202,7 +223,11 @@ async fn acquire_startup_lock() -> bool {
     }
     let deadline = Instant::now() + Duration::from_millis(STARTUP_LOCK_MS);
     while Instant::now() < deadline {
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&lock) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+        {
             Ok(mut file) => {
                 let _ = file.write_all(std::process::id().to_string().as_bytes());
                 return true;
@@ -210,7 +235,11 @@ async fn acquire_startup_lock() -> bool {
             Err(_) => {
                 if let Ok(metadata) = std::fs::metadata(&lock) {
                     if let Ok(modified) = metadata.modified() {
-                        if modified.elapsed().map(|age| age.as_millis() > STALE_LOCK_MS as u128).unwrap_or(false) {
+                        if modified
+                            .elapsed()
+                            .map(|age| age.as_millis() > STALE_LOCK_MS as u128)
+                            .unwrap_or(false)
+                        {
                             let _ = std::fs::remove_file(&lock);
                             continue;
                         }
@@ -246,7 +275,9 @@ async fn shutdown_signal() {
     };
     #[cfg(unix)]
     let terminate = async {
-        if let Ok(mut signal) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        if let Ok(mut signal) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
             signal.recv().await;
         }
     };

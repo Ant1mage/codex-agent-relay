@@ -4,12 +4,15 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType, Result,
-    Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType,
+    Result, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
 
 use crate::cli::{run_cli, ParsedOutput, ProcessSupervisor, StreamMode, StreamOutcome, StreamSpec};
-use crate::probe::{discover_executable, probe_runtime_options, read_help, version_of, with_selection_args, Selection};
+use crate::probe::{
+    discover_executable, probe_runtime_options, read_help, version_of, with_selection_args,
+    Selection,
+};
 
 pub const ADAPTER_ID: &str = "kimi-code";
 pub const RUNTIME_ID: &str = "runtime:kimi-code";
@@ -19,7 +22,11 @@ fn text_content(content: &serde_json::Value) -> String {
         serde_json::Value::String(text) => text.clone(),
         serde_json::Value::Array(parts) => parts
             .iter()
-            .map(|part| part.get("text").and_then(|value| value.as_str()).unwrap_or_default())
+            .map(|part| {
+                part.get("text")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+            })
             .collect(),
         _ => String::new(),
     }
@@ -27,11 +34,20 @@ fn text_content(content: &serde_json::Value) -> String {
 
 fn tool_event_type(tool: &str) -> RelayEventType {
     let name = tool.to_lowercase();
-    if ["search", "grep", "glob", "find", "fetch"].iter().any(|needle| name.contains(needle)) {
+    if ["search", "grep", "glob", "find", "fetch"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
         RelayEventType::ToolSearch
-    } else if ["edit", "write", "patch", "replace", "delete", "move"].iter().any(|needle| name.contains(needle)) {
+    } else if ["edit", "write", "patch", "replace", "delete", "move"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
         RelayEventType::ToolEdit
-    } else if ["read", "view", "open", "list"].iter().any(|needle| name.contains(needle)) {
+    } else if ["read", "view", "open", "list"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
         RelayEventType::ToolRead
     } else if name.contains("test") {
         RelayEventType::TestResult
@@ -73,7 +89,10 @@ pub fn parse_line(line: &str) -> ParsedOutput {
             }
             if let Some(calls) = message.get("tool_calls").and_then(|value| value.as_array()) {
                 for call in calls {
-                    let function = call.get("function").cloned().unwrap_or(serde_json::Value::Null);
+                    let function = call
+                        .get("function")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
                     let tool = function
                         .get("name")
                         .and_then(|value| value.as_str())
@@ -162,7 +181,10 @@ impl KimiAdapter {
     }
 
     pub fn with_executable(executable: impl Into<String>) -> Self {
-        Self { configured_executable: Some(executable.into()), ..Self::new() }
+        Self {
+            configured_executable: Some(executable.into()),
+            ..Self::new()
+        }
     }
 
     pub fn with_supervisor(mut self, supervisor: Arc<ProcessSupervisor>) -> Self {
@@ -176,7 +198,12 @@ impl KimiAdapter {
         }
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         let extra: Vec<std::path::PathBuf> = home
-            .map(|home| vec![home.join(".local/bin/kimi"), home.join(".kimi-code/bin/kimi")])
+            .map(|home| {
+                vec![
+                    home.join(".local/bin/kimi"),
+                    home.join(".kimi-code/bin/kimi"),
+                ]
+            })
             .unwrap_or_default();
         discover_executable("kimi", &extra).map(|path| path.to_string_lossy().to_string())
     }
@@ -239,7 +266,8 @@ impl AgentAdapter for KimiAdapter {
             );
         };
         let evidence = read_help(&executable, &self.prefix_args).await;
-        let (_, options) = probe_runtime_options(self.capabilities(), &evidence, runtime_id, ADAPTER_ID);
+        let (_, options) =
+            probe_runtime_options(self.capabilities(), &evidence, runtime_id, ADAPTER_ID);
         options
     }
 
@@ -248,13 +276,18 @@ impl AgentAdapter for KimiAdapter {
             .executable_path
             .clone()
             .or_else(|| self.executable())
-            .ok_or_else(|| RelayError::new("ADAPTER_FAILURE", "Kimi Code executable `kimi` was not found"))?;
+            .ok_or_else(|| {
+                RelayError::new(
+                    "ADAPTER_FAILURE",
+                    "Kimi Code executable `kimi` was not found",
+                )
+            })?;
         let evidence = read_help(&executable, &self.prefix_args).await;
         let (_, options) =
             probe_runtime_options(self.capabilities(), &evidence, RUNTIME_ID, ADAPTER_ID);
         *self.options.lock().unwrap() = Some(options.clone());
 
-        let base = vec![
+        let base = [
             self.prefix_args.clone(),
             vec![
                 "--prompt".to_string(),
@@ -264,7 +297,10 @@ impl AgentAdapter for KimiAdapter {
             ],
         ]
         .concat();
-        let selection = Selection { model: input.model.clone(), reasoning: input.reasoning.clone() };
+        let selection = Selection {
+            model: input.model.clone(),
+            reasoning: input.reasoning.clone(),
+        };
         let args = with_selection_args(&base, &selection, &options);
 
         run_cli(

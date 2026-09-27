@@ -66,8 +66,13 @@ pub fn invocation_context(
     let thread_id = env("CODEX_THREAD_ID")
         .or_else(|| env("CODEX_SESSION_ID"))
         .or_else(|| {
-            request_context
-                .and_then(|value| find_string(value, &["thread_id", "threadId", "session_id", "sessionId"], 0))
+            request_context.and_then(|value| {
+                find_string(
+                    value,
+                    &["thread_id", "threadId", "session_id", "sessionId"],
+                    0,
+                )
+            })
         })
         .ok_or_else(|| "Codex thread identity is unavailable".to_string())?;
     let turn_id = request_context.and_then(|value| find_string(value, &["turn_id", "turnId"], 0));
@@ -76,7 +81,11 @@ pub fn invocation_context(
 
 /// The session id carried by a `SessionEnd` hook payload.
 pub fn session_id_from_hook(payload: &serde_json::Value) -> Option<String> {
-    find_string(payload, &["session_id", "thread_id", "threadId", "sessionId"], 0)
+    find_string(
+        payload,
+        &["session_id", "thread_id", "threadId", "sessionId"],
+        0,
+    )
 }
 
 #[cfg(test)]
@@ -117,7 +126,8 @@ mod tests {
             Some("abc")
         );
         assert_eq!(
-            session_id_from_hook(&serde_json::json!({ "payload": { "thread_id": "t-1" } })).as_deref(),
+            session_id_from_hook(&serde_json::json!({ "payload": { "thread_id": "t-1" } }))
+                .as_deref(),
             Some("t-1")
         );
     }

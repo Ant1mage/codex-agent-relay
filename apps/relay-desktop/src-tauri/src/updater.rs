@@ -6,7 +6,7 @@
 //! not mean the Codex MCP server, its skill or its hooks were updated, and the
 //! integration checks say so on their own.
 //!
-//! The menu renders this state exactly like the Electron block did, so the
+//! The menu renders this state exactly as Relay always has, so the
 //! statuses stay the same: `unsupported | idle | checking | available |
 //! downloading | downloaded | none | error`.
 

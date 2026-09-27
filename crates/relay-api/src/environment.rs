@@ -11,6 +11,8 @@ pub struct Environment {
 
 impl Environment {
     pub fn runtime(&self, runtime_id: &str) -> Option<&Runtime> {
-        self.runtimes.iter().find(|runtime| runtime.id == runtime_id)
+        self.runtimes
+            .iter()
+            .find(|runtime| runtime.id == runtime_id)
     }
 }

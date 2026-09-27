@@ -74,7 +74,7 @@ use tokio::sync::mpsc;
 
 use crate::adapter::{AdapterEvent, AgentAdapter, DetectionResult, WorkerHandle};
 use crate::domain::{
-    AdapterCapabilities, AgentProfile, CapabilitySet, RelayError, ResumeInput, Result, RunRequest,
+    AdapterCapabilities, AgentProfile, CapabilitySet, RelayError, Result, ResumeInput, RunRequest,
     Runtime, RuntimeHealth, StartInput,
 };
 use crate::run::RunController;
@@ -88,11 +88,17 @@ pub struct FakeAdapter {
 
 impl FakeAdapter {
     pub fn new() -> Self {
-        Self { last_start_input: Mutex::new(None), resume_supported: false }
+        Self {
+            last_start_input: Mutex::new(None),
+            resume_supported: false,
+        }
     }
 
     pub fn resumable() -> Self {
-        Self { last_start_input: Mutex::new(None), resume_supported: true }
+        Self {
+            last_start_input: Mutex::new(None),
+            resume_supported: true,
+        }
     }
 }
 
@@ -159,7 +165,10 @@ impl AgentAdapter for FakeAdapter {
 
     async fn resume(&self, input: ResumeInput) -> Result<WorkerHandle> {
         if !self.resume_supported {
-            return Err(RelayError::new("OPERATION_UNSUPPORTED", "fake adapter does not resume"));
+            return Err(RelayError::new(
+                "OPERATION_UNSUPPORTED",
+                "fake adapter does not resume",
+            ));
         }
         self.start(StartInput {
             run_id: input.run_id,
@@ -187,7 +196,9 @@ pub struct ControlledAdapter {
 
 impl ControlledAdapter {
     pub fn new() -> Self {
-        Self { releases: Mutex::new(Vec::new()) }
+        Self {
+            releases: Mutex::new(Vec::new()),
+        }
     }
 }
 
@@ -256,7 +267,10 @@ pub fn fake_runtime(adapter_id: &str, resume: bool) -> Runtime {
         executable_path: "/usr/bin/true".to_string(),
         version: Some("1.0.0".to_string()),
         health: RuntimeHealth::Available,
-        capabilities: AdapterCapabilities { resume, ..AdapterCapabilities::default() },
+        capabilities: AdapterCapabilities {
+            resume,
+            ..AdapterCapabilities::default()
+        },
     }
 }
 

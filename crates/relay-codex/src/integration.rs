@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use relay_api::{
-    CodexAction, CodexCheck, CodexCheckId, CodexCheckStatus, CodexIntegration, CodexStatus, InstallResult,
+    CodexAction, CodexCheck, CodexCheckId, CodexCheckStatus, CodexIntegration, CodexStatus,
+    InstallResult,
 };
 use sha2::{Digest, Sha256};
 
@@ -61,7 +62,10 @@ pub fn relay_sources() -> Option<RelaySources> {
         let skill = base.join("skills/relay/SKILL.md");
         if plugin_manifest.is_file() && hooks.is_file() && skill.is_file() {
             return Some(RelaySources {
-                root: base.parent().map(Path::to_path_buf).unwrap_or_else(|| base.clone()),
+                root: base
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| base.clone()),
                 plugin_manifest,
                 hooks,
                 skill,
@@ -112,7 +116,10 @@ pub fn mcp_executable() -> PathBuf {
 }
 
 pub fn desired_mcp_command() -> McpCommand {
-    McpCommand { command: mcp_executable().display().to_string(), args: Vec::new() }
+    McpCommand {
+        command: mcp_executable().display().to_string(),
+        args: Vec::new(),
+    }
 }
 
 /// The interpreter and file an MCP entry must match to count as configured.
@@ -126,7 +133,9 @@ fn mcp_entry_file(command: &str, args: &[String]) -> Option<PathBuf> {
 /// Reads just the relay table out of `config.toml`; enough for a status check.
 pub fn read_mcp_entry(contents: &str) -> Option<(String, Vec<String>)> {
     let lines: Vec<&str> = contents.lines().collect();
-    let start = lines.iter().position(|line| line.trim() == "[mcp_servers.relay]")?;
+    let start = lines
+        .iter()
+        .position(|line| line.trim() == "[mcp_servers.relay]")?;
     let mut command: Option<String> = None;
     let mut args: Vec<String> = Vec::new();
     for line in lines.iter().skip(start + 1) {
@@ -166,14 +175,22 @@ pub fn relay_plugin_version(sources: &RelaySources) -> String {
         hasher.update(&hooks);
     }
     let digest = hasher.finalize();
-    let short: String = digest.iter().take(4).map(|byte| format!("{byte:02x}")).collect();
+    let short: String = digest
+        .iter()
+        .take(4)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     format!("{}+{}", relay_config::relay_version(), short)
 }
 
 /// Parses `codex plugin list` output for our own plugin.
 pub fn parse_installed_plugin(output: &str) -> Option<(Option<String>, Option<String>)> {
     for line in output.lines() {
-        let fields: Vec<&str> = line.split("  ").map(str::trim).filter(|field| !field.is_empty()).collect();
+        let fields: Vec<&str> = line
+            .split("  ")
+            .map(str::trim)
+            .filter(|field| !field.is_empty())
+            .collect();
         if fields.first() != Some(&format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}").as_str()) {
             continue;
         }
@@ -188,7 +205,11 @@ pub fn parse_installed_plugin(output: &str) -> Option<(Option<String>, Option<St
 /// Parses `codex plugin marketplace list` output for our marketplace's root.
 pub fn parse_marketplace_root(output: &str) -> Option<String> {
     for line in output.lines() {
-        let fields: Vec<&str> = line.split("  ").map(str::trim).filter(|field| !field.is_empty()).collect();
+        let fields: Vec<&str> = line
+            .split("  ")
+            .map(str::trim)
+            .filter(|field| !field.is_empty())
+            .collect();
         if fields.first() == Some(&MARKETPLACE_NAME) {
             return fields.get(1).map(|value| value.to_string());
         }
@@ -267,7 +288,10 @@ fn probe_relay_mcp() -> CodexCheck {
     let desired = desired_mcp_command();
     if command == desired.command && args == desired.args {
         let entry_file = mcp_entry_file(&command, &args);
-        let exists = entry_file.as_ref().map(|path| path.is_file()).unwrap_or(true);
+        let exists = entry_file
+            .as_ref()
+            .map(|path| path.is_file())
+            .unwrap_or(true);
         if exists {
             return CodexCheck {
                 id: CodexCheckId::RelayMcp,
@@ -282,7 +306,10 @@ fn probe_relay_mcp() -> CodexCheck {
             ok: false,
             status: CodexCheckStatus::Stale,
             detail: format!("已配置: {command} {}", args.join(" ")),
-            hint: Some(format!("入口不存在: {} — 运行\"修复\"", entry_file.unwrap().display())),
+            hint: Some(format!(
+                "入口不存在: {} — 运行\"修复\"",
+                entry_file.unwrap().display()
+            )),
         };
     }
     CodexCheck {
@@ -305,7 +332,10 @@ fn probe_relay_skill() -> CodexCheck {
         .join("skills")
         .join(PLUGIN_NAME)
         .join("SKILL.md");
-    let legacy = relay_config::codex_home().join("skills").join(PLUGIN_NAME).join("SKILL.md");
+    let legacy = relay_config::codex_home()
+        .join("skills")
+        .join(PLUGIN_NAME)
+        .join("SKILL.md");
     let sources = relay_sources();
 
     if legacy.is_file() && !installed.is_file() {
@@ -453,7 +483,8 @@ fn probe_relay_hooks() -> CodexCheck {
         if let Ok(source) = std::fs::read_to_string(&sources.hooks) {
             match materialised_hook_document(&source, &desired_mcp_command()) {
                 Ok(expected) => {
-                    let expected: serde_json::Value = serde_json::from_str(&expected).unwrap_or_default();
+                    let expected: serde_json::Value =
+                        serde_json::from_str(&expected).unwrap_or_default();
                     if expected != parsed {
                         return CodexCheck {
                             id: CodexCheckId::RelayHooks,
@@ -504,7 +535,8 @@ pub async fn codex_status() -> CodexStatus {
 
 /// Writes the plugin tree Relay asks Codex to install from.
 pub fn materialise_plugin() -> Result<(PathBuf, String), String> {
-    let sources = relay_sources().ok_or_else(|| "这个构建里没有 Relay 集成源文件，无法安装到 Codex".to_string())?;
+    let sources = relay_sources()
+        .ok_or_else(|| "这个构建里没有 Relay 集成源文件，无法安装到 Codex".to_string())?;
     let root = relay_config::marketplace_root();
     let plugin = root.join("plugins").join(PLUGIN_NAME);
     let version = relay_plugin_version(&sources);
@@ -528,7 +560,12 @@ pub fn materialise_plugin() -> Result<(PathBuf, String), String> {
     let description = std::fs::read_to_string(&sources.plugin_manifest)
         .ok()
         .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
-        .and_then(|value| value.get("description").and_then(|value| value.as_str()).map(str::to_string))
+        .and_then(|value| {
+            value
+                .get("description")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "Delegate bounded Codex tasks to local coding agents.".to_string());
     let manifest = serde_json::json!({
         "name": PLUGIN_NAME,
@@ -546,13 +583,22 @@ pub fn materialise_plugin() -> Result<(PathBuf, String), String> {
     });
     write_json(&plugin.join(".codex-plugin/plugin.json"), &manifest)?;
 
-    let hooks_dir = sources.hooks.parent().ok_or_else(|| "hooks 路径无效".to_string())?;
+    let hooks_dir = sources
+        .hooks
+        .parent()
+        .ok_or_else(|| "hooks 路径无效".to_string())?;
     copy_tree(hooks_dir, &plugin.join("hooks"))?;
-    let source_hooks = std::fs::read_to_string(&sources.hooks).map_err(|error| error.to_string())?;
+    let source_hooks =
+        std::fs::read_to_string(&sources.hooks).map_err(|error| error.to_string())?;
     let materialised = materialised_hook_document(&source_hooks, &desired_mcp_command())?;
-    std::fs::write(plugin.join("hooks/hooks.json"), materialised).map_err(|error| error.to_string())?;
+    std::fs::write(plugin.join("hooks/hooks.json"), materialised)
+        .map_err(|error| error.to_string())?;
 
-    let skills_dir = sources.skill.parent().and_then(|path| path.parent()).ok_or_else(|| "skill 路径无效".to_string())?;
+    let skills_dir = sources
+        .skill
+        .parent()
+        .and_then(|path| path.parent())
+        .ok_or_else(|| "skill 路径无效".to_string())?;
     copy_tree(skills_dir, &plugin.join("skills"))?;
     Ok((root, version))
 }
@@ -593,16 +639,29 @@ pub async fn install_codex() -> InstallResult {
 
     let (root, version) = match materialise_plugin() {
         Ok(value) => value,
-        Err(message) => return InstallResult { status: codex_status().await, messages: vec![message] },
+        Err(message) => {
+            return InstallResult {
+                status: codex_status().await,
+                messages: vec![message],
+            }
+        }
     };
     messages.push(format!("已生成插件 {version} → {}", root.display()));
 
     let marketplaces = codex(&executable, &["plugin", "marketplace", "list"]).await;
-    let current_root = if marketplaces.ok { parse_marketplace_root(&marketplaces.text) } else { None };
+    let current_root = if marketplaces.ok {
+        parse_marketplace_root(&marketplaces.text)
+    } else {
+        None
+    };
     let root_text = root.display().to_string();
     if let Some(current) = &current_root {
         if current != &root_text {
-            codex(&executable, &["plugin", "marketplace", "remove", MARKETPLACE_NAME]).await;
+            codex(
+                &executable,
+                &["plugin", "marketplace", "remove", MARKETPLACE_NAME],
+            )
+            .await;
             messages.push(format!("已移除指向旧路径的 marketplace: {current}"));
         }
     }
@@ -616,7 +675,11 @@ pub async fn install_codex() -> InstallResult {
     }
 
     let listed = codex(&executable, &["plugin", "list"]).await;
-    let installed = if listed.ok { parse_installed_plugin(&listed.text) } else { None };
+    let installed = if listed.ok {
+        parse_installed_plugin(&listed.text)
+    } else {
+        None
+    };
     if installed
         .as_ref()
         .and_then(|(status, _)| status.clone())
@@ -624,9 +687,25 @@ pub async fn install_codex() -> InstallResult {
         .unwrap_or(false)
     {
         // Removing first refreshes the cached copy, so a newer plugin version lands.
-        codex(&executable, &["plugin", "remove", &format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}")]).await;
+        codex(
+            &executable,
+            &[
+                "plugin",
+                "remove",
+                &format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}"),
+            ],
+        )
+        .await;
     }
-    let added = codex(&executable, &["plugin", "add", &format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}")]).await;
+    let added = codex(
+        &executable,
+        &[
+            "plugin",
+            "add",
+            &format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}"),
+        ],
+    )
+    .await;
     messages.push(if added.ok {
         "已安装 relay 插件（skill + hooks）".to_string()
     } else {
@@ -635,7 +714,9 @@ pub async fn install_codex() -> InstallResult {
 
     let desired = desired_mcp_command();
     let config_file = relay_config::codex_home().join("config.toml");
-    let entry = std::fs::read_to_string(&config_file).ok().and_then(|body| read_mcp_entry(&body));
+    let entry = std::fs::read_to_string(&config_file)
+        .ok()
+        .and_then(|body| read_mcp_entry(&body));
     let matches = entry
         .as_ref()
         .map(|(command, args)| command == &desired.command && args == &desired.args)
@@ -665,7 +746,10 @@ pub async fn install_codex() -> InstallResult {
         messages.push("已清理旧版手工复制的 skill".to_string());
     }
 
-    InstallResult { status: codex_status().await, messages }
+    InstallResult {
+        status: codex_status().await,
+        messages,
+    }
 }
 
 /// Undoes everything Relay installed into Codex.
@@ -673,13 +757,25 @@ pub async fn remove_codex() -> InstallResult {
     let mut messages: Vec<String> = Vec::new();
     match find_codex_cli().await {
         Some(executable) => {
-            let plugin = codex(&executable, &["plugin", "remove", &format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}")]).await;
+            let plugin = codex(
+                &executable,
+                &[
+                    "plugin",
+                    "remove",
+                    &format!("{PLUGIN_NAME}@{MARKETPLACE_NAME}"),
+                ],
+            )
+            .await;
             messages.push(if plugin.ok {
                 "已卸载 relay 插件".to_string()
             } else {
                 "relay 插件未安装或已卸载".to_string()
             });
-            let marketplace = codex(&executable, &["plugin", "marketplace", "remove", MARKETPLACE_NAME]).await;
+            let marketplace = codex(
+                &executable,
+                &["plugin", "marketplace", "remove", MARKETPLACE_NAME],
+            )
+            .await;
             messages.push(if marketplace.ok {
                 "已移除 relay marketplace".to_string()
             } else {
@@ -700,7 +796,10 @@ pub async fn remove_codex() -> InstallResult {
         let _ = std::fs::remove_dir_all(&legacy);
     }
     messages.push("已删除本地插件与旧 skill 副本".to_string());
-    InstallResult { status: codex_status().await, messages }
+    InstallResult {
+        status: codex_status().await,
+        messages,
+    }
 }
 
 fn truncate(value: &str, max: usize) -> String {
@@ -726,7 +825,9 @@ impl CodexIntegration for CodexIntegrationService {
     async fn run(&self, action: CodexAction) -> InstallResult {
         match action {
             CodexAction::Remove => remove_codex().await,
-            CodexAction::Install | CodexAction::Repair | CodexAction::Update => install_codex().await,
+            CodexAction::Install | CodexAction::Repair | CodexAction::Update => {
+                install_codex().await
+            }
         }
     }
 }
@@ -773,14 +874,18 @@ command = "ignored"
         let hook = &parsed["hooks"]["SessionEnd"][0]["hooks"][0];
         assert_eq!(hook["type"], "command");
         assert!(hook["command"].as_str().unwrap().contains("relay-mcp"));
-        assert!(hook["command"].as_str().unwrap().contains("--session-end-hook"));
+        assert!(hook["command"]
+            .as_str()
+            .unwrap()
+            .contains("--session-end-hook"));
         // The SessionStart hook survives untouched.
         assert!(parsed["hooks"]["SessionStart"].is_array());
     }
 
     #[test]
     fn plugin_list_output_is_parsed() {
-        let output = "relay@relay  installed, enabled  /Users/me/.relay/codex-plugin\nother@x  installed\n";
+        let output =
+            "relay@relay  installed, enabled  /Users/me/.relay/codex-plugin\nother@x  installed\n";
         let (status, source) = parse_installed_plugin(output).unwrap();
         assert_eq!(status.as_deref(), Some("installed, enabled"));
         assert_eq!(source.as_deref(), Some("/Users/me/.relay/codex-plugin"));
@@ -790,14 +895,21 @@ command = "ignored"
     #[test]
     fn marketplace_output_is_parsed() {
         let output = "relay  /Users/me/.relay/codex-plugin\n";
-        assert_eq!(parse_marketplace_root(output).as_deref(), Some("/Users/me/.relay/codex-plugin"));
+        assert_eq!(
+            parse_marketplace_root(output).as_deref(),
+            Some("/Users/me/.relay/codex-plugin")
+        );
     }
 
     #[test]
     fn the_shipped_sources_are_found_in_a_checkout() {
         let sources = relay_sources().expect("integration assets must be in the tree");
-        assert!(sources.skill.ends_with("integrations/codex/skills/relay/SKILL.md"));
-        assert!(sources.hooks.ends_with("integrations/codex/hooks/hooks.json"));
+        assert!(sources
+            .skill
+            .ends_with("integrations/codex/skills/relay/SKILL.md"));
+        assert!(sources
+            .hooks
+            .ends_with("integrations/codex/hooks/hooks.json"));
     }
 
     #[test]
@@ -815,7 +927,10 @@ command = "ignored"
         assert_eq!(status.checks.len(), 5);
         assert_eq!(status.checks[0].id, CodexCheckId::CodexCli);
         assert_eq!(status.checks[4].id, CodexCheckId::RelayHooks);
-        assert_eq!(status.configured, status.checks.iter().all(|check| check.ok));
+        assert_eq!(
+            status.configured,
+            status.checks.iter().all(|check| check.ok)
+        );
     }
 
     /// Small blocking helper so the check shape can be asserted without a runtime.

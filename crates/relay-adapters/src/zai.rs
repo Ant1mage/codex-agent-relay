@@ -7,12 +7,15 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType, Result,
-    Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType,
+    Result, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
 
 use crate::cli::{run_cli, ParsedOutput, ProcessSupervisor, StreamMode, StreamOutcome, StreamSpec};
-use crate::probe::{discover_executable, probe_runtime_options, read_help, version_of, with_selection_args, Selection};
+use crate::probe::{
+    discover_executable, probe_runtime_options, read_help, version_of, with_selection_args,
+    Selection,
+};
 
 pub const ADAPTER_ID: &str = "zai-cli";
 pub const RUNTIME_ID: &str = "runtime:zai-cli";
@@ -47,9 +50,10 @@ pub fn parse_output(output: &str) -> ParsedOutput {
     if let Some(error) = raw.get("error") {
         parsed.error_message = match error {
             serde_json::Value::String(message) => Some(message.clone()),
-            serde_json::Value::Object(object) => {
-                object.get("message").and_then(|value| value.as_str()).map(str::to_string)
-            }
+            serde_json::Value::Object(object) => object
+                .get("message")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
             _ => None,
         };
     }
@@ -120,7 +124,10 @@ impl ZaiAdapter {
     }
 
     pub fn with_executable(executable: impl Into<String>) -> Self {
-        Self { configured_executable: Some(executable.into()), ..Self::new() }
+        Self {
+            configured_executable: Some(executable.into()),
+            ..Self::new()
+        }
     }
 
     pub fn with_supervisor(mut self, supervisor: Arc<ProcessSupervisor>) -> Self {
@@ -193,7 +200,8 @@ impl AgentAdapter for ZaiAdapter {
             );
         };
         let evidence = read_help(&executable, &self.prefix_args).await;
-        let (_, options) = probe_runtime_options(self.capabilities(), &evidence, runtime_id, ADAPTER_ID);
+        let (_, options) =
+            probe_runtime_options(self.capabilities(), &evidence, runtime_id, ADAPTER_ID);
         options
     }
 
@@ -202,12 +210,18 @@ impl AgentAdapter for ZaiAdapter {
             .executable_path
             .clone()
             .or_else(|| self.executable())
-            .ok_or_else(|| RelayError::new("ADAPTER_FAILURE", "GLM / Z.ai CLI executable `zai-cli` was not found"))?;
+            .ok_or_else(|| {
+                RelayError::new(
+                    "ADAPTER_FAILURE",
+                    "GLM / Z.ai CLI executable `zai-cli` was not found",
+                )
+            })?;
         let evidence = read_help(&executable, &self.prefix_args).await;
-        let (_, options) = probe_runtime_options(self.capabilities(), &evidence, RUNTIME_ID, ADAPTER_ID);
+        let (_, options) =
+            probe_runtime_options(self.capabilities(), &evidence, RUNTIME_ID, ADAPTER_ID);
         *self.options.lock().unwrap() = Some(options.clone());
 
-        let base = vec![
+        let base = [
             self.prefix_args.clone(),
             vec![
                 "chat".to_string(),
@@ -218,7 +232,10 @@ impl AgentAdapter for ZaiAdapter {
             ],
         ]
         .concat();
-        let selection = Selection { model: input.model.clone(), reasoning: input.reasoning.clone() };
+        let selection = Selection {
+            model: input.model.clone(),
+            reasoning: input.reasoning.clone(),
+        };
         let args = with_selection_args(&base, &selection, &options);
 
         run_cli(
@@ -262,8 +279,16 @@ mod tests {
 
     #[test]
     fn nested_and_alternative_shapes_are_understood() {
-        assert_eq!(parse_output(r#"{"data":{"content":"nested"}}"#).final_text.as_deref(), Some("nested"));
-        assert_eq!(parse_output(r#"{"output":"plain"}"#).final_text.as_deref(), Some("plain"));
+        assert_eq!(
+            parse_output(r#"{"data":{"content":"nested"}}"#)
+                .final_text
+                .as_deref(),
+            Some("nested")
+        );
+        assert_eq!(
+            parse_output(r#"{"output":"plain"}"#).final_text.as_deref(),
+            Some("plain")
+        );
     }
 
     #[test]

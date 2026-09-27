@@ -35,7 +35,10 @@ impl EventStore for MemoryEventStore {
         if event.seq != expected {
             return Err(crate::domain::RelayError::new(
                 "EVENT_SEQUENCE_CONFLICT",
-                format!("Expected sequence {expected} for run {}, received {}", event.run_id, event.seq),
+                format!(
+                    "Expected sequence {expected} for run {}, received {}",
+                    event.run_id, event.seq
+                ),
             ));
         }
         events.push(event);

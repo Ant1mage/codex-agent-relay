@@ -16,7 +16,8 @@ pub mod threads;
 
 pub use cli::{codex_candidates, find_codex_cli, CodexExecutable};
 pub use integration::{
-    codex_status, desired_mcp_command, install_codex, materialise_plugin, mcp_executable, read_mcp_entry,
-    relay_plugin_version, relay_sources, remove_codex, CodexIntegrationService, McpCommand, RelaySources,
+    codex_status, desired_mcp_command, install_codex, materialise_plugin, mcp_executable,
+    read_mcp_entry, relay_plugin_version, relay_sources, remove_codex, CodexIntegrationService,
+    McpCommand, RelaySources,
 };
 pub use threads::{CodexAppServerThreadResolver, CodexThreadMetadata, CodexThreadMetadataResolver};

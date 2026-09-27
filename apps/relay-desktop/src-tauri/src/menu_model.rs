@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::i18n::{self, Translator};
 use crate::updater::UpdateState;
 
-/// Mirrors Electron's `process.platform` values, so the model stays comparable.
+/// The platform the menu model is built for, so the model stays comparable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MenuBarPlatform {
@@ -97,7 +97,7 @@ pub enum MenuBarAction {
     },
     CopyDiagnostics,
     /// Kept for parity with the TypeScript union. The menu offers
-    /// `repair-codex` for both "repair" and "install", as the Electron app did.
+    /// `repair-codex` for both "repair" and "install": the install path is idempotent.
     InstallCodex,
     Refresh,
     CheckUpdates,
@@ -597,7 +597,7 @@ pub fn build_menu_bar_items(view: &MenuBarView) -> Vec<MenuBarItem> {
     })];
     codex.extend(menu.codex.checks.iter().map(|check| {
         // The check id is the stable kebab name; `label_key()` is the same map the
-        // Electron menu kept by hand.
+        // the menu, kept by hand.
         let label = t.t(check.id.label_key());
         let status = if check.ok {
             String::new()
@@ -1194,7 +1194,7 @@ mod tests {
     }
 
     #[test]
-    fn the_update_block_matches_the_electron_menu() {
+    fn the_update_block_matches_the_documented_menu() {
         let base = view(DaemonStatus::Running, Some(empty_menu("ready")));
 
         // idle and unsupported render nothing but the check item.

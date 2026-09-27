@@ -19,7 +19,11 @@ pub struct RuntimeConfigReloader {
 
 impl RuntimeConfigReloader {
     pub fn new(controller: std::sync::Arc<RunController>, config: ConfigStore) -> Self {
-        Self { controller, config, reported: Mutex::new(BTreeSet::new()) }
+        Self {
+            controller,
+            config,
+            reported: Mutex::new(BTreeSet::new()),
+        }
     }
 
     /// Re-detects runtimes and re-reads configuration.
@@ -67,7 +71,9 @@ impl RuntimeConfigReloader {
         self.controller.runtimes.sync(runtimes);
         self.controller.profiles.sync(config.profiles);
         self.controller.policies.set_global(config.policy);
-        self.controller.policies.set_all_workspaces(config.workspace_overrides);
+        self.controller
+            .policies
+            .set_all_workspaces(config.workspace_overrides);
         Ok(())
     }
 
@@ -76,7 +82,9 @@ impl RuntimeConfigReloader {
         let loaded = self.config.read();
         self.controller.policies.clear_workspace(workspace);
         if let Some(override_policy) = loaded.workspace_overrides.get(workspace) {
-            self.controller.policies.set_workspace(workspace, *override_policy);
+            self.controller
+                .policies
+                .set_workspace(workspace, *override_policy);
         }
     }
 

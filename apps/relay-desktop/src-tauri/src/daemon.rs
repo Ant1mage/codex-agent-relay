@@ -164,7 +164,7 @@ pub fn resources_dir() -> PathBuf {
             }
         }
     }
-    // Development: the workspace `out` directory, like the Electron app used.
+    // Development: the workspace build output.
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../out")
 }
 
@@ -245,7 +245,7 @@ pub fn start_daemon() -> Result<(), String> {
     for (name, value) in &command.env {
         process.env(name, value);
     }
-    // `detached: true` in the Electron app: a new session, so the daemon keeps
+    // A new session, so the daemon keeps
     // running (and keeps the event log being written) after the tray exits.
     #[cfg(unix)]
     unsafe {

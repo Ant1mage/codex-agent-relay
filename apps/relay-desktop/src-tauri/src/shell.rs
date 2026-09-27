@@ -423,7 +423,7 @@ pub fn dispatch(app: &AppHandle, action: MenuBarAction) {
             });
         }
         // Parity with the TypeScript union: the tray never emits this, and the
-        // Electron switch had no case for it either.
+        // the switch has no case for it either.
         MenuBarAction::InstallCodex => {}
         MenuBarAction::Refresh => refresh_now(app),
         MenuBarAction::CheckUpdates => {
@@ -485,7 +485,7 @@ pub fn dispatch(app: &AppHandle, action: MenuBarAction) {
     }
 }
 
-/// Electron opened the inspector for the first session on a double click.
+/// A double click opens the inspector for the first session.
 pub fn dispatch_double_click(app: &AppHandle) {
     let session = with_state(app, |state| {
         state

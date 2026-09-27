@@ -119,7 +119,7 @@ pub fn resolve_token() -> Option<String> {
 
 /// Raw `localStorage.getItem`. `gloo-storage`'s typed helpers JSON-encode the
 /// value, which would store the token as `\"…\"` and break the `relay.token`
-/// contract the tray and the Electron build share.
+/// contract every Relay surface shares.
 pub fn get_stored(key: &str) -> Option<String> {
     window().local_storage().ok().flatten().and_then(|storage| storage.get_item(key).ok().flatten())
 }

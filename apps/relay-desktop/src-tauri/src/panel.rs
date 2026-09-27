@@ -17,7 +17,7 @@ use tauri::{
 use crate::menu_model::{PanelIntent, PanelTab};
 
 pub const PANEL_LABEL: &str = "panel";
-/// Same geometry as the Electron panel.
+/// The panel's fixed geometry: a single-column popover.
 pub const PANEL_WIDTH: f64 = 420.0;
 pub const PANEL_HEIGHT: f64 = 640.0;
 /// Gap between the tray icon and the panel, and the margin kept to the screen edge.
@@ -208,7 +208,7 @@ fn place_under_tray(app: &AppHandle, window: &WebviewWindow) {
 
 /// The front-end has no Tauri IPC — it is served by relayd and built without any
 /// npm packages — so the "already open, same daemon" navigation arrives as a DOM
-/// event carrying the same payload the Electron preload forwarded.
+/// event carrying the navigation payload.
 pub fn navigation_event_script(target: &PanelTarget) -> String {
     let mut payload = serde_json::Map::new();
     if let Some(tab) = target.tab {

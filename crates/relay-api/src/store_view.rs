@@ -8,14 +8,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 
 use relay_core::{
-    project_run, AgentProfile, EventStore, HostSessionStore, RelayEvent, RunProjection, RunStatus, Runtime,
-    RuntimeHealth,
+    project_run, AgentProfile, EventStore, HostSessionStore, RelayEvent, RunProjection, RunStatus,
+    Runtime, RuntimeHealth,
 };
 use relay_storage::{SqliteControlQueue, SqliteEventStore, SqliteHostSessionStore};
 
 use crate::contract::{
-    CodexStatus, EventBatch, InspectorSnapshot, MenuAgent, MenuBlocked, MenuSession, MenuStatus, MenuView, MenuWorker,
-    RunView, SessionView,
+    CodexStatus, EventBatch, InspectorSnapshot, MenuAgent, MenuBlocked, MenuSession, MenuStatus,
+    MenuView, MenuWorker, RunView, SessionView,
 };
 use crate::environment::Environment;
 
@@ -68,16 +68,34 @@ impl RelayStore {
 
     /// Cheap change stamp for the SSE tick.
     pub fn revision(&self) -> String {
-        let events = self.events.revision().unwrap_or_else(|_| "error".to_string());
+        let events = self
+            .events
+            .revision()
+            .unwrap_or_else(|_| "error".to_string());
         let environment = self.environment.read().unwrap();
-        format!("{}|{}|{}", events, environment.runtimes.len(), environment.profiles.len())
+        format!(
+            "{}|{}|{}",
+            events,
+            environment.runtimes.len(),
+            environment.profiles.len()
+        )
     }
 
-    fn projected(&self) -> (Vec<SessionView>, Vec<RunView>, HashMap<String, Vec<RelayEvent>>) {
+    fn projected(
+        &self,
+    ) -> (
+        Vec<SessionView>,
+        Vec<RunView>,
+        HashMap<String, Vec<RelayEvent>>,
+    ) {
         let revision = self.revision();
         if let Some(cache) = self.cache.read().unwrap().as_ref() {
             if cache.revision == revision {
-                return (cache.sessions.clone(), cache.runs.clone(), cache.events.clone());
+                return (
+                    cache.sessions.clone(),
+                    cache.runs.clone(),
+                    cache.events.clone(),
+                );
             }
         }
 
@@ -91,7 +109,11 @@ impl RelayStore {
                 continue;
             }
             if let Ok(projection) = project_run(&stored) {
-                runs.push(RunView { run: projection.run, steps: projection.steps, workers: projection.workers });
+                runs.push(RunView {
+                    run: projection.run,
+                    steps: projection.steps,
+                    workers: projection.workers,
+                });
                 events.insert(run_id, stored);
             }
         }
@@ -107,13 +129,23 @@ impl RelayStore {
                     .collect();
                 let active_workers = session_runs
                     .iter()
-                    .map(|view| view.workers.iter().filter(|worker| worker.status.is_active()).count() as u32)
+                    .map(|view| {
+                        view.workers
+                            .iter()
+                            .filter(|worker| worker.status.is_active())
+                            .count() as u32
+                    })
                     .sum();
                 let awaiting_host = session_runs
                     .iter()
                     .filter(|view| view.run.status == RunStatus::AwaitingHost)
                     .count() as u32;
-                SessionView { session, runs: session_runs, active_workers, awaiting_host }
+                SessionView {
+                    session,
+                    runs: session_runs,
+                    active_workers,
+                    awaiting_host,
+                }
             })
             .collect();
 
@@ -152,7 +184,10 @@ impl RelayStore {
             .into_iter()
             .filter(|event| event.seq > after)
             .collect();
-        EventBatch { run_id: run_id.to_string(), events }
+        EventBatch {
+            run_id: run_id.to_string(),
+            events,
+        }
     }
 
     /// Highest sequence per run, used as the SSE fan-out cursor.
@@ -205,16 +240,25 @@ impl RelayStore {
                             .iter()
                             .filter(|worker| worker.status.is_active())
                             .map(|worker| {
-                                let step = run_view.steps.iter().find(|step| step.id == worker.step_id);
+                                let step =
+                                    run_view.steps.iter().find(|step| step.id == worker.step_id);
                                 let profile = profile_name(
-                                    step.map(|step| step.profile_id.as_str()).unwrap_or(&run_view.run.profile_id),
+                                    step.map(|step| step.profile_id.as_str())
+                                        .unwrap_or(&run_view.run.profile_id),
                                 );
-                                let task =
-                                    task_preview(step.map(|step| step.task.as_str()).unwrap_or(&run_view.run.task), 48);
+                                let task = task_preview(
+                                    step.map(|step| step.task.as_str())
+                                        .unwrap_or(&run_view.run.task),
+                                    48,
+                                );
                                 MenuWorker {
                                     worker_session_id: worker.id.clone(),
                                     run_id: run_view.run.id.clone(),
-                                    label: if task.is_empty() { profile } else { format!("{profile} · {task}") },
+                                    label: if task.is_empty() {
+                                        profile
+                                    } else {
+                                        format!("{profile} · {task}")
+                                    },
                                 }
                             })
                     })
@@ -226,21 +270,33 @@ impl RelayStore {
             .profiles
             .iter()
             .map(|profile| {
-                let runtime = environment.runtimes.iter().find(|runtime| runtime.id == profile.runtime_id);
+                let runtime = environment
+                    .runtimes
+                    .iter()
+                    .find(|runtime| runtime.id == profile.runtime_id);
                 let blocked = match runtime {
                     None => Some(MenuBlocked::Missing),
-                    Some(runtime) if runtime.health == RuntimeHealth::Unavailable => Some(MenuBlocked::Missing),
+                    Some(runtime) if runtime.health == RuntimeHealth::Unavailable => {
+                        Some(MenuBlocked::Missing)
+                    }
                     Some(runtime) if runtime.health == RuntimeHealth::AuthenticationRequired => {
                         Some(MenuBlocked::Auth)
                     }
                     Some(_) if !profile.enabled => Some(MenuBlocked::Disabled),
                     _ => None,
                 };
-                MenuAgent { id: profile.id.clone(), name: profile.name.clone(), blocked }
+                MenuAgent {
+                    id: profile.id.clone(),
+                    name: profile.name.clone(),
+                    blocked,
+                }
             })
             .collect();
 
-        let running_workers = menu_sessions.iter().map(|session| session.active_workers.len() as u32).sum();
+        let running_workers = menu_sessions
+            .iter()
+            .map(|session| session.active_workers.len() as u32)
+            .sum();
         let awaiting_host = sessions.iter().map(|view| view.awaiting_host).sum();
         MenuView {
             status: menu_status(&environment.runtimes, &environment.profiles, &codex),
@@ -279,15 +335,19 @@ impl RelayStore {
 }
 
 /// Relay's environment state: a runtime that can run, and Codex wired up.
-pub fn menu_status(runtimes: &[Runtime], profiles: &[AgentProfile], codex: &CodexStatus) -> MenuStatus {
+pub fn menu_status(
+    runtimes: &[Runtime],
+    profiles: &[AgentProfile],
+    codex: &CodexStatus,
+) -> MenuStatus {
     if runtimes.is_empty() {
         return MenuStatus::NoRuntime;
     }
     let usable = profiles.iter().any(|profile| {
         profile.enabled
-            && runtimes
-                .iter()
-                .any(|runtime| runtime.id == profile.runtime_id && runtime.health == RuntimeHealth::Available)
+            && runtimes.iter().any(|runtime| {
+                runtime.id == profile.runtime_id && runtime.health == RuntimeHealth::Available
+            })
     });
     if codex.configured && usable {
         MenuStatus::Ready
@@ -325,10 +385,19 @@ mod tests {
 
     #[test]
     fn menu_status_reports_the_environment() {
-        let codex = CodexStatus { checks: Vec::new(), configured: true };
+        let codex = CodexStatus {
+            checks: Vec::new(),
+            configured: true,
+        };
         assert_eq!(menu_status(&[], &[], &codex), MenuStatus::NoRuntime);
-        assert_eq!(menu_status(&[runtime()], &[], &codex), MenuStatus::NeedsSetup);
-        assert_eq!(menu_status(&[runtime()], &[profile()], &codex), MenuStatus::Ready);
+        assert_eq!(
+            menu_status(&[runtime()], &[], &codex),
+            MenuStatus::NeedsSetup
+        );
+        assert_eq!(
+            menu_status(&[runtime()], &[profile()], &codex),
+            MenuStatus::Ready
+        );
         assert_eq!(
             menu_status(&[runtime()], &[profile()], &CodexStatus::unknown()),
             MenuStatus::NeedsSetup

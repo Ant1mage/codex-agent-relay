@@ -113,7 +113,9 @@ impl RelayEventType {
     }
 
     pub fn parse(value: &str) -> Option<Self> {
-        RelayEventType::ALL.into_iter().find(|candidate| candidate.as_str() == value)
+        RelayEventType::ALL
+            .into_iter()
+            .find(|candidate| candidate.as_str() == value)
     }
 
     /// The three events that end a worker.
@@ -182,7 +184,10 @@ mod tests {
     #[test]
     fn wire_names_are_stable() {
         assert_eq!(RelayEventType::RunCreated.as_str(), "run/created");
-        assert_eq!(RelayEventType::StepIterationStarted.as_str(), "step/iteration_started");
+        assert_eq!(
+            RelayEventType::StepIterationStarted.as_str(),
+            "step/iteration_started"
+        );
         for event in RelayEventType::ALL {
             assert_eq!(RelayEventType::parse(event.as_str()), Some(event));
         }

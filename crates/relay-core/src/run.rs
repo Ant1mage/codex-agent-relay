@@ -18,8 +18,8 @@ use uuid::Uuid;
 
 use crate::adapter::{AdapterEvent, AgentAdapter, WorkerHandle};
 use crate::domain::{
-    now, AccessMode, AgentProfile, Isolation, RelayError, Result, ResumeInput, Run, RunRequest, RunStatus,
-    RuntimeHealth, StartInput, Step, StepStatus, WorkerSession, WorkerStatus,
+    now, AccessMode, AgentProfile, Isolation, RelayError, Result, ResumeInput, Run, RunRequest,
+    RunStatus, RuntimeHealth, StartInput, Step, StepStatus, WorkerSession, WorkerStatus,
 };
 use crate::event::{bound_native_event, RelayEvent, RelayEventType};
 use crate::policy::{assert_policy_allows, normalize_path, PolicyResolver, PolicyScope};
@@ -126,7 +126,9 @@ impl RunState {
         if self.terminal.swap(true, Ordering::SeqCst) {
             return;
         }
-        let status = event_type.terminal_worker_status().unwrap_or(WorkerStatus::Failed);
+        let status = event_type
+            .terminal_worker_status()
+            .unwrap_or(WorkerStatus::Failed);
         let run_status = match status {
             WorkerStatus::Completed => RunStatus::AwaitingHost,
             WorkerStatus::Failed => RunStatus::Failed,
@@ -148,7 +150,10 @@ impl RunState {
             step.status = StepStatus::from(run_status);
             step.updated_at = stamp;
         }
-        if let Err(error) = self.append_with(event_type, data, native_event, true, true).await {
+        if let Err(error) = self
+            .append_with(event_type, data, native_event, true, true)
+            .await
+        {
             tracing::error!("failed to append terminal event: {}", error.message());
         }
         if status == WorkerStatus::Completed {
@@ -201,7 +206,14 @@ impl RunController {
         profiles: Arc<ProfileRegistry>,
         policies: Arc<PolicyResolver>,
     ) -> Self {
-        Self { events, adapters, runtimes, profiles, policies, active: Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            events,
+            adapters,
+            runtimes,
+            profiles,
+            policies,
+            active: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub fn events(&self) -> Arc<dyn EventStore> {
@@ -285,10 +297,14 @@ impl RunController {
             .values()
             .find(|state| state.worker.lock().unwrap().id == worker_session_id)
             .cloned()
-            .ok_or_else(|| RelayError::worker_not_found(&format!("Worker {worker_session_id} is not active")))?;
+            .ok_or_else(|| {
+                RelayError::worker_not_found(&format!("Worker {worker_session_id} is not active"))
+            })?;
         let native_session_id = state.native_session_id.lock().unwrap().clone();
         let Some(native_session_id) = native_session_id else {
-            return Err(RelayError::worker_not_found(&format!("Worker {worker_session_id} is starting")));
+            return Err(RelayError::worker_not_found(&format!(
+                "Worker {worker_session_id} is starting"
+            )));
         };
         state.adapter.send(&native_session_id, message).await
     }
@@ -301,7 +317,9 @@ impl RunController {
             .values()
             .find(|state| state.worker.lock().unwrap().id == worker_session_id)
             .map(|state| state.run.lock().unwrap().id.clone())
-            .ok_or_else(|| RelayError::worker_not_found(&format!("Worker {worker_session_id} is not active")))?;
+            .ok_or_else(|| {
+                RelayError::worker_not_found(&format!("Worker {worker_session_id} is not active"))
+            })?;
         self.cancel(&run_id).await
     }
 
@@ -340,7 +358,10 @@ impl RunController {
     pub async fn start(&self, request: RunRequest) -> Result<ActiveRun> {
         let profile = self.profiles.require(&request.profile_id)?;
         if !profile.enabled {
-            return Err(RelayError::new("PROFILE_DISABLED", format!("Profile {} is disabled", profile.id)));
+            return Err(RelayError::new(
+                "PROFILE_DISABLED",
+                format!("Profile {} is disabled", profile.id),
+            ));
         }
         if request.access_mode == AccessMode::Write && !profile.capabilities.write_workspace {
             return Err(RelayError::new(
@@ -356,7 +377,10 @@ impl RunController {
             ));
         }
         let adapter = self.adapters.get(&runtime.adapter_id).ok_or_else(|| {
-            RelayError::new("RUNTIME_UNAVAILABLE", format!("No adapter for {}", runtime.adapter_id))
+            RelayError::new(
+                "RUNTIME_UNAVAILABLE",
+                format!("No adapter for {}", runtime.adapter_id),
+            )
         })?;
 
         let policy = self.policies.resolve(PolicyScope {
@@ -364,7 +388,11 @@ impl RunController {
             host_session_id: Some(&request.host_session_id),
         });
         assert_policy_allows(policy, &request, &profile)?;
-        self.assert_concurrency(&request, policy.max_concurrent_runs, policy.max_concurrent_writers)?;
+        self.assert_concurrency(
+            &request,
+            policy.max_concurrent_runs,
+            policy.max_concurrent_writers,
+        )?;
         self.assert_workspace_isolation(&request, policy.require_worktree_for_parallel_writers)?;
 
         let stamp = now();
@@ -411,7 +439,13 @@ impl RunController {
 
         // The first two rows are committed before the run is observable.
         state
-            .append_with(RelayEventType::RunCreated, serde_json::json!({ "run": state.run() }), None, false, false)
+            .append_with(
+                RelayEventType::RunCreated,
+                serde_json::json!({ "run": state.run() }),
+                None,
+                false,
+                false,
+            )
             .await?;
         state
             .append_with(
@@ -435,21 +469,38 @@ impl RunController {
             step.updated_at = starting;
         }
 
-        self.active.lock().unwrap().insert(run_id.clone(), Arc::clone(&state));
-        let completion =
-            self.spawn_execute(Arc::clone(&state), profile, None, runtime.executable_path.clone());
-        Ok(ActiveRun { run_id, step_id, worker_id, completion })
+        self.active
+            .lock()
+            .unwrap()
+            .insert(run_id.clone(), Arc::clone(&state));
+        let completion = self.spawn_execute(
+            Arc::clone(&state),
+            profile,
+            None,
+            runtime.executable_path.clone(),
+        );
+        Ok(ActiveRun {
+            run_id,
+            step_id,
+            worker_id,
+            completion,
+        })
     }
 
     /// Continues the same Step after Codex review, on the original native session.
     pub async fn resume(&self, worker_session_id: &str, feedback: &str) -> Result<ActiveRun> {
         let task = feedback.trim().to_string();
         if task.is_empty() {
-            return Err(RelayError::new("INVALID_REQUEST", "Resume feedback must not be empty"));
+            return Err(RelayError::new(
+                "INVALID_REQUEST",
+                "Resume feedback must not be empty",
+            ));
         }
         let run_id = self.run_id_for_worker(worker_session_id)?;
         if self.active_state(&run_id).is_some() {
-            return Err(RelayError::invalid_state(format!("Run {run_id} is already active")));
+            return Err(RelayError::invalid_state(format!(
+                "Run {run_id} is already active"
+            )));
         }
         let events = self.events.list(&run_id)?;
         let projection = project_run(&events)?;
@@ -466,16 +517,24 @@ impl RunController {
         let previous_step = projection
             .step(&previous_worker.step_id)
             .cloned()
-            .ok_or_else(|| RelayError::invalid_state(format!("Worker {worker_session_id} has no Step")))?;
+            .ok_or_else(|| {
+                RelayError::invalid_state(format!("Worker {worker_session_id} has no Step"))
+            })?;
         let profile = self.profiles.require(&previous_step.profile_id)?;
         let runtime = self.runtimes.require(&profile.runtime_id)?;
         let adapter = self.adapters.get(&runtime.adapter_id).ok_or_else(|| {
-            RelayError::new("RUNTIME_UNAVAILABLE", format!("No adapter for {}", runtime.adapter_id))
+            RelayError::new(
+                "RUNTIME_UNAVAILABLE",
+                format!("No adapter for {}", runtime.adapter_id),
+            )
         })?;
         let unsupported = || {
             RelayError::new(
                 "OPERATION_UNSUPPORTED",
-                format!("Runtime {} cannot resume this worker; start a new Step instead", runtime.id),
+                format!(
+                    "Runtime {} cannot resume this worker; start a new Step instead",
+                    runtime.id
+                ),
             )
         };
         if !runtime.capabilities.resume {
@@ -498,7 +557,11 @@ impl RunController {
             host_session_id: Some(&request.host_session_id),
         });
         assert_policy_allows(policy, &request, &profile)?;
-        self.assert_concurrency(&request, policy.max_concurrent_runs, policy.max_concurrent_writers)?;
+        self.assert_concurrency(
+            &request,
+            policy.max_concurrent_runs,
+            policy.max_concurrent_writers,
+        )?;
         self.assert_workspace_isolation(&request, policy.require_worktree_for_parallel_writers)?;
 
         let stamp = now();
@@ -548,22 +611,42 @@ impl RunController {
             instructions: profile.instructions.clone(),
         };
 
-        self.active.lock().unwrap().insert(run_id.clone(), Arc::clone(&state));
-        let completion =
-            self.spawn_execute(Arc::clone(&state), profile, Some(resume_input), runtime.executable_path.clone());
-        Ok(ActiveRun { run_id, step_id, worker_id, completion })
+        self.active
+            .lock()
+            .unwrap()
+            .insert(run_id.clone(), Arc::clone(&state));
+        let completion = self.spawn_execute(
+            Arc::clone(&state),
+            profile,
+            Some(resume_input),
+            runtime.executable_path.clone(),
+        );
+        Ok(ActiveRun {
+            run_id,
+            step_id,
+            worker_id,
+            completion,
+        })
     }
 
     /// Cancels an active run: native process first, then the terminal event.
     pub async fn cancel(&self, run_id: &str) -> Result<()> {
         let Some(state) = self.active_state(run_id) else {
-            return Err(RelayError::new("RUN_NOT_FOUND", format!("Run {run_id} is not active")));
+            return Err(RelayError::new(
+                "RUN_NOT_FOUND",
+                format!("Run {run_id} is not active"),
+            ));
         };
         if state.is_terminal() || state.cancel_requested.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
         let worker_id = state.worker.lock().unwrap().id.clone();
-        let native_session_id = state.native_session_id.lock().unwrap().clone().unwrap_or(worker_id);
+        let native_session_id = state
+            .native_session_id
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(worker_id);
         match state.adapter.cancel(&native_session_id).await {
             Ok(()) => {
                 state
@@ -630,7 +713,12 @@ impl RunController {
         })
     }
 
-    fn assert_concurrency(&self, request: &RunRequest, max_runs: u32, max_writers: u32) -> Result<()> {
+    fn assert_concurrency(
+        &self,
+        request: &RunRequest,
+        max_runs: u32,
+        max_writers: u32,
+    ) -> Result<()> {
         let active = self.active.lock().unwrap();
         if active.len() as u32 >= max_runs {
             return Err(RelayError::new(
@@ -651,8 +739,15 @@ impl RunController {
         Ok(())
     }
 
-    fn assert_workspace_isolation(&self, request: &RunRequest, require_worktree: bool) -> Result<()> {
-        if !require_worktree || !request.access_mode.is_write() || request.isolation == Isolation::Worktree {
+    fn assert_workspace_isolation(
+        &self,
+        request: &RunRequest,
+        require_worktree: bool,
+    ) -> Result<()> {
+        if !require_worktree
+            || !request.access_mode.is_write()
+            || request.isolation == Isolation::Worktree
+        {
             return Ok(());
         }
         let workspace = normalize_path(&request.cwd);
@@ -765,7 +860,10 @@ async fn execute(
         step.updated_at = stamp;
     }
     if let Err(error) = state
-        .append(RelayEventType::WorkerStarted, serde_json::json!({ "worker": state.worker() }))
+        .append(
+            RelayEventType::WorkerStarted,
+            serde_json::json!({ "worker": state.worker() }),
+        )
         .await
     {
         tracing::error!("failed to append worker/started: {}", error.message());
@@ -775,10 +873,17 @@ async fn execute(
         if state.is_terminal() {
             break;
         }
-        let AdapterEvent { event_type, data, native_event } = event;
+        let AdapterEvent {
+            event_type,
+            data,
+            native_event,
+        } = event;
         if event_type.terminal_worker_status().is_some() {
             state.finish(event_type, data, native_event).await;
-        } else if let Err(error) = state.append_with(event_type, data, native_event, true, true).await {
+        } else if let Err(error) = state
+            .append_with(event_type, data, native_event, true, true)
+            .await
+        {
             tracing::error!("failed to append adapter event: {}", error.message());
         }
     }
@@ -837,7 +942,11 @@ mod tests {
             fake_profile("runtime:fake"),
         );
         let active = controller
-            .start(fake_request("/tmp/project", AccessMode::Write, "codex:test-session"))
+            .start(fake_request(
+                "/tmp/project",
+                AccessMode::Write,
+                "codex:test-session",
+            ))
             .await
             .unwrap();
         active.completion.await.unwrap();
@@ -879,7 +988,11 @@ mod tests {
         let controller = controller_with(adapter.clone(), fake_runtime("fake", false), profile);
 
         let active = controller
-            .start(fake_request("/tmp/project", AccessMode::ReadOnly, "codex:model-settings"))
+            .start(fake_request(
+                "/tmp/project",
+                AccessMode::ReadOnly,
+                "codex:model-settings",
+            ))
             .await
             .unwrap();
         active.completion.await.unwrap();
@@ -898,12 +1011,19 @@ mod tests {
             fake_profile("runtime:fake"),
         );
         let first = controller
-            .start(fake_request("/tmp/project", AccessMode::ReadOnly, "codex:resume-session"))
+            .start(fake_request(
+                "/tmp/project",
+                AccessMode::ReadOnly,
+                "codex:resume-session",
+            ))
             .await
             .unwrap();
         first.completion.await.unwrap();
 
-        let resumed = controller.resume(&first.worker_id, "Please verify the result.").await.unwrap();
+        let resumed = controller
+            .resume(&first.worker_id, "Please verify the result.")
+            .await
+            .unwrap();
         resumed.completion.await.unwrap();
 
         let projection = controller.get(&first.run_id).unwrap();
@@ -916,7 +1036,9 @@ mod tests {
         assert_eq!(projection.workers[1].step_id, first.step_id);
         assert_eq!(projection.workers[1].iteration, 2);
         assert_eq!(projection.workers[1].status, WorkerStatus::Completed);
-        assert!(events_of(&controller, &first.run_id).contains(&RelayEventType::StepIterationStarted));
+        assert!(
+            events_of(&controller, &first.run_id).contains(&RelayEventType::StepIterationStarted)
+        );
     }
 
     #[tokio::test]
@@ -927,30 +1049,58 @@ mod tests {
             fake_profile("runtime:fake"),
         );
         let first = controller
-            .start(fake_request("/tmp/project", AccessMode::ReadOnly, "codex:no-resume"))
+            .start(fake_request(
+                "/tmp/project",
+                AccessMode::ReadOnly,
+                "codex:no-resume",
+            ))
             .await
             .unwrap();
         first.completion.await.unwrap();
-        let error = controller.resume(&first.worker_id, "again").await.unwrap_err();
+        let error = controller
+            .resume(&first.worker_id, "again")
+            .await
+            .unwrap_err();
         assert_eq!(error.code(), "OPERATION_UNSUPPORTED");
     }
 
     #[tokio::test]
     async fn rejects_two_shared_writers_in_the_same_workspace() {
-        let mut policy = RelayPolicy::default();
-        policy.max_concurrent_writers = 2;
-        let controller = Arc::new(RunController::new(Arc::new(crate::store::MemoryEventStore::new())));
+        let policy = RelayPolicy {
+            max_concurrent_writers: 2,
+            ..RelayPolicy::default()
+        };
+        let controller = Arc::new(RunController::new(Arc::new(
+            crate::store::MemoryEventStore::new(),
+        )));
         controller.policies.set_global(policy);
-        controller.adapters.register(Arc::new(ControlledAdapter::new())).unwrap();
-        controller.runtimes.register(fake_runtime("controlled", false)).unwrap();
-        controller.profiles.register(fake_profile("runtime:controlled")).unwrap();
+        controller
+            .adapters
+            .register(Arc::new(ControlledAdapter::new()))
+            .unwrap();
+        controller
+            .runtimes
+            .register(fake_runtime("controlled", false))
+            .unwrap();
+        controller
+            .profiles
+            .register(fake_profile("runtime:controlled"))
+            .unwrap();
 
         let first = controller
-            .start(fake_request("/tmp/relay-project", AccessMode::Write, "codex:one"))
+            .start(fake_request(
+                "/tmp/relay-project",
+                AccessMode::Write,
+                "codex:one",
+            ))
             .await
             .unwrap();
         let error = controller
-            .start(fake_request("/tmp/relay-project", AccessMode::Write, "codex:two"))
+            .start(fake_request(
+                "/tmp/relay-project",
+                AccessMode::Write,
+                "codex:two",
+            ))
             .await
             .unwrap_err();
         assert_eq!(error.code(), "WORKSPACE_CONFLICT");
@@ -961,13 +1111,28 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_is_the_terminal_event() {
-        let controller = Arc::new(RunController::new(Arc::new(crate::store::MemoryEventStore::new())));
-        controller.adapters.register(Arc::new(ControlledAdapter::new())).unwrap();
-        controller.runtimes.register(fake_runtime("controlled", false)).unwrap();
-        controller.profiles.register(fake_profile("runtime:controlled")).unwrap();
+        let controller = Arc::new(RunController::new(Arc::new(
+            crate::store::MemoryEventStore::new(),
+        )));
+        controller
+            .adapters
+            .register(Arc::new(ControlledAdapter::new()))
+            .unwrap();
+        controller
+            .runtimes
+            .register(fake_runtime("controlled", false))
+            .unwrap();
+        controller
+            .profiles
+            .register(fake_profile("runtime:controlled"))
+            .unwrap();
 
         let active = controller
-            .start(fake_request("/tmp/relay-cancel", AccessMode::Write, "codex:cancel"))
+            .start(fake_request(
+                "/tmp/relay-cancel",
+                AccessMode::Write,
+                "codex:cancel",
+            ))
             .await
             .unwrap();
         // Give the supervisor a moment to publish worker/started.
@@ -998,15 +1163,24 @@ mod tests {
         controller.profiles.register(disabled).unwrap();
         let mut request = fake_request("/tmp/project", AccessMode::ReadOnly, "codex:s");
         request.profile_id = "profile:disabled".into();
-        assert_eq!(controller.start(request).await.unwrap_err().code(), "PROFILE_DISABLED");
+        assert_eq!(
+            controller.start(request).await.unwrap_err().code(),
+            "PROFILE_DISABLED"
+        );
 
         let mut read_only = fake_profile("runtime:fake");
         read_only.id = "profile:read-only".into();
-        read_only.capabilities = CapabilitySet { write_workspace: false, ..read_only.capabilities };
+        read_only.capabilities = CapabilitySet {
+            write_workspace: false,
+            ..read_only.capabilities
+        };
         controller.profiles.register(read_only).unwrap();
         let mut request = fake_request("/tmp/project", AccessMode::Write, "codex:s");
         request.profile_id = "profile:read-only".into();
-        assert_eq!(controller.start(request).await.unwrap_err().code(), "CAPABILITY_DENIED");
+        assert_eq!(
+            controller.start(request).await.unwrap_err().code(),
+            "CAPABILITY_DENIED"
+        );
     }
 
     #[tokio::test]
@@ -1017,7 +1191,11 @@ mod tests {
             fake_profile("runtime:fake"),
         );
         let active = controller
-            .start(fake_request("/tmp/project", AccessMode::ReadOnly, "codex:wait"))
+            .start(fake_request(
+                "/tmp/project",
+                AccessMode::ReadOnly,
+                "codex:wait",
+            ))
             .await
             .unwrap();
         let projection = controller.wait_for_worker(&active.worker_id).await.unwrap();

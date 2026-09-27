@@ -23,10 +23,10 @@ const ID_PREFIX: &str = "relay:";
 
 /// Builds the tray icon.
 ///
-/// Electron attached a 16 pt image plus a 32 px representation to one NSImage.
+/// The menu bar icon is one template image.
 /// Tauri's tray takes a single image and scales it to the menu bar height, so the
 /// 2× asset is the one that carries the Retina detail — it is the same
-/// `relay-icon-32.png` the Electron image carried as its 2× representation. The
+/// `relay-icon-32.png`, which carries the detail a Retina menu bar needs. The
 /// 16 pt asset is the fallback when only it is present.
 pub fn tray_image() -> Result<Image<'static>, String> {
     let mut last_error: Option<String> = None;
@@ -60,7 +60,7 @@ pub fn build(app: &AppHandle) -> Result<(), String> {
         .tooltip("Relay")
         .show_menu_on_left_click(true)
         .on_tray_icon_event(|tray, event| {
-            // Electron opened the inspector on a double click; on macOS the menu
+            // A double click opens the inspector; on macOS the menu
             // itself opens on a left click, so this only fires elsewhere.
             if let TrayIconEvent::DoubleClick { .. } = event {
                 crate::shell::dispatch_double_click(tray.app_handle());

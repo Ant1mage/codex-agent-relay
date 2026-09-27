@@ -14,8 +14,8 @@ pub mod presets;
 pub mod store;
 
 pub use paths::{
-    codex_home, config_path, database_path, marketplace_root, relay_home, relay_version, resources_dir,
-    server_info_path,
+    codex_home, config_path, database_path, marketplace_root, relay_home, relay_version,
+    resources_dir, server_info_path,
 };
 pub use presets::profile_presets;
 pub use store::{ConfigStore, RelayConfig};

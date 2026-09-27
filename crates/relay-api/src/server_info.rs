@@ -40,7 +40,12 @@ fn unknown_version() -> String {
 
 impl ServerInfo {
     pub fn inspector_url(&self, session_id: Option<&str>, run_id: Option<&str>) -> String {
-        format!("{}{}#t={}", self.url, inspector_path(session_id, run_id), self.token)
+        format!(
+            "{}{}#t={}",
+            self.url,
+            inspector_path(session_id, run_id),
+            self.token
+        )
     }
 }
 
@@ -60,7 +65,9 @@ fn encode(value: &str) -> String {
     value
         .bytes()
         .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (byte as char).to_string(),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
             other => format!("%{other:02X}"),
         })
         .collect()
@@ -69,7 +76,9 @@ fn encode(value: &str) -> String {
 pub fn read_server_info(path: &Path) -> Option<ServerInfo> {
     let contents = std::fs::read_to_string(path).ok()?;
     // A half-written or hand-edited file is treated as "no daemon".
-    serde_json::from_str::<ServerInfo>(&contents).ok().filter(|info| info.token.len() > 0 && info.port > 0)
+    serde_json::from_str::<ServerInfo>(&contents)
+        .ok()
+        .filter(|info| !info.token.is_empty() && info.port > 0)
 }
 
 pub fn write_server_info(path: &Path, info: &ServerInfo) -> std::io::Result<()> {
@@ -179,7 +188,10 @@ mod tests {
     #[test]
     fn inspector_urls_carry_the_token_in_the_fragment() {
         let info = info();
-        assert_eq!(info.inspector_url(None, None), "http://127.0.0.1:7352/#t=secret");
+        assert_eq!(
+            info.inspector_url(None, None),
+            "http://127.0.0.1:7352/#t=secret"
+        );
         assert_eq!(
             info.inspector_url(Some("codex:thread 1"), Some("run/1")),
             "http://127.0.0.1:7352/s/codex%3Athread%201/r/run%2F1#t=secret"

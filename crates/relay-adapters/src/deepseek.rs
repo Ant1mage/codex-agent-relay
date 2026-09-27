@@ -21,13 +21,14 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType, ResumeInput,
-    Result, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, RelayError, RelayEventType,
+    Result, ResumeInput, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
 
 use crate::cli::{run_cli, ParsedOutput, ProcessSupervisor, StreamMode, StreamOutcome, StreamSpec};
 use crate::probe::{
-    discover_executable, probe_runtime_options, read_help, version_of, with_selection_args, Selection,
+    discover_executable, probe_runtime_options, read_help, version_of, with_selection_args,
+    Selection,
 };
 
 pub const ADAPTER_ID: &str = "deepseek-harness";
@@ -55,11 +56,17 @@ pub fn parse_line(line: &str) -> ParsedOutput {
         ));
         return parsed;
     };
-    let event_type = object.get("type").and_then(|value| value.as_str()).unwrap_or_default();
+    let event_type = object
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
 
     match event_type {
         "session" => {
-            parsed.session_id = object.get("sessionId").and_then(|value| value.as_str()).map(str::to_string);
+            parsed.session_id = object
+                .get("sessionId")
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
         }
         "thinking" => {
             parsed.events.push(AdapterEvent::with_native(
@@ -76,15 +83,16 @@ pub fn parse_line(line: &str) -> ParsedOutput {
             ));
         }
         "status" => {
-            let reason_kind = if object.get("phase").and_then(|value| value.as_str()) == Some("turn_end") {
-                object
-                    .get("reason")
-                    .and_then(|reason| reason.get("kind"))
-                    .and_then(|kind| kind.as_str())
-                    .map(str::to_string)
-            } else {
-                None
-            };
+            let reason_kind =
+                if object.get("phase").and_then(|value| value.as_str()) == Some("turn_end") {
+                    object
+                        .get("reason")
+                        .and_then(|reason| reason.get("kind"))
+                        .and_then(|kind| kind.as_str())
+                        .map(str::to_string)
+                } else {
+                    None
+                };
             parsed.events.push(AdapterEvent::with_native(
                 RelayEventType::WorkerMessage,
                 serde_json::json!({
@@ -127,7 +135,11 @@ pub fn parse_line(line: &str) -> ParsedOutput {
             ));
         }
         "final" => {
-            let text = object.get("text").and_then(|value| value.as_str()).unwrap_or_default().to_string();
+            let text = object
+                .get("text")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
             parsed.events.push(AdapterEvent::with_native(
                 RelayEventType::WorkerMessage,
                 serde_json::json!({ "kind": "final", "text": text }),
@@ -155,11 +167,20 @@ pub fn parse_line(line: &str) -> ParsedOutput {
 
 fn tool_event_type(tool: &str) -> RelayEventType {
     let name = tool.to_lowercase();
-    if ["search", "grep", "glob", "find"].iter().any(|needle| name.contains(needle)) {
+    if ["search", "grep", "glob", "find"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
         RelayEventType::ToolSearch
-    } else if ["edit", "write", "patch", "replace", "delete", "move"].iter().any(|needle| name.contains(needle)) {
+    } else if ["edit", "write", "patch", "replace", "delete", "move"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
         RelayEventType::ToolEdit
-    } else if ["read", "view", "open", "list"].iter().any(|needle| name.contains(needle)) {
+    } else if ["read", "view", "open", "list"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
         RelayEventType::ToolRead
     } else {
         RelayEventType::ToolCommand
@@ -212,7 +233,10 @@ struct Features {
 
 impl Default for Features {
     fn default() -> Self {
-        Self { json: true, resume: true }
+        Self {
+            json: true,
+            resume: true,
+        }
     }
 }
 
@@ -244,7 +268,10 @@ impl DeepSeekAdapter {
     }
 
     pub fn with_executable(executable: impl Into<String>) -> Self {
-        Self { configured_executable: Some(executable.into()), ..Self::new() }
+        Self {
+            configured_executable: Some(executable.into()),
+            ..Self::new()
+        }
     }
 
     pub fn with_prefix_args(mut self, args: Vec<String>) -> Self {
@@ -280,7 +307,7 @@ impl DeepSeekAdapter {
                         Some((modified, path))
                     })
                     .collect();
-                candidates.sort_by(|left, right| right.0.cmp(&left.0));
+                candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
                 extra.extend(candidates.into_iter().map(|(_, path)| path));
             }
         }
@@ -295,7 +322,8 @@ impl DeepSeekAdapter {
         prefix.push("headless".to_string());
         let evidence = read_help(executable, &prefix).await;
         self.set_features(&evidence.text);
-        let (_, options) = probe_runtime_options(self.capabilities(), &evidence, RUNTIME_ID, ADAPTER_ID);
+        let (_, options) =
+            probe_runtime_options(self.capabilities(), &evidence, RUNTIME_ID, ADAPTER_ID);
         *self.options.lock().unwrap() = Some(options.clone());
         options
     }
@@ -312,24 +340,42 @@ impl DeepSeekAdapter {
     }
 
     fn selection(&self, input: &StartInput) -> Selection {
-        Selection { model: input.model.clone(), reasoning: input.reasoning.clone() }
+        Selection {
+            model: input.model.clone(),
+            reasoning: input.reasoning.clone(),
+        }
     }
 
-    async fn launch(&self, input: StartInput, resume_session_id: Option<String>) -> Result<WorkerHandle> {
+    async fn launch(
+        &self,
+        input: StartInput,
+        resume_session_id: Option<String>,
+    ) -> Result<WorkerHandle> {
         let executable = input
             .executable_path
             .clone()
             .or_else(|| self.executable())
-            .ok_or_else(|| RelayError::new("ADAPTER_FAILURE", "DeepSeek Harness executable `dsh` was not found"))?;
+            .ok_or_else(|| {
+                RelayError::new(
+                    "ADAPTER_FAILURE",
+                    "DeepSeek Harness executable `dsh` was not found",
+                )
+            })?;
         let options = self.refresh_options(&executable).await;
         let features = self.features();
 
         if !features.json {
-            return self.launch_plain(&executable, input, resume_session_id).await;
+            return self
+                .launch_plain(&executable, input, resume_session_id)
+                .await;
         }
 
         let mut args = self.prefix_args.clone();
-        args.extend(["--profile".to_string(), "headless".to_string(), "--json".to_string()]);
+        args.extend([
+            "--profile".to_string(),
+            "headless".to_string(),
+            "--json".to_string(),
+        ]);
         if let Some(session_id) = &resume_session_id {
             args.push("--session-id".to_string());
             args.push(session_id.clone());
@@ -366,9 +412,12 @@ impl DeepSeekAdapter {
                 "This DeepSeek Harness version does not support --session-id",
             ));
         }
-        let options = self.options.lock().unwrap().clone().unwrap_or_else(|| {
-            RuntimeOptions::empty(RUNTIME_ID, ADAPTER_ID, "plain mode")
-        });
+        let options = self
+            .options
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| RuntimeOptions::empty(RUNTIME_ID, ADAPTER_ID, "plain mode"));
         let mut args = self.prefix_args.clone();
         args.extend(["--profile".to_string(), "headless".to_string()]);
         if let Some(session_id) = &resume_session_id {
@@ -450,10 +499,13 @@ impl AgentAdapter for DeepSeekAdapter {
         if version.is_none() {
             diagnostics.push("DeepSeek Harness version check failed".to_string());
         } else {
-            diagnostics.push("Authentication is validated by DeepSeek Harness when a run starts".to_string());
+            diagnostics.push(
+                "Authentication is validated by DeepSeek Harness when a run starts".to_string(),
+            );
             if !capabilities.structured_events {
                 diagnostics.push(
-                    "This dsh version has no --json stream; Relay will use bounded plain-text mode".to_string(),
+                    "This dsh version has no --json stream; Relay will use bounded plain-text mode"
+                        .to_string(),
                 );
             }
         }
@@ -528,11 +580,15 @@ mod tests {
         assert_eq!(session.session_id.as_deref(), Some("session-1"));
         assert!(session.events.is_empty());
 
-        let tool = parse_line(r#"{"type":"tool_call","callId":"c1","tool":"str_replace_editor","input":{"path":"a.ts"}}"#);
+        let tool = parse_line(
+            r#"{"type":"tool_call","callId":"c1","tool":"str_replace_editor","input":{"path":"a.ts"}}"#,
+        );
         assert_eq!(tool.events[0].event_type, RelayEventType::ToolEdit);
         assert_eq!(tool.events[0].data["callId"], "c1");
 
-        let status = parse_line(r#"{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"max-tokens"}}"#);
+        let status = parse_line(
+            r#"{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"max-tokens"}}"#,
+        );
         assert_eq!(status.turn_end_kind.as_deref(), Some("max-tokens"));
         assert_eq!(status.events[0].event_type, RelayEventType::WorkerMessage);
         assert_eq!(status.events[0].data["kind"], "status");
@@ -541,7 +597,10 @@ mod tests {
     #[test]
     fn thinking_text_and_final_keep_their_meaning() {
         let thinking = parse_line(r#"{"type":"thinking","text":"consider"}"#);
-        assert_eq!(thinking.events[0].event_type, RelayEventType::WorkerReasoning);
+        assert_eq!(
+            thinking.events[0].event_type,
+            RelayEventType::WorkerReasoning
+        );
 
         let text = parse_line(r#"{"type":"text","text":"hello"}"#);
         assert_eq!(text.events[0].event_type, RelayEventType::WorkerMessage);
@@ -554,7 +613,9 @@ mod tests {
 
     #[test]
     fn tool_results_and_errors_are_kept() {
-        let result = parse_line(r#"{"type":"tool_result","callId":"c1","status":"completed","result":"ok"}"#);
+        let result = parse_line(
+            r#"{"type":"tool_result","callId":"c1","status":"completed","result":"ok"}"#,
+        );
         assert_eq!(result.events[0].event_type, RelayEventType::ToolResult);
         assert_eq!(result.events[0].data["status"], "completed");
 

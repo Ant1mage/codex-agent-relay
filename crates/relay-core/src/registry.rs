@@ -37,7 +37,10 @@ impl AdapterRegistry {
         let id = adapter.id().to_string();
         let mut items = self.items.write().unwrap();
         if items.contains_key(&id) {
-            return Err(RelayError::new("ADAPTER_CONFLICT", format!("Adapter {id} is already registered")));
+            return Err(RelayError::new(
+                "ADAPTER_CONFLICT",
+                format!("Adapter {id} is already registered"),
+            ));
         }
         items.insert(id, adapter);
         Ok(())
@@ -104,8 +107,10 @@ impl RuntimeRegistry {
 
     /// Replaces the detected set without disturbing active workers.
     pub fn sync(&self, runtimes: Vec<Runtime>) -> SyncReport {
-        let next: BTreeMap<String, Runtime> =
-            runtimes.into_iter().map(|runtime| (runtime.id.clone(), runtime)).collect();
+        let next: BTreeMap<String, Runtime> = runtimes
+            .into_iter()
+            .map(|runtime| (runtime.id.clone(), runtime))
+            .collect();
         let mut items = self.items.write().unwrap();
         let mut report = SyncReport::default();
         for (id, runtime) in next.iter() {
@@ -116,8 +121,11 @@ impl RuntimeRegistry {
             }
             items.insert(id.clone(), runtime.clone());
         }
-        let removed: Vec<String> =
-            items.keys().filter(|id| !next.contains_key(*id)).cloned().collect();
+        let removed: Vec<String> = items
+            .keys()
+            .filter(|id| !next.contains_key(*id))
+            .cloned()
+            .collect();
         for id in &removed {
             items.remove(id);
         }
@@ -174,8 +182,10 @@ impl ProfileRegistry {
     /// Replaces the registered set with what is on disk now: profiles are user
     /// configuration, so a long-running process follows edits without a restart.
     pub fn sync(&self, profiles: Vec<AgentProfile>) -> SyncReport {
-        let next: BTreeMap<String, AgentProfile> =
-            profiles.into_iter().map(|profile| (profile.id.clone(), profile)).collect();
+        let next: BTreeMap<String, AgentProfile> = profiles
+            .into_iter()
+            .map(|profile| (profile.id.clone(), profile))
+            .collect();
         let mut items = self.items.write().unwrap();
         let mut report = SyncReport::default();
         for (id, profile) in next.iter() {
@@ -186,8 +196,11 @@ impl ProfileRegistry {
             }
             items.insert(id.clone(), profile.clone());
         }
-        let removed: Vec<String> =
-            items.keys().filter(|id| !next.contains_key(*id)).cloned().collect();
+        let removed: Vec<String> = items
+            .keys()
+            .filter(|id| !next.contains_key(*id))
+            .cloned()
+            .collect();
         for id in &removed {
             items.remove(id);
         }
@@ -251,6 +264,9 @@ mod tests {
     fn duplicate_registration_is_rejected() {
         let registry = RuntimeRegistry::new();
         registry.register(runtime("a", "1")).unwrap();
-        assert_eq!(registry.register(runtime("a", "1")).unwrap_err().code(), "RUNTIME_CONFLICT");
+        assert_eq!(
+            registry.register(runtime("a", "1")).unwrap_err().code(),
+            "RUNTIME_CONFLICT"
+        );
     }
 }

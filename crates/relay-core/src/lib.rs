@@ -21,10 +21,11 @@ mod test_support;
 
 pub use adapter::{AdapterEvent, AgentAdapter, DetectionResult, WorkerHandle};
 pub use domain::{
-    now, AccessMode, AdapterCapabilities, AgentProfile, CapabilitySet, HostSession, HostSessionStatus,
-    HostSessionUpsert, Isolation, ManualRuntime, ModelOption, OptionsSource, ReasoningLevel, RelayError,
-    RelayPolicy, RelayPolicyOverride, ResumeInput, Result, Run, RunRequest, RunStatus, Runtime, RuntimeHealth,
-    RuntimeOptions, StartInput, Step, StepStatus, Timestamp, WorkerSession, WorkerStatus,
+    now, AccessMode, AdapterCapabilities, AgentProfile, CapabilitySet, HostSession,
+    HostSessionStatus, HostSessionUpsert, Isolation, ManualRuntime, ModelOption, OptionsSource,
+    ReasoningLevel, RelayError, RelayPolicy, RelayPolicyOverride, Result, ResumeInput, Run,
+    RunRequest, RunStatus, Runtime, RuntimeHealth, RuntimeOptions, StartInput, Step, StepStatus,
+    Timestamp, WorkerSession, WorkerStatus,
 };
 pub use event::{bound_native_event, RelayEvent, RelayEventType};
 pub use host_sessions::{apply_upsert, HostSessionRegistry, HostSessionStore};

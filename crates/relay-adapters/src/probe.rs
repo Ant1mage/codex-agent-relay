@@ -35,14 +35,20 @@ pub fn discover_executable(name: &str, extra: &[PathBuf]) -> Option<PathBuf> {
             }
         }
     }
-    extra.iter().find(|candidate| can_execute(candidate)).cloned()
+    extra
+        .iter()
+        .find(|candidate| can_execute(candidate))
+        .cloned()
 }
 
 /// Runs a CLI once and captures stdout+stderr. Used for `--version` and `--help`.
 pub async fn capture(executable: &str, args: &[String]) -> Option<(i32, String, String)> {
     let mut command = Command::new(executable);
     command.args(args).kill_on_drop(true);
-    let output = tokio::time::timeout(PROBE_TIMEOUT, command.output()).await.ok()?.ok()?;
+    let output = tokio::time::timeout(PROBE_TIMEOUT, command.output())
+        .await
+        .ok()?
+        .ok()?;
     Some((
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -57,7 +63,11 @@ pub async fn version_of(executable: &str, prefix_args: &[String]) -> Option<Stri
     if code != 0 {
         return None;
     }
-    let text = if stdout.trim().is_empty() { stderr } else { stdout };
+    let text = if stdout.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
     let first = text.lines().next().unwrap_or_default().trim().to_string();
     (!first.is_empty()).then_some(first)
 }
@@ -78,7 +88,10 @@ pub async fn read_help(executable: &str, prefix_args: &[String]) -> HelpEvidence
             executable_path: executable.to_string(),
         },
         // A CLI that refuses --help simply reports no options.
-        None => HelpEvidence { executable_path: executable.to_string(), text: String::new() },
+        None => HelpEvidence {
+            executable_path: executable.to_string(),
+            text: String::new(),
+        },
     }
 }
 
@@ -91,6 +104,20 @@ const REASONING_FLAG_NAMES: [&str; 4] = ["reasoning-effort", "reasoning", "think
 /// The boundary after the flag name is checked by hand: `--model` must not match
 /// `--model-name`, and the regex crate has no lookaround to express that.
 fn find_flag(text: &str, names: &[&str]) -> Option<(String, Vec<String>)> {
+    use std::sync::OnceLock;
+
+    static AFTER_COLON: OnceLock<regex::Regex> = OnceLock::new();
+    static IN_BRACKETS: OnceLock<regex::Regex> = OnceLock::new();
+    static WORD: OnceLock<regex::Regex> = OnceLock::new();
+    static PLACEHOLDER: OnceLock<regex::Regex> = OnceLock::new();
+
+    let after_colon = AFTER_COLON.get_or_init(|| regex::Regex::new(r":\s*([^\n]+)$").unwrap());
+    let in_brackets =
+        IN_BRACKETS.get_or_init(|| regex::Regex::new(r"[\[(]([^)\]]+)[)\]]").unwrap());
+    let word = WORD.get_or_init(|| regex::Regex::new(r"[A-Za-z][A-Za-z0-9_.-]*").unwrap());
+    let placeholder = PLACEHOLDER
+        .get_or_init(|| regex::Regex::new(r"[<\[](?P<name>[A-Za-z0-9_.-]+)[>\]]").unwrap());
+
     for name in names {
         let needle = format!("--{name}");
         for line in text.lines() {
@@ -100,7 +127,10 @@ fn find_flag(text: &str, names: &[&str]) -> Option<(String, Vec<String>)> {
             let after = &line[index + needle.len()..];
             let boundary = after.is_empty()
                 || after.starts_with(|character: char| {
-                    character.is_whitespace() || character == '=' || character == '<' || character == '['
+                    character.is_whitespace()
+                        || character == '='
+                        || character == '<'
+                        || character == '['
                 });
             if !boundary {
                 continue;
@@ -108,28 +138,26 @@ fn find_flag(text: &str, names: &[&str]) -> Option<(String, Vec<String>)> {
 
             let mut values: Vec<String> = Vec::new();
             // Enumeration forms a CLI might use: "a, b, c", "(a|b|c)", "[a|b]".
-            let after_colon = regex::Regex::new(r":\s*([^\n]+)$")
-                .ok()
-                .and_then(|regex| regex.captures(line))
+            let colon = after_colon
+                .captures(line)
                 .and_then(|captures| captures.get(1).map(|value| value.as_str().to_string()));
-            let in_brackets = regex::Regex::new(r"[([][^)\]]+[)\]]")
-                .ok()
-                .and_then(|regex| regex.captures(line))
+            let brackets = in_brackets
+                .captures(line)
                 .and_then(|captures| captures.get(1).map(|value| value.as_str().to_string()));
-            let word = regex::Regex::new(r"[A-Za-z][A-Za-z0-9_.-]*").unwrap();
-            for segment in [after_colon, in_brackets].into_iter().flatten() {
+            for segment in [colon, brackets].into_iter().flatten() {
                 for found in word.find_iter(&segment) {
                     values.push(found.as_str().to_string());
                 }
             }
             // A metavariable placeholder such as `<model>` is not a value.
-            let placeholder = regex::Regex::new(r"[<[](?P<name>[A-Za-z0-9_.-]+)[>\]]")
-                .ok()
-                .and_then(|regex| regex.captures(line))
-                .and_then(|captures| captures.name("name").map(|value| value.as_str().to_lowercase()));
+            let placeholder_name = placeholder.captures(line).and_then(|captures| {
+                captures
+                    .name("name")
+                    .map(|value| value.as_str().to_lowercase())
+            });
             let mut choices: Vec<String> = Vec::new();
             for value in values {
-                if Some(value.to_lowercase()) == placeholder {
+                if Some(value.to_lowercase()) == placeholder_name {
                     continue;
                 }
                 if !choices.contains(&value) {
@@ -165,7 +193,10 @@ fn parse_models(evidence: &HelpEvidence) -> (Vec<ModelOption>, Option<String>, V
     }
     let models = values
         .into_iter()
-        .map(|value| ModelOption { label: Some(value.clone()), value })
+        .map(|value| ModelOption {
+            label: Some(value.clone()),
+            value,
+        })
         .collect();
     (models, Some(flag), Vec::new())
 }
@@ -230,7 +261,10 @@ pub fn probe_runtime_options(
         OptionsSource::Default
     };
     (
-        AdapterCapabilities { model_selection: Some(model_flag.is_some()), ..declared },
+        AdapterCapabilities {
+            model_selection: Some(model_flag.is_some()),
+            ..declared
+        },
         RuntimeOptions {
             runtime_id: runtime_id.to_string(),
             adapter_id: adapter_id.to_string(),
@@ -254,7 +288,11 @@ pub struct Selection {
 ///
 /// Only flags the CLI advertised in its own `--help` are used, and only when the
 /// profile actually carries a value.
-pub fn with_selection_args(args: &[String], selection: &Selection, probed: &RuntimeOptions) -> Vec<String> {
+pub fn with_selection_args(
+    args: &[String],
+    selection: &Selection,
+    probed: &RuntimeOptions,
+) -> Vec<String> {
     let mut next = args.to_vec();
     if let (Some(model), Some(flag)) = (&selection.model, &probed.model_flag) {
         next.push(flag.clone());
@@ -272,7 +310,10 @@ mod tests {
     use super::*;
 
     fn evidence(text: &str) -> HelpEvidence {
-        HelpEvidence { text: text.to_string(), executable_path: "/usr/bin/fake".to_string() }
+        HelpEvidence {
+            text: text.to_string(),
+            executable_path: "/usr/bin/fake".to_string(),
+        }
     }
 
     #[test]
@@ -333,7 +374,10 @@ mod tests {
             source: OptionsSource::Cli,
             diagnostics: Vec::new(),
         };
-        let selection = Selection { model: Some("pro".into()), reasoning: Some("high".into()) };
+        let selection = Selection {
+            model: Some("pro".into()),
+            reasoning: Some("high".into()),
+        };
         let args = with_selection_args(&base, &selection, &options);
         assert_eq!(args, vec!["--profile", "headless", "--model", "pro"]);
     }

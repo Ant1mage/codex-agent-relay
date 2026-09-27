@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use relay_codex::CodexThreadMetadataResolver;
 use relay_core::{
-    AgentProfile, HostSession, HostSessionStore, HostSessionUpsert, Result, RunController, RunProjection,
+    AgentProfile, HostSession, HostSessionStore, HostSessionUpsert, Result, RunController,
+    RunProjection,
 };
 
 use crate::config_reloader::RuntimeConfigReloader;
@@ -109,7 +110,11 @@ impl RelayService {
             .collect())
     }
 
-    pub async fn run_agent(&self, context: &CodexInvocationContext, input: RunAgentInput) -> Result<RunAgentResult> {
+    pub async fn run_agent(
+        &self,
+        context: &CodexInvocationContext,
+        input: RunAgentInput,
+    ) -> Result<RunAgentResult> {
         let session = self.sync_session(context).await?;
         // Configuration first, then policy for this workspace, then the run.
         self.reloader.refresh().await?;
@@ -121,7 +126,9 @@ impl RelayService {
                 profile_id: input.agent_id,
                 task: input.task,
                 cwd: session.cwd.clone(),
-                access_mode: input.access_mode.unwrap_or(relay_core::AccessMode::ReadOnly),
+                access_mode: input
+                    .access_mode
+                    .unwrap_or(relay_core::AccessMode::ReadOnly),
                 isolation: input.isolation.unwrap_or_default(),
             })
             .await?;
@@ -155,7 +162,9 @@ impl RelayService {
     pub async fn resume(&self, worker_session_id: &str, feedback: &str) -> Result<ResumeResult> {
         self.reloader.refresh().await?;
         let active = self.controller.resume(worker_session_id, feedback).await?;
-        Ok(ResumeResult { run_id: active.run_id, worker_session_id: active.worker_id })
+        Ok(ResumeResult {
+            run_id: active.run_id,
+            worker_session_id: active.worker_id,
+        })
     }
-
 }

@@ -31,8 +31,13 @@ impl SqliteEventStore {
             worker_session_id: row.get("worker_session_id")?,
             seq: row.get::<_, i64>("seq")? as u64,
             timestamp: row.get("timestamp")?,
-            event_type: RelayEventType::parse(&event_type)
-                .ok_or_else(|| rusqlite::Error::InvalidColumnType(0, event_type.clone(), rusqlite::types::Type::Text))?,
+            event_type: RelayEventType::parse(&event_type).ok_or_else(|| {
+                rusqlite::Error::InvalidColumnType(
+                    0,
+                    event_type.clone(),
+                    rusqlite::types::Type::Text,
+                )
+            })?,
             data: serde_json::from_str(&data_json).unwrap_or(serde_json::Value::Null),
             native_event: native_json.and_then(|value| serde_json::from_str(&value).ok()),
         })
@@ -40,28 +45,36 @@ impl SqliteEventStore {
 
     pub fn list_run_ids(&self) -> Result<Vec<String>> {
         self.database.with(|connection| {
-            let mut statement = connection
-                .prepare("SELECT run_id FROM relay_events GROUP BY run_id ORDER BY MIN(timestamp) ASC")?;
+            let mut statement = connection.prepare(
+                "SELECT run_id FROM relay_events GROUP BY run_id ORDER BY MIN(timestamp) ASC",
+            )?;
             let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
             rows.collect()
         })
     }
 
     pub fn count_runs(&self) -> Result<u64> {
-        self.database.with(|connection| {
-            connection.query_row("SELECT COUNT(DISTINCT run_id) FROM relay_events", [], |row| {
-                row.get::<_, i64>(0)
+        self.database
+            .with(|connection| {
+                connection.query_row(
+                    "SELECT COUNT(DISTINCT run_id) FROM relay_events",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
             })
-        })
-        .map(|value| value as u64)
+            .map(|value| value as u64)
     }
 
     /// Cheap change stamp for the daemon's SSE tick.
     pub fn revision(&self) -> Result<String> {
         self.database.with(|connection| {
-            let events: i64 = connection
-                .query_row("SELECT COALESCE(MAX(rowid), 0) FROM relay_events", [], |row| row.get(0))?;
-            let sessions: i64 = connection.query_row("SELECT COUNT(*) FROM host_sessions", [], |row| row.get(0))?;
+            let events: i64 = connection.query_row(
+                "SELECT COALESCE(MAX(rowid), 0) FROM relay_events",
+                [],
+                |row| row.get(0),
+            )?;
+            let sessions: i64 =
+                connection.query_row("SELECT COUNT(*) FROM host_sessions", [], |row| row.get(0))?;
             let updated: String = connection.query_row(
                 "SELECT COALESCE(MAX(updated_at), '') FROM host_sessions",
                 [],
@@ -120,8 +133,8 @@ impl relay_core::EventStore for SqliteEventStore {
 
     fn list(&self, run_id: &str) -> Result<Vec<RelayEvent>> {
         self.database.with(|connection| {
-            let mut statement =
-                connection.prepare("SELECT * FROM relay_events WHERE run_id = ?1 ORDER BY seq ASC")?;
+            let mut statement = connection
+                .prepare("SELECT * FROM relay_events WHERE run_id = ?1 ORDER BY seq ASC")?;
             let rows = statement.query_map([run_id], SqliteEventStore::row_to_event)?;
             rows.collect()
         })

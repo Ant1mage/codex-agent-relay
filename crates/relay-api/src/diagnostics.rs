@@ -30,10 +30,23 @@ fn count_by_status(values: impl Iterator<Item = String>) -> String {
 
 pub fn build_diagnostics_report(input: &DiagnosticsInput<'_>) -> String {
     let snapshot = input.snapshot;
-    let runs: Vec<&crate::contract::RunView> = snapshot.sessions.iter().flat_map(|view| view.runs.iter()).collect();
-    let workers: Vec<&relay_core::WorkerSession> = runs.iter().flat_map(|view| view.workers.iter()).collect();
-    let active_workers = workers.iter().filter(|worker| worker.status.is_active()).count();
-    let health = count_by_status(snapshot.runtimes.iter().map(|runtime| health_name(runtime.health)));
+    let runs: Vec<&crate::contract::RunView> = snapshot
+        .sessions
+        .iter()
+        .flat_map(|view| view.runs.iter())
+        .collect();
+    let workers: Vec<&relay_core::WorkerSession> =
+        runs.iter().flat_map(|view| view.workers.iter()).collect();
+    let active_workers = workers
+        .iter()
+        .filter(|worker| worker.status.is_active())
+        .count();
+    let health = count_by_status(
+        snapshot
+            .runtimes
+            .iter()
+            .map(|runtime| health_name(runtime.health)),
+    );
 
     let mut lines: Vec<String> = vec![
         "Relay diagnostics".to_string(),
@@ -53,7 +66,11 @@ pub fn build_diagnostics_report(input: &DiagnosticsInput<'_>) -> String {
         if runs.is_empty() {
             format!("Runs: {}", runs.len())
         } else {
-            format!("Runs: {} ({})", runs.len(), count_by_status(runs.iter().map(|view| status_name(view.run.status))))
+            format!(
+                "Runs: {} ({})",
+                runs.len(),
+                count_by_status(runs.iter().map(|view| status_name(view.run.status)))
+            )
         },
         format!("Workers: {} ({active_workers} active)", workers.len()),
         if health.is_empty() {
@@ -64,7 +81,11 @@ pub fn build_diagnostics_report(input: &DiagnosticsInput<'_>) -> String {
         format!(
             "Profiles: {} ({} enabled)",
             snapshot.profiles.len(),
-            snapshot.profiles.iter().filter(|profile| profile.enabled).count()
+            snapshot
+                .profiles
+                .iter()
+                .filter(|profile| profile.enabled)
+                .count()
         ),
         String::new(),
         "Codex integration".to_string(),
@@ -107,11 +128,17 @@ pub fn build_diagnostics_report(input: &DiagnosticsInput<'_>) -> String {
 }
 
 fn status_name(status: relay_core::RunStatus) -> String {
-    serde_json::to_value(status).ok().and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default()
+    serde_json::to_value(status)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 fn health_name(health: relay_core::RuntimeHealth) -> String {
-    serde_json::to_value(health).ok().and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default()
+    serde_json::to_value(health)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

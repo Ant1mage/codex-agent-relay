@@ -147,7 +147,7 @@ pub fn resolve_locale(language: Option<&str>) -> Locale {
 
 /// The system language, as far as the desktop shell can tell.
 ///
-/// Electron asked `app.getLocale()`; the Tauri shell has no equivalent built in,
+/// The Tauri shell has no built-in locale,
 /// so the platform locale is read directly. An unknown locale falls back to `En`,
 /// which is what `resolveLocale(undefined)` did.
 pub fn system_locale() -> Locale {
