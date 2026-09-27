@@ -1,0 +1,22 @@
+[package]
+name = "relay-adapters"
+description = "Runtime adapters: DeepSeek Harness, Kimi, Z.ai, Antigravity."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+relay-core.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+libc.workspace = true
+regex.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process"] }
