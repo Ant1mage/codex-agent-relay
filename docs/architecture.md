@@ -20,33 +20,50 @@ architecture — not a plan, and not a change history.
 for Codex, a Run for Relay, possibly several internal children for the CLI. Relay
 does not merge these levels.
 
-## 2. Processes and ownership
+## 2. Crates and processes
+
+```text
+crates/
+├─ relay-core/        domain, events, projection, policy, run lifecycle, adapter trait
+├─ relay-adapters/    DeepSeek Harness, Kimi, Z.ai, Antigravity (+ shared CLI plumbing)
+├─ relay-storage/     SQLite: event log, host sessions, control queue
+├─ relay-config/      config.toml: agent profiles, policy, manual runtimes
+├─ relay-api/         wire contract + the daemon's HTTP/SSE surface + projections
+└─ relay-codex/       Codex thread identity and the plugin/MCP integration lifecycle
+
+apps/
+├─ relayd/            the daemon (composition root)
+├─ relay-mcp/         the MCP server Codex starts over stdio
+└─ relay-desktop/     Tauri 2 shell (src-tauri) + Leptos UI (ui)
+```
+
+`relay-core` is the stable part. It understands Relay's own domain only —
+Runtime, AgentProfile, Run, Step, WorkerSession, Capability, Policy, AccessMode,
+Isolation, RelayEvent, RunProjection — and knows nothing about Tauri, the Codex
+plugin layout, MCP tool names, SQL, DeepSeek flags or HTTP routes. Changing any
+of those does not change Core.
 
 | Process | Role | Owns | Must not |
 | --- | --- | --- | --- |
-| `relay-mcp` | stdio MCP server started by Codex | Execution: RunController, worker processes, event writes, the SQLite schema | Render UI, own configuration (it re-reads config on every call) |
-| `relayd` | Local daemon on `127.0.0.1` (default port 7352) | Configuration files (single writer), runtime scan, Codex integration lifecycle, read-only projection and SSE, control queue, static hosting (inspector and control panel), diagnostics | Create schema, start or retry workers, parse native stdout |
-| `menu-bar` | macOS menu bar app (Electron tray + panel window) | Status, quick actions, configuration forms, opening the inspector, daemon start/stop, app updates | Touch the database or configuration files directly, derive state |
-| `web` | Inspector page served by `relayd` | Sessions, runs, console, changes, cancel, copy diagnostics | Write configuration or events |
+| `relay-mcp` | stdio MCP server started by Codex | Execution: RunController, worker processes, event writes, the SQLite schema | Render UI, own configuration (it re-reads the config file on every call) |
+| `relayd` | Local daemon on `127.0.0.1` (default port 7352) | Configuration file (single writer), runtime scan, Codex integration lifecycle, read-only projection and SSE, control queue, static hosting (inspector and control panel), diagnostics | Create schema, start or retry workers, parse native stdout |
+| `relay-desktop` | Tauri menu bar app | Status, quick actions, panel and inspector windows, daemon start/stop, app updates, launch at login | Touch the database or the configuration file directly, derive state |
+| UI (WASM) | Inspector and control panel served by `relayd` | Sessions, runs, console, changes, cancel, configuration forms, diagnostics | Write events, derive state |
 
-The daemon and the menu bar hold no execution state, so either can restart at any
-time: running delegations continue inside `relay-mcp`, and pages resync from the
-event log.
+The daemon and the desktop shell hold no execution state, so either can restart
+at any time: running delegations continue inside `relay-mcp`, and pages resync
+from the event log.
 
 Ownership rules that matter in practice:
 
-- **The MCP process is the only writer of runs, workers and events, and the only
-  owner of the schema.** `relayd` reads; a `CREATE TABLE IF NOT EXISTS` on the
-  daemon side would break the version-gated migration in `@relay/core`. Until the
-  MCP has opened the store, the daemon reports an empty projection and answers
-  cancellation with `accepted: false`.
-- **`relayd` is the only writer of configuration.** The panel edits what the
-  daemon serves; the MCP re-reads the files on every `list_agents` / `run_agent`.
-- **Cancellation crosses processes through a control queue in SQLite.** The daemon
-  appends a command, the MCP claims it within ~250 ms and applies it to the worker
-  process it owns.
-- **Workers are children of the MCP process.** A worker that outlives its owner is
-  projected as `orphaned` instead of appearing to run forever.
+- **The MCP process is the only writer of runs, workers and events.** `relayd`
+  reads; it never creates a run.
+- **`relayd` is the only writer of `config.toml`.** The panel edits what the
+  daemon serves; the MCP process re-reads the file on every `list_agents` /
+  `run_agent`.
+- **Cancellation crosses processes through a queue in SQLite.** The daemon
+  appends a `cancel-worker` command, the MCP process claims it within ~250 ms and
+  applies it to the worker process it owns.
 
 ## 3. Delegation path
 
@@ -64,8 +81,8 @@ Relay Core (inside relay-mcp)
 Runtime adapter  →  native CLI process (dsh …)
 ```
 
-`relayd` projects the same event log for the menu bar and the inspector. Neither
-surface talks to a worker directly.
+`relayd` projects the same event log for the menu bar, the panel and the
+inspector. Neither surface talks to a worker directly.
 
 ## 4. Host adapter (Codex)
 
@@ -73,77 +90,77 @@ Relay attaches to Codex through two channels, and keeps them separate:
 
 - **Hooks supply identity.** A `SessionStart` hook calls `sync_session` with the
   Codex thread id; Relay resolves the real thread name and cwd from the local
-  Codex app-server and registers a HostSession. `SessionEnd` ends it. Relay never
-  invents a session name.
+  Codex app-server and registers a HostSession. `SessionEnd` runs the MCP binary
+  in one-shot cleanup mode. Relay never invents a session name.
 - **MCP supplies control.** The tool surface stays generic and stable —
   `list_agents`, `run_agent`, `get_agent_status`, `wait_agent`, `send_agent`,
-  `cancel_agent`, `accept_agent`, `resume_agent` — instead of one tool per
-  profile, so adding a runtime never changes what Codex sees.
+  `cancel_agent`, `accept_agent`, `resume_agent`, `sync_session`, `end_session` —
+  so adding a runtime never changes what Codex sees.
 
 Worker completion does not complete a task: a finished worker moves its Run to
 `awaiting_host`, and only `accept_agent` after a Codex review closes it.
-
-See [codex-integration.md](codex-integration.md) for installation, checks and the
-full lifecycle.
 
 ## 5. Relay Core
 
 | Piece | Responsibility |
 | --- | --- |
-| `AdapterRegistry` | Registered runtime adapters; unregistering disposes them |
-| `RuntimeRegistry` | Runtimes found on this machine plus hand-registered ones |
-| `ProfileRegistry` | The Agent Profiles exposed to Codex; enabled flag is enforced server-side |
+| `AdapterRegistry` | Registered runtime adapters |
+| `RuntimeRegistry` | Runtimes found on this machine plus hand-registered ones; `sync` replaces the set without disturbing active workers |
+| `ProfileRegistry` | The Agent Profiles exposed to Codex; the enabled flag is enforced server-side |
 | `PolicyResolver` | Resolves the effective policy for a workspace / session and rejects requests the policy forbids |
 | `RunController` | Starts workers, enforces concurrency and isolation, maps adapter events into the event log, handles cancel / resume / accept |
-| `projectRun` | Pure projection: events in, current Run / Step / WorkerSession state out |
-| Event store | `SqliteEventStore` (durable) and `MemoryEventStore` (tests); both append-only |
+| `project_run` | Pure projection: events in, current Run / Step / WorkerSession state out |
+| `EventStore` | `SqliteEventStore` (durable) and `MemoryEventStore` (tests); both append-only |
 
 Core contains no provider branches: everything runtime-specific lives behind the
-adapter contract in section 6.
+adapter trait in section 6.
 
 ## 6. Runtime adapters
 
-An adapter is the only place that knows a specific CLI:
-
-```ts
-interface AgentAdapter {
-  detect(): Promise<DetectionResult>
-  capabilities(): AdapterCapabilities
-  start(input: StartInput): Promise<WorkerSessionHandle>
-  send?(sessionId: string, message: string): Promise<void>
-  cancel(sessionId: string): Promise<void>
-  resume?(sessionId: string, input: ResumeInput): Promise<WorkerSessionHandle>
+```rust
+#[async_trait]
+trait AgentAdapter {
+    fn id(&self) -> &str;
+    fn capabilities(&self) -> AdapterCapabilities;
+    async fn detect(&self) -> DetectionResult;
+    async fn report_options(&self, runtime_id: &str) -> RuntimeOptions;
+    async fn start(&self, input: StartInput) -> Result<WorkerHandle>;
+    async fn resume(&self, input: ResumeInput) -> Result<WorkerHandle>;
+    async fn send(&self, native_session_id: &str, message: &str) -> Result<()>;
+    async fn cancel(&self, native_session_id: &str) -> Result<()>;
+    async fn dispose(&self);
 }
 ```
 
 An adapter discovers the executable and its version, reports capabilities
-(`nonInteractive`, structured stream, `resume`, `send`, `cancel`,
-`childSessions`), turns a normalized StartInput into native arguments and stdin,
-normalizes native events into `RelayEvent`, and keeps the native session id. It
-does not choose profiles, decide permissions, decompose tasks or retry them.
+(`nonInteractive`, structured stream, `resume`, `send`, `cancel`, `childSessions`,
+`modelSelection`), turns a normalized `StartInput` into native arguments and
+stdin, normalizes native events into `AdapterEvent`s, and keeps the native
+session id. It does not choose profiles, decide permissions, decompose tasks or
+retry them.
 
 Capabilities are declared, not assumed: Relay only offers `send_agent` or
 `resume_agent` when the adapter reports that the CLI supports it, and every
 mapped event keeps the original native payload.
 
 **Runtime ≠ Agent Profile.** A runtime is a CLI on this machine; a profile is a
-user-facing capability on top of it. One runtime can back several profiles with
-different capabilities (`deepseek-code`, `deepseek-research`).
+user-facing capability on top of it. One runtime can back several profiles.
+Detection only *finds* runtimes — it never creates a profile. The control panel
+offers coding and research presets as templates the user applies.
 
 ## 7. Configuration and policy
 
-Configuration is a file contract shared by both processes
-(`@relay/config`), stored under `~/.relay` (override with `RELAY_HOME`):
+Configuration is a TOML file shared by both processes, stored under `~/.relay`
+(override with `RELAY_HOME`):
 
-| File | Contents |
+| Path | Contents |
 | --- | --- |
-| `profiles.json` | Agent Profiles: runtime, description, instructions, capabilities, enabled |
-| `settings.json` | Global policy plus per-workspace overrides |
-| `runtimes.json` | Runtimes registered by hand, merged with detected ones |
-| `relay.sqlite` | Event log and control queue |
+| `config.toml` | Agent Profiles, global policy, per-workspace overrides, hand-registered runtimes |
+| `relay.sqlite` | Event log, host sessions, control queue |
+| `server.json` | How to reach a running daemon (pid, port, token, nonce), mode 0600 |
 
-Writes are atomic (temp file + rename). Unparseable files are reported as
-warnings and never silently overwritten — Relay keeps running on defaults, and
+Writes are atomic (temp file + rename). A file that fails to parse is reported as
+a warning and never silently overwritten — Relay keeps running on defaults, and
 the panel says so.
 
 Policy resolves global → workspace → session, most specific wins. It covers
@@ -157,15 +174,16 @@ The event log is the single source of truth. Current state, history, the
 inspector and the menu bar are all projections of it — nothing keeps a second
 copy of "progress" or "last message".
 
-- Append-only rows in `relay_events`, ordered per Run by `seq`.
+- Append-only rows in `relay_events`, ordered per Run by `seq`; the store rejects
+  a gap.
 - Each row keeps the normalized event and, when available, the original native
-  event.
-- The schema is created by version-gated migrations (`PRAGMA user_version`) that
-  run in the MCP process only.
-- SQLite is accessed through Node's built-in driver (`node:sqlite`), so the
-  bundled MCP server needs no native addon.
+  event (bounded to 128 KiB).
+- The schema is created by a version gate in `PRAGMA user_version`. Version 1 is
+  the Rust baseline; a database written by an earlier implementation is reset
+  rather than migrated, because Relay's old development data is not something a
+  user keeps.
 - The daemon pushes projections over SSE with a per-run sequence cursor; clients
-  deduplicate by `seq`, so "connect first, backfill history" neither duplicates
+  de-duplicate by `seq`, so "connect first, backfill history" neither duplicates
   nor drops events.
 
 ## 9. Data model
@@ -180,37 +198,41 @@ HostSession          one Codex session (thread), never a directory
 
 `HostSession` ids are derived from the host (`codex:<thread-id>`) and its display
 name always comes from Codex. Child agents created inside a native runtime are
-recorded as native metadata, not promoted into Relay's own hierarchy.
+recorded as native metadata (`child/started`, `child/completed`), not promoted
+into Relay's own hierarchy.
 
 ## 10. Surfaces
 
-- **Menu bar** — configuration and runtime control: status, active delegations
-  with cancel, profiles, policy, runtimes, Codex integration, app updates.
-- **Web inspector** — observation: sessions, runs, console of observable actions,
+- **Menu bar** — configuration and runtime control, active delegations with
+  cancel, profiles, policy, runtimes, Codex integration, app updates.
+- **Inspector** — observation: sessions, runs, console of observable actions,
   file changes, raw events, cancellation.
+- **Control panel** — configuration: agents, runtimes, policy, Codex
+  integration, status and diagnostics.
 
-Both read the same projection; neither is required for a delegation to run.
+Both windows load the daemon's own URLs over HTTP, so the same pages work in a
+browser, and the UI never touches SQLite.
 
 ## 11. Security boundaries
 
 - The daemon binds `127.0.0.1` only and never exposes a remote interface.
-- Requests must present a per-start random token; the host must be loopback and
+- Requests must present a per-start random token; the `Host` must be loopback and
   a request's `Origin`, when present, must match (DNS-rebinding and
   cross-site-read protection).
 - `server.json` (pid, port, token, nonce, 0600) identifies a running daemon;
   liveness is verified by nonce, never by PID. Restarts only ever signal a
   verified daemon.
-- The DeepSeek adapter writes the delegated task to the worker's stdin, so it
-  does not appear in the process list.
+- Launch-at-login, the updater and clipboard access are the desktop shell's only
+  privileged operations.
 - No accounts, no telemetry, no remote sync: everything stays in `~/.relay`.
 
 ## 12. Adding a runtime
 
-1. Implement `AgentAdapter` for the CLI and register it in the runtime
-   environment used by both the daemon scan and the MCP process.
-2. Declare capabilities honestly — Relay degrades (no `send`, no `resume`) instead
-   of pretending.
+1. Implement `AgentAdapter` for the CLI in `crates/relay-adapters` and add it to
+   `adapters()`.
+2. Declare capabilities honestly — Relay degrades (no `send`, no `resume`)
+   instead of pretending.
 3. Add parser fixtures for the native event stream; keep the native payload.
-4. Ship default profiles if the runtime deserves them.
+4. Ship a profile preset if the runtime deserves one.
 5. Only then mark it supported: an adapter that compiles but has no end-to-end
    verification stays "Planned" in the README.

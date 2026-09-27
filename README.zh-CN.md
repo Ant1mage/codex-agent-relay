@@ -1,4 +1,4 @@
-# Relay
+# Relay — 面向 OpenAI Codex 的外部 Agent 运行时
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
@@ -6,106 +6,90 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Codex 决定委派什么，Relay 决定它怎么运行。**
+**Codex 决定委派什么，Relay 负责怎么运行。**
 
-Relay 是 Codex 的本地运行时与控制面。Codex 把一个边界清晰的任务委派给外部
-Coding Agent；Relay 负责解析运行时、落实策略、启动并监管 worker 进程，再把结果
-回传到同一条 Codex 会话。你始终留在 Codex 里，不用在多个 CLI 之间手工搬运任务。
+Relay 是 Codex 的本地运行时与控制平面。Codex 把一个有边界的任务交给外部编码
+Agent，Relay 负责解析运行时、执行策略、启动并监管 worker 进程，并把结果送回同
+一个 Codex 会话。
 
-Relay 不是另一个 AI IDE：它没有编辑器、没有聊天窗口，也没有自己的 Agent Loop。
-规划、验收与编排始终属于 Codex。
+Relay 不是另一个 AI IDE：没有编辑器、没有聊天窗口、没有自己的 agent loop。
+规划、审查与编排始终留在 Codex。
+
+## 技术栈
+
+| 层 | 实现 |
+| --- | --- |
+| Desktop | Tauri 2（Rust），仅菜单栏 |
+| UI | Leptos + Trunk → WebAssembly |
+| Relay Core | Rust（`crates/relay-core`） |
+| 守护进程（`relayd`） | Rust + Axum（HTTP/SSE） |
+| MCP server（`relay-mcp`） | Rust + rmcp（stdio） |
+| 存储 | SQLite（`rusqlite`） |
+| 配置 | TOML（`~/.relay/config.toml`） |
+| Worker 运行时 | 外部 CLI，独立进程 |
+
+整个仓库不含 Node.js、Electron、Chromium、npm 或 Vite —— 运行时和构建时都没有。
 
 ## 当前 MVP
 
-当前唯一完成端到端验证的组合是 **macOS + Codex + DeepSeek**：
+已验证的端到端链路是 **macOS + Codex + DeepSeek**：
 
 | | |
 | --- | --- |
 | 平台 | macOS，Apple silicon |
 | Host | Codex（CLI 或 IDE 扩展） |
-| Worker 运行时 | DeepSeek Harness（`dsh`），已安装并完成认证 |
+| Worker 运行时 | DeepSeek Harness（`dsh`），已安装并已登录 |
 
-其他运行时的 Adapter 代码已在仓库中，但尚未完成端到端验证，见
-[支持的运行时](#支持的运行时)。
+Kimi、Z.ai、Antigravity 的 adapter 已在仓库中并有解析 fixture，但尚未端到端验证。
 
-## 功能
+## 构建与运行
 
-- **从 Codex 委派** —— 一个 `$relay` skill 加一个本地 MCP server；不用复制任务，
-  也不用额外开终端。
-- **运行时探测** —— 发现本机已安装的 CLI 及其版本与健康状态，模型 / reasoning
-  选项只列出 CLI 自己报告的值。
-- **Agent Profile** —— 把运行时、能力与 instructions 绑定一次
-  （`deepseek-code`、`deepseek-research`……），之后在 Codex 里反复使用。
-- **策略** —— access mode（`read_only` / `propose` / `write`）、全局与按
-  workspace 的限制、run 与 writer 的并发上限、并行 writer 的 worktree 隔离。
-- **生命周期** —— 一次委派是一条 Run，包含若干 Step 与 iteration；支持取消、
-  继续，并以 `awaiting_host` 把结果交回 Codex 验收。
-- **可观测性** —— append-only 本地事件日志、菜单栏实时状态，以及只读的 Web
-  Inspector（会话、Run、Console 输出与文件改动）。
-- **本地优先** —— 只绑定回环地址，没有账号体系，没有遥测；所有状态都在
-  `~/.relay`。
+需要：macOS Apple silicon、Rust stable，以及用于 UI 的
+[Trunk](https://trunkrs.dev)。
+
+```bash
+cargo build --workspace                 # core、daemon、MCP server、desktop
+cargo test --workspace                  # 单元测试 + 委派端到端测试
+cargo install trunk --locked
+(cd apps/relay-desktop/ui && trunk build --release)
+
+cargo run -p relayd                     # 只启动 daemon（127.0.0.1:7352）
+(cd apps/relay-desktop && cargo tauri dev)   # 菜单栏应用（自行启动 relayd）
+```
+
+`cargo tauri build` 产出 `Relay.app` 与 DMG。签名、公证等完整说明见
+[docs/development.md](docs/development.md)。
 
 ## 快速开始
 
-环境要求：Apple silicon 上的 macOS、[Codex](https://github.com/openai/codex)，
-以及已安装并完成认证的 DeepSeek CLI（`dsh`）。
-
-**1. 安装并运行 Relay**
-
-从 [Releases](https://github.com/Ant1mage/relay/releases) 下载
-`Relay-<version>-arm64.dmg`，或者直接构建：
-
-```bash
-pnpm install
-pnpm pack:mac      # → dist/Relay-<version>-arm64.dmg
-```
-
-Relay 是菜单栏应用：启动一次后图标常驻菜单栏，本地 daemon 在后台运行。
-
-**2. 让 Relay 发现 DeepSeek**
-
-```bash
-dsh --version
-```
-
-菜单栏 → **运行时** 会显示探测到的 DeepSeek 运行时、可执行文件、版本与健康状态。
-如果 `dsh` 装在非常规位置，可以在同一页手动登记可执行文件。
-
-**3. 配置一个 DeepSeek Agent**
-
-菜单栏 → **打开配置面板…**（⌘,）→ **智能体** → 新建 Profile：选择 DeepSeek
-运行时，选择 CLI 报告的 model 与 reasoning 取值，设置 capabilities 与可选的
-instructions，然后启用。
-
-**4. 安装 Codex 集成**
-
-配置面板 → **Codex 集成** → **安装**。Relay 会生成一个本地插件（skill + hooks）
-并把 `relay` MCP server 注册到 Codex；五项检查应当全部变绿。若有检查未通过，见
-[docs/codex-integration.md](docs/codex-integration.md)。
-
-**5. 在 Codex 里使用**
+1. **启动 Relay**：菜单栏出现图标，daemon 在其后运行。`relayd` 会打印带一次性
+   token 的 inspector 地址。
+2. **检查 Runtimes**：菜单栏 → Runtimes。检测只负责*发现* CLI，不会替你创建
+   agent。若 `dsh` 不在常见位置，可在同一页手动登记可执行文件。
+3. **创建 Agent**：控制面板 → Agents → New agent。选择 runtime、选择 CLI 自己
+   公布的模型与推理档位、设置能力，然后保存。
+4. **安装到 Codex**：控制面板 → Codex → Install。Relay 会生成本地插件
+   marketplace，把 `relay` MCP server 指向自己的 Rust 二进制，并显示五项检查。
+5. **在 Codex 中委派**。
 
 ```text
-$relay use DeepSeek to review the current implementation and report potential issues.
+$relay 用 DeepSeek 审查当前实现并报告潜在问题。
 ```
 
-Codex 继续负责规划与验收；Relay 按策略运行 worker，并把结果回传到会话里。
-
-## 工作原理
+## 工作方式
 
 ```text
-Codex  ──  $relay / MCP  ──►  Relay Core  ──►  Runtime adapter  ──►  dsh (DeepSeek CLI)
-  ▲                                │                                     │
-  └────  结果、改动、状态 ─────────┘◄────────────────────────────────────┘
+Codex ──$relay / MCP──► relay-mcp ──► RunController ──► adapter ──► dsh
+  ▲                          │                                       │
+  └──── result.summary ──────┘◄──────── Relay 事件流 ◄───────────────┘
 
-菜单栏          ──►  配置与运行时控制
-Web Inspector  ◄──  执行状态、事件、日志
+relayd     ──► 配置、运行时扫描、Codex 集成、HTTP/SSE
+菜单栏      ──► 状态、快捷操作、配置
+inspector  ◄── 执行状态、事件、日志
 ```
 
-Codex 拥有规划与编排；Relay 拥有运行时执行、策略、生命周期与可观测性。每次委派
-都是一条 Run，包含 Step 与 WorkerSession，所有可观察动作都会追加到本地事件日志，
-菜单栏与 Inspector 都从这份日志读取。原厂 CLI 保留自己的 Agent Loop，Relay 不会
-再实现一套。
+Relay 负责运行时执行、策略、生命周期与可观测性；Codex 负责规划与审查。原生 CLI
+保留自己的 agent loop，Relay 不会重新实现一个。
 
 完整架构见 [docs/architecture.md](docs/architecture.md)。
 
@@ -113,36 +97,20 @@ Codex 拥有规划与编排；Relay 拥有运行时执行、策略、生命周�
 
 | 运行时 | CLI | Adapter | 状态 |
 | --- | --- | --- | --- |
-| DeepSeek Harness | `dsh` | `@relay/adapter-deepseek` | **已支持 / MVP** |
-| Kimi Code | `kimi` | `@relay/adapter-kimi` | Planned |
-| Antigravity CLI | `agy` | `@relay/adapter-antigravity` | Planned |
-| Grok Build | `grok` | — | Planned |
-| Z.ai / GLM | `zai-cli` | `@relay/adapter-zai` | Planned |
+| DeepSeek Harness | `dsh` | `deepseek-harness` | **支持 / MVP** |
+| Kimi Code | `kimi` | `kimi-code` | 计划中 |
+| Antigravity CLI | `agy` | `antigravity-cli` | 计划中 |
+| Z.ai / GLM | `zai-cli` | `zai-cli` | 计划中 |
 
-只有 DeepSeek 完成了端到端验证。Kimi、Antigravity、Z.ai 的 Adapter 具备探测、
-编译与 parser fixture 测试，但不属于当前 MVP 的支持范围；Grok Build 尚无
-Adapter。Antigravity CLI 已取代 Gemini CLI，因此 Google 只列最新的一个。
-
-## 开发
-
-需要 Node.js 24 与 pnpm 10。
-
-```bash
-pnpm install
-pnpm typecheck
-pnpm test
-pnpm build
-```
-
-`pnpm dev` 会启动一个开发会话（daemon + 菜单栏）；加 `--web` 会同时启动
-Inspector 的开发服务器。
+不同 `dsh` 版本暴露的能力不同：带 `--json` 流的版本走结构化模式，不带的走有界的
+纯文本模式。Relay 会如实报告检测到的能力，而不是假设。
 
 ## 文档
 
-- [docs/architecture.md](docs/architecture.md) —— 进程、职责边界、数据模型与事件。
-- [docs/codex-integration.md](docs/codex-integration.md) —— Relay 装进 Codex 的
-  内容、会话生命周期、修复与排查。
+- [docs/architecture.md](docs/architecture.md) — crate、进程、数据模型、事件。
+- [docs/codex-integration.md](docs/codex-integration.md) — Relay 向 Codex 安装什么、检查与修复。
+- [docs/development.md](docs/development.md) — 构建、测试、发布、签名。
 
-## 许可证
+## 许可
 
 基于 [MIT License](LICENSE) 发布。

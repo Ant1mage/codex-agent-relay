@@ -5,43 +5,62 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          version: 10.32.1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin, wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Build
+        run: cargo build --workspace
+      - name: UI (Leptos → WASM)
+        run: cargo check --target wasm32-unknown-unknown
+        working-directory: apps/relay-desktop/ui
 
   package-macos:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          version: 10.32.1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm pack:mac
+          toolchain: stable
+          targets: aarch64-apple-darwin, wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Trunk
+        run: cargo install trunk --locked
+      - name: Build the UI
+        run: trunk build --release
+        working-directory: apps/relay-desktop/ui
+      - name: Build the sidecars
+        run: |
+          cargo build --release -p relayd -p relay-mcp
+          mkdir -p apps/relay-desktop/src-tauri/binaries
+          cp target/release/relayd apps/relay-desktop/src-tauri/binaries/relayd-aarch64-apple-darwin
+          cp target/release/relay-mcp apps/relay-desktop/src-tauri/binaries/relay-mcp-aarch64-apple-darwin
+      - name: Build the app
+        run: cargo tauri build --target aarch64-apple-darwin
+        working-directory: apps/relay-desktop
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - run: pnpm verify:release
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: Relay-macOS-arm64
           path: |
-            dist/Relay-*-arm64.zip
-            dist/Relay-*-arm64.dmg
-            dist/latest-mac.yml
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/macos/*.app.tar.gz
+            target/release/bundle/macos/*.app.tar.gz.sig

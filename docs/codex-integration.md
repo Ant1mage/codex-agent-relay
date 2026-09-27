@@ -5,20 +5,24 @@ Installing is a lifecycle with checks, not a one-time file copy: the same code
 path handles install, repair, update and removal, and every step is idempotent
 and reported individually.
 
+The MCP entry points at Relay's own Rust binary. There is no Node entry point, no
+`process.execPath`, no `ELECTRON_RUN_AS_NODE` and no Electron runtime to reach.
+
 ## 1. What gets installed
 
 | Component | What it is | Where it goes |
 | --- | --- | --- |
-| **MCP server** | `relay` stdio server (agent control + session sync) | `[mcp_servers.relay]` in `~/.codex/config.toml` |
+| **MCP server** | `relay-mcp` (agent control + session sync) | `[mcp_servers.relay]` in `~/.codex/config.toml` |
 | **Plugin** | `relay@relay`: skill + hooks + metadata | `~/.relay/codex-plugin` (a local marketplace Relay generates) |
 | **Skill** | `skills/relay/SKILL.md`, which teaches Codex to compress context into a bounded task | ships with the plugin |
-| **Hooks** | `hooks/hooks.json`: `SessionStart` → `sync_session`, `SessionEnd` → a bundled Relay cleanup command | ships with the plugin (Codex asks you to trust hooks once) |
+| **Hooks** | `hooks/hooks.json`: `SessionStart` → `sync_session`, `SessionEnd` → `relay-mcp --session-end-hook` | ships with the plugin (Codex asks you to trust hooks once) |
 
-The MCP entry points at a bundled file in a packaged Relay
-(`Contents/Resources/mcp/stdio.js`, run with the app's own binary), or at the
-workspace command in a source checkout. The daemon remembers which entry it
-expects: if the configured entry differs or the file is gone, the MCP check
-reports **stale** instead of a vague "configured".
+In a packaged Relay the entry is the bundled binary at
+`Relay.app/Contents/Resources/relay-mcp`. In a source checkout it is the binary in
+`target/debug` or `target/release`, resolved as the sibling of the running
+process. The daemon remembers which entry it expects: if the configured entry
+differs or the file is gone, the MCP check reports **stale** instead of a vague
+"configured".
 
 ## 2. Checks
 
@@ -50,7 +54,7 @@ behind.
 
 | Action | What happens |
 | --- | --- |
-| **Install** | Generate the plugin tree → `codex plugin marketplace add` → `codex plugin add relay@relay` → `codex mcp add relay -- <entry>` → remove an old manually copied skill |
+| **Install** | Generate the plugin tree → `codex plugin marketplace add` → `codex plugin add relay@relay` → `codex mcp add relay -- <relay-mcp>` → remove an old manually copied skill |
 | **Repair** | The install path, forced: rewrites the plugin tree and the MCP entry. Use it for `stale` and `legacy` |
 | **Update** | Regenerates the plugin at the current version and reinstalls it, so Codex picks up skill and hook changes |
 | **Remove from Codex** | `codex plugin remove` → `codex plugin marketplace remove` → `codex mcp remove` → delete `~/.relay/codex-plugin` and the legacy skill copy |
@@ -66,10 +70,9 @@ Codex.
   name or alias.
 - **Fallback** — `sync_session` also runs on the first MCP tool call, so
   delegation works even before hooks have been trusted.
-- **End** — current Codex releases do not support MCP-tool handlers for `SessionEnd`,
-  so the hook runs the bundled Relay MCP entry in one-shot cleanup mode; the
-  session is marked ended without depending on a live stdio MCP connection.
-  and its session-scoped policy is cleared.
+- **End** — the `SessionEnd` hook runs `relay-mcp --session-end-hook` in one-shot
+  cleanup mode: the session is marked ended without depending on a live stdio MCP
+  connection, and its session-scoped policy is cleared.
 - **Resolution** — if `codex` is not on `PATH` (common with the IDE extension),
   Relay walks the known install locations before giving up.
 
@@ -85,6 +88,10 @@ Codex.
 | `accept_agent` / `resume_agent` | Close a Run after review, or continue the same Step with feedback |
 | `sync_session` / `end_session` | Session registration and teardown (used by hooks) |
 
+`wait_agent` returns the projection, including `result` — the data carried by the
+terminal worker event — which is what Codex reviews before calling
+`accept_agent`.
+
 The surface is generic — one tool set for every profile — so adding a runtime
 never changes what Codex sees.
 
@@ -93,7 +100,7 @@ never changes what Codex sees.
 The MCP process is long-lived, so configuration changes do not require restarting
 Codex:
 
-- `list_agents` and `run_agent` re-read `profiles.json` and sync the differences
+- `list_agents` and `run_agent` re-read `config.toml` and sync the differences
   into the profile registry.
 - Policy is resolved per workspace before every run.
 - A change written by the daemon takes effect on the next MCP call, and the menu
@@ -106,13 +113,13 @@ Codex:
 ```text
 integrations/codex/                    sources in this repository
 ├── plugin.json                        plugin metadata
-├── hooks/hooks.json                   SessionStart / SessionEnd → mcp_tool
+├── hooks/hooks.json                   SessionStart / SessionEnd
 └── skills/relay/SKILL.md              the skill Codex reads
 
 ~/.relay/codex-plugin/                 generated local marketplace
 ├── .agents/plugins/marketplace.json
 └── plugins/relay/
-    ├── .codex-plugin/plugin.json      version = relay version + content hash
+    ├── .codex-plugin/plugin.json      version = Relay version + content hash
     ├── hooks/hooks.json
     └── skills/relay/SKILL.md
 
@@ -141,4 +148,4 @@ grep -A3 '\[mcp_servers.relay\]' ~/.codex/config.toml
 ```
 
 The control panel's Codex tab shows the same five checks with their status and
-hint, and `Copy diagnostics` in the menu bar exports a report for bug reports.
+hint, and the Status tab exports a diagnostics report for bug reports.

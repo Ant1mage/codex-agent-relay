@@ -11,15 +11,30 @@
 Relay is a local runtime and control plane for Codex. Codex delegates a bounded
 task to an external coding agent; Relay resolves the runtime, applies policy,
 starts and supervises the worker process, and reports the result back into the
-same Codex session. You stay in Codex instead of moving tasks between CLIs by
-hand.
+same Codex session.
 
 Relay is not another AI IDE: no editor, no chat window, no agent loop of its own.
 Planning, review and orchestration stay in Codex.
 
+## Stack
+
+| Layer | Implementation |
+| --- | --- |
+| Desktop shell | Tauri 2 (Rust), menu bar only |
+| UI | Leptos + Trunk → WebAssembly |
+| Relay Core | Rust (`crates/relay-core`) |
+| Daemon (`relayd`) | Rust + Axum (HTTP/SSE) |
+| MCP server (`relay-mcp`) | Rust + rmcp (stdio) |
+| Storage | SQLite through `rusqlite` |
+| Configuration | TOML (`~/.relay/config.toml`) |
+| Worker runtimes | External CLIs, spawned as separate processes |
+
+There is no Node.js, Electron, Chromium, npm or Vite anywhere — not at runtime
+and not in the build.
+
 ## Current MVP
 
-The only verified end-to-end slice is **macOS + Codex + DeepSeek**:
+The verified end-to-end slice is **macOS + Codex + DeepSeek**:
 
 | | |
 | --- | --- |
@@ -27,133 +42,82 @@ The only verified end-to-end slice is **macOS + Codex + DeepSeek**:
 | Host | Codex (CLI or IDE extension) |
 | Worker runtime | DeepSeek Harness (`dsh`), installed and authenticated |
 
-Adapters for other runtimes are in the tree, but they have no end-to-end
-verification yet — see [Supported Runtimes](#supported-runtimes).
+Kimi, Z.ai and Antigravity adapters are in the tree with parser fixtures, but
+they have no end-to-end verification yet.
 
-## Features
+## Build and run
 
-- **Delegate from Codex** — a `$relay` skill plus a local MCP server; no task
-  copying, no extra terminal.
-- **Runtime detection** — finds installed CLIs on this machine with their
-  version and health, and lists only the model/reasoning values the CLI itself
-  reports.
-- **Agent profiles** — bind a runtime, capabilities and instructions once
-  (`deepseek-code`, `deepseek-research`, …) and reuse it from Codex.
-- **Policy** — access mode (`read_only` / `propose` / `write`), global and
-  per-workspace limits, concurrency caps for runs and writers, worktree
-  isolation for parallel writers.
-- **Lifecycle** — a delegation is a Run with Steps and iterations; cancel,
-  resume, and hand results back to Codex as `awaiting_host` for review.
-- **Observability** — append-only local event log, live menu bar status, and a
-  read-only web inspector for sessions, runs, console output and file changes.
-- **Local by default** — loopback HTTP only, no account, no telemetry; all state
-  lives in `~/.relay`.
-
-## Quick Start
-
-Requirements: macOS on Apple silicon, [Codex](https://github.com/openai/codex),
-and the DeepSeek CLI (`dsh`) installed and authenticated.
-
-**1. Install and run Relay**
-
-Download `Relay-<version>-arm64.dmg` from
-[Releases](https://github.com/Ant1mage/relay/releases), or build one from a
-checkout:
+Requirements: macOS on Apple silicon, Rust (stable), and
+[Trunk](https://trunkrs.dev) for the UI.
 
 ```bash
-pnpm install
-pnpm pack:mac      # → dist/Relay-<version>-arm64.dmg
+cargo build --workspace                 # core, daemon, MCP server, desktop shell
+cargo test --workspace                  # unit tests + the delegation end-to-end test
+cargo install trunk --locked
+(cd apps/relay-desktop/ui && trunk build --release)
+
+cargo run -p relayd                     # the daemon alone, on 127.0.0.1:7352
+(cd apps/relay-desktop && cargo tauri dev)   # the menu bar app (starts relayd itself)
 ```
 
-Relay is a menu bar app: launch it once and its icon stays in the menu bar, with
-the local daemon running behind it.
+`cargo tauri build` produces `Relay.app` and a DMG. Full instructions, including
+signing and notarization, are in [docs/development.md](docs/development.md).
 
-**2. Let Relay detect DeepSeek**
+## Quick start
 
-```bash
-dsh --version
-```
-
-Menu bar → **Runtimes** shows the detected DeepSeek runtime with its executable,
-version and health. If your `dsh` lives outside the usual locations, register
-the executable by hand in the same tab.
-
-**3. Configure a DeepSeek agent**
-
-Menu bar → **Control panel…** (⌘,) → **Agents** → new profile. Pick the DeepSeek
-runtime, choose the model and reasoning values the CLI reports, set capabilities
-and optional instructions, then enable the profile.
-
-**4. Install the Codex integration**
-
-Control panel → **Codex integration** → **Install**. Relay writes a local plugin
-(skill + hooks) and registers the `relay` MCP server with Codex; all five checks
-should turn green. If one doesn't, see
-[docs/codex-integration.md](docs/codex-integration.md).
-
-**5. Use it inside Codex**
+1. **Launch Relay.** The menu bar icon appears; the daemon runs behind it.
+   `relayd` prints the inspector URL, including a one-time token.
+2. **Check Runtimes.** Menu bar → Runtimes. Detection *finds* CLIs; it never
+   creates an agent for you. If your `dsh` lives outside the usual locations,
+   register the executable by hand in the same tab.
+3. **Create an Agent.** Control panel → Agents → New agent. Pick the runtime,
+   choose the model and reasoning values the CLI itself reports, set
+   capabilities, save.
+4. **Install into Codex.** Control panel → Codex → Install. Relay writes a local
+   plugin marketplace, registers the `relay` MCP server pointing at its own Rust
+   binary, and shows five checks.
+5. **Delegate from Codex.**
 
 ```text
 $relay use DeepSeek to review the current implementation and report potential issues.
 ```
 
-Codex keeps planning and reviewing; Relay runs the worker under policy and
-reports back into the session.
-
-## How It Works
+## How it works
 
 ```text
-Codex  ──  $relay / MCP  ──►  Relay Core  ──►  Runtime adapter  ──►  dsh (DeepSeek CLI)
-  ▲                                │                                     │
-  └────  result, changes, status ──┘◄────────────────────────────────────┘
+Codex ──$relay / MCP──► relay-mcp ──► RunController ──► runtime adapter ──► dsh
+  ▲                          │                                                 │
+  └──── result.summary ──────┘◄──────────── Relay events ◄────────────────────┘
 
-Menu bar       ──►  configuration and runtime control
-Web inspector  ◄──  execution state, events, logs
+relayd        ──► configuration, runtime scan, Codex integration, HTTP/SSE
+menu bar      ──► status, quick actions, configuration
+inspector     ◄── execution state, events, logs
 ```
 
-Codex owns planning and orchestration. Relay owns runtime execution, policy,
-lifecycle and observability. Each delegation becomes a Run with Steps and
-WorkerSessions, and every observable action is appended to a local event log that
-the menu bar and the inspector read from. Native CLIs keep their own agent loop;
-Relay never re-implements one.
+Relay owns runtime execution, policy, lifecycle and observability. Codex owns
+planning and review. Native CLIs keep their own agent loop; Relay never
+re-implements one.
 
 Full architecture: [docs/architecture.md](docs/architecture.md).
 
-## Supported Runtimes
+## Supported runtimes
 
 | Runtime | CLI | Adapter | Status |
 | --- | --- | --- | --- |
-| DeepSeek Harness | `dsh` | `@relay/adapter-deepseek` | **Supported / MVP** |
-| Kimi Code | `kimi` | `@relay/adapter-kimi` | Planned |
-| Antigravity CLI | `agy` | `@relay/adapter-antigravity` | Planned |
-| Grok Build | `grok` | — | Planned |
-| Z.ai / GLM | `zai-cli` | `@relay/adapter-zai` | Planned |
+| DeepSeek Harness | `dsh` | `deepseek-harness` | **Supported / MVP** |
+| Kimi Code | `kimi` | `kimi-code` | Planned |
+| Antigravity CLI | `agy` | `antigravity-cli` | Planned |
+| Z.ai / GLM | `zai-cli` | `zai-cli` | Planned |
 
-Only DeepSeek is verified end to end. The Kimi, Antigravity and Z.ai adapters
-detect, compile and run against parser fixtures, but they are not part of the
-supported MVP; Grok Build has no adapter yet. Antigravity CLI supersedes Gemini
-CLI, so Google is listed once.
-
-## Development
-
-Node.js 24 and pnpm 10.
-
-```bash
-pnpm install
-pnpm typecheck
-pnpm test
-pnpm build
-```
-
-`pnpm dev` starts a development session (daemon + menu bar); add `--web` for the
-inspector's dev server.
+`dsh` versions differ in what they expose: a version with a `--json` stream is
+used in structured mode, one without it in bounded plain-text mode. Relay reports
+which one it found instead of assuming.
 
 ## Documentation
 
-- [docs/architecture.md](docs/architecture.md) — processes, ownership
-  boundaries, data model, events.
-- [docs/codex-integration.md](docs/codex-integration.md) — what Relay installs
-  into Codex, session lifecycle, repair and troubleshooting.
+- [docs/architecture.md](docs/architecture.md) — crates, processes, data model, events.
+- [docs/codex-integration.md](docs/codex-integration.md) — what Relay installs into Codex, checks, repair.
+- [docs/development.md](docs/development.md) — build, test, release, signing.
 
 ## License
 
