@@ -1,0 +1,24 @@
+[package]
+name = "relay-core"
+description = "Relay domain model, event log projection, policy and run lifecycle."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# Only the wasm-safe surface: relay-core is compiled into the Leptos UI too.
+tokio = { version = "1", default-features = false, features = ["sync", "macros", "rt", "time"] }
+tracing.workspace = true
+uuid = { workspace = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

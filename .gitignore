@@ -1,8 +1,15 @@
-node_modules/
-dist/
-out/
-output/
-coverage/
-.playwright-cli/
+# Rust
+target/
+**/target/
+Cargo.lock.orig
+
+# Trunk / WASM UI output
+apps/relay-desktop/ui/dist/
+apps/relay-desktop/src-tauri/binaries/
+apps/relay-desktop/src-tauri/gen/
+
+# Local state and editor noise
 .DS_Store
-*.tsbuildinfo
+*.swp
+.idea/
+.vscode/
