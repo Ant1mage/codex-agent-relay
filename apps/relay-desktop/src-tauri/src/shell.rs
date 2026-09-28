@@ -287,6 +287,7 @@ fn info(app: &AppHandle) -> Option<relay_api::server_info::ServerInfo> {
     with_state(app, |state| state.probe.info.clone())
 }
 
+#[allow(dead_code)]
 fn open_url_in_browser(app: &AppHandle, url: &str) {
     if daemon::open_in_browser(url) {
         return;
@@ -299,9 +300,24 @@ fn open_url_in_browser(app: &AppHandle, url: &str) {
 
 fn open_inspector(app: &AppHandle, host_session_id: Option<&str>, run_id: Option<&str>) {
     let Some(info) = info(app) else {
+        set_last_error(app, Some("daemon 未运行，无法打开工作台".to_string()));
+        refresh_now(app);
         return;
     };
-    open_url_in_browser(app, &info.inspector_url(host_session_id, run_id));
+    let target = PanelTarget {
+        base: info.url,
+        token: info.token,
+        lang: with_state(app, |state| state.locale.as_str().to_string()),
+        tab: Some(crate::menu_model::PanelTab::Sessions),
+        intent: None,
+        profile_id: None,
+        session_id: host_session_id.map(str::to_string),
+        run_id: run_id.map(str::to_string),
+    };
+    if let Err(error) = panel::open(app, target) {
+        set_last_error(app, Some(error));
+        refresh_now(app);
+    }
 }
 
 fn open_control_panel(
@@ -322,6 +338,8 @@ fn open_control_panel(
         tab: Some(tab),
         intent,
         profile_id,
+        session_id: None,
+        run_id: None,
     };
     if let Err(error) = panel::open(app, target) {
         set_last_error(app, Some(error));
@@ -514,12 +532,18 @@ pub fn dispatch_double_click(app: &AppHandle) {
     );
 }
 
-/// A second launch shows the panel instead of starting a second tray.
+/// Shows the unified desktop window.
 pub fn show_panel(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(panel::PANEL_LABEL) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return;
+    }
     dispatch(
         app,
         MenuBarAction::OpenPanel {
-            tab: crate::menu_model::PanelTab::Agents,
+            tab: crate::menu_model::PanelTab::Sessions,
             intent: None,
             profile_id: None,
         },
@@ -624,10 +648,9 @@ pub fn run() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
-            // No window means no Dock tile and no app menu: the menu bar is the app.
             #[cfg(target_os = "macos")]
             {
-                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Regular);
             }
             if let Err(error) = tray::build(&handle) {
                 eprintln!("[relay] {error}; Relay cannot show a menu bar item");
@@ -640,18 +663,23 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Relay could not start")
         .run(|app, event| match event {
-            // The tray owns the process lifetime; closing the panel must not quit.
+            // The tray owns the process lifetime; closing the window hides it instead of quitting.
             RunEvent::ExitRequested { code, api, .. } => {
                 if code.is_none() {
                     api.prevent_exit();
                 }
             }
-            // The panel behaves like a popover: clicking anywhere else dismisses it.
             RunEvent::WindowEvent {
                 label,
-                event: WindowEvent::Focused(false),
+                event: WindowEvent::CloseRequested { api, .. },
                 ..
-            } if label == panel::PANEL_LABEL => panel::hide(app),
+            } if label == panel::PANEL_LABEL => {
+                api.prevent_close();
+                panel::hide(app);
+            }
+            RunEvent::Reopen { .. } => {
+                show_panel(app);
+            }
             RunEvent::Exit => on_exit(app),
             _ => {}
         });

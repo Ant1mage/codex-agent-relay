@@ -241,6 +241,43 @@ impl Client {
         )
         .await
     }
+
+    pub async fn accept_worker(&self, worker_session_id: &str) -> Result<serde_json::Value, ApiError> {
+        self.send::<serde_json::Value, ()>(
+            "POST",
+            &format!("/api/workers/{}/accept", dom::encode(worker_session_id)),
+            None,
+        )
+        .await
+    }
+
+    pub async fn resume_worker(&self, worker_session_id: &str, feedback: &str) -> Result<serde_json::Value, ApiError> {
+        let body = serde_json::json!({ "feedback": feedback });
+        self.send(
+            "POST",
+            &format!("/api/workers/{}/resume", dom::encode(worker_session_id)),
+            Some(&body),
+        )
+        .await
+    }
+
+    pub async fn cancel_session(&self, host_session_id: &str) -> Result<CancelResult, ApiError> {
+        self.send::<CancelResult, ()>(
+            "POST",
+            &format!("/api/sessions/{}/cancel", dom::encode(host_session_id)),
+            None,
+        )
+        .await
+    }
+
+    pub async fn delete_session(&self, host_session_id: &str) -> Result<serde_json::Value, ApiError> {
+        self.send::<serde_json::Value, ()>(
+            "DELETE",
+            &format!("/api/sessions/{}", dom::encode(host_session_id)),
+            None,
+        )
+        .await
+    }
 }
 
 /// A live SSE subscription. The page opens exactly one and keeps it for its whole

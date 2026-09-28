@@ -68,10 +68,10 @@ impl SqliteEventStore {
     /// Cheap change stamp for the daemon's SSE tick.
     pub fn revision(&self) -> Result<String> {
         self.database.with(|connection| {
-            let events: i64 = connection.query_row(
-                "SELECT COALESCE(MAX(rowid), 0) FROM relay_events",
+            let (event_count, max_rowid): (i64, i64) = connection.query_row(
+                "SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM relay_events",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
             let sessions: i64 =
                 connection.query_row("SELECT COUNT(*) FROM host_sessions", [], |row| row.get(0))?;
@@ -80,7 +80,7 @@ impl SqliteEventStore {
                 [],
                 |row| row.get(0),
             )?;
-            Ok(format!("{events}:{sessions}:{updated}"))
+            Ok(format!("{event_count}:{max_rowid}:{sessions}:{updated}"))
         })
     }
 }

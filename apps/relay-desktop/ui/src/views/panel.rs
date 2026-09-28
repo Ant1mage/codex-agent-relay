@@ -113,6 +113,7 @@ pub fn panel_app() -> AnyView {
                 // lives in PanelStore, which is created once in App and outlives
                 // every branch; see PanelStore in state.rs.
                 {move || match store.tab.get() {
+                    PanelTab::Sessions => ().into_any(),
                     PanelTab::Agents => agents::agents_view(store).into_any(),
                     PanelTab::Runtimes => runtimes::runtimes_view(store).into_any(),
                     PanelTab::Policy => policy::policy_view(store).into_any(),

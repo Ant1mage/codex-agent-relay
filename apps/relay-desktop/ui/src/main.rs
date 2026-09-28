@@ -35,20 +35,22 @@ fn App() -> AnyView {
     let base = dom::query("base").unwrap_or_else(dom::origin);
     let client = token.map(|token| Client::new(&base, &token));
 
-    if dom::is_panel_path(&pathname) {
-        let locale = dom::panel_locale();
-        let tab = PanelTab::from_id(&dom::query("tab").unwrap_or_default());
-        let intent = dom::query("intent").and_then(|value| PanelIntent::from_id(&value));
-        let profile = dom::query("profileId");
-        let store = PanelStore::new(client, base, locale, tab, intent, profile);
-        dom::set_document_lang(locale);
-        provide_context(store);
-        return views::panel::panel_app().into_any();
-    }
+    let locale = if dom::is_panel_path(&pathname) {
+        dom::panel_locale()
+    } else {
+        dom::inspector_locale()
+    };
 
-    let locale = dom::inspector_locale();
+    let tab = PanelTab::from_id(&dom::query("tab").unwrap_or_default());
+    let intent = dom::query("intent").and_then(|value| PanelIntent::from_id(&value));
+    let profile = dom::query("profileId");
+
+    let panel_store = PanelStore::new(client.clone(), base, locale, tab, intent, profile);
     let store = Store::new(client, locale);
+
     dom::set_document_lang(locale);
+    provide_context(panel_store);
     provide_context(store);
-    views::inspector::inspector_app().into_any()
+
+    views::unified::unified_app().into_any()
 }

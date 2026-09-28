@@ -279,3 +279,35 @@ pub fn base36(value: u64) -> String {
     }
     digits.iter().rev().collect()
 }
+
+/// Smoothly scrolls the element into view.
+pub fn scroll_to_element(id: &str) {
+    let script = format!("document.getElementById('{id}')?.scrollIntoView({{ behavior: 'smooth', block: 'start' }});");
+    let _ = js_sys::eval(&script);
+}
+
+#[derive(serde::Deserialize, Default, Debug, Clone)]
+pub struct PanelNavDetail {
+    pub tab: Option<String>,
+    pub intent: Option<String>,
+    #[serde(rename = "profileId")]
+    pub profile_id: Option<String>,
+    pub session: Option<String>,
+    pub run: Option<String>,
+}
+
+pub fn on_panel_nav(callback: impl Fn(PanelNavDetail) + 'static) {
+    let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+        if let Ok(detail) = js_sys::Reflect::get(event.as_ref(), &wasm_bindgen::JsValue::from_str("detail")) {
+            if let Ok(json_str) = js_sys::JSON::stringify(&detail) {
+                if let Some(s) = json_str.as_string() {
+                    if let Ok(parsed) = serde_json::from_str::<PanelNavDetail>(&s) {
+                        callback(parsed);
+                    }
+                }
+            }
+        }
+    });
+    let _ = window().add_event_listener_with_callback("relay:panel", closure.as_ref().unchecked_ref());
+    closure.forget();
+}

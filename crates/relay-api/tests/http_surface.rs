@@ -292,6 +292,11 @@ impl RunService for RecordingRuns {
         self.record(format!("cancel_session:{host_session_id}"));
         Ok(0)
     }
+
+    async fn delete_session(&self, host_session_id: &str) -> Result<(), String> {
+        self.record(format!("delete_session:{host_session_id}"));
+        Ok(())
+    }
 }
 
 struct Harness {
@@ -780,6 +785,20 @@ async fn cancellation_is_a_direct_call_on_the_owner() {
             "cancel_session:codex:test".to_string()
         ]
     );
+}
+
+#[tokio::test]
+async fn session_deletion_invokes_run_service() {
+    let directory = tempfile::tempdir().unwrap();
+    let harness = harness(directory.path());
+
+    let (status, body) = delete(&harness.state, "/api/sessions/codex:test").await;
+    assert_eq!(status, StatusCode::OK);
+    let result: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(result["deleted"], true);
+
+    let calls = harness.runs.calls.lock().unwrap().clone();
+    assert_eq!(calls, vec!["delete_session:codex:test".to_string()]);
 }
 
 #[tokio::test]

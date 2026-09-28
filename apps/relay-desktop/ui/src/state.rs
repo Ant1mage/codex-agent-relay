@@ -162,6 +162,22 @@ impl Store {
             })
         })
     }
+
+    pub fn cancel_worker(&self, worker_session_id: impl Into<String>) {
+        cancel_worker(*self, worker_session_id.into());
+    }
+
+    pub fn accept_worker(&self, worker_session_id: impl Into<String>) {
+        accept_worker(*self, worker_session_id.into());
+    }
+
+    pub fn resume_worker(&self, worker_session_id: impl Into<String>, feedback: impl Into<String>) {
+        resume_worker(*self, worker_session_id.into(), feedback.into());
+    }
+
+    pub fn delete_session(&self, host_session_id: impl Into<String>) {
+        delete_session(*self, host_session_id.into());
+    }
 }
 
 /// One stream per page: the store owns the merge, this owns the socket.
@@ -248,8 +264,52 @@ pub fn cancel_worker(store: Store, worker_session_id: String) {
     });
 }
 
+pub fn accept_worker(store: Store, worker_session_id: String) {
+    let Some(client) = store.client() else {
+        return;
+    };
+    spawn_local(async move {
+        match client.accept_worker(&worker_session_id).await {
+            Ok(_) => store.notify(store.translator().t("run.accepted")),
+            Err(error) => store.notify(error.to_string()),
+        }
+    });
+}
+
+pub fn resume_worker(store: Store, worker_session_id: String, feedback: String) {
+    let Some(client) = store.client() else {
+        return;
+    };
+    spawn_local(async move {
+        match client.resume_worker(&worker_session_id, &feedback).await {
+            Ok(_) => store.notify(store.translator().t("run.resumed")),
+            Err(error) => store.notify(error.to_string()),
+        }
+    });
+}
+
+pub fn delete_session(store: Store, host_session_id: String) {
+    let Some(client) = store.client() else {
+        return;
+    };
+    spawn_local(async move {
+        match client.delete_session(&host_session_id).await {
+            Ok(_) => {
+                store.notify(store.translator().t("sessions.deleted"));
+                if store.session.get_untracked().as_deref() == Some(&host_session_id) {
+                    store.session.set(None);
+                    store.run.set(None);
+                    store.step.set(None);
+                }
+            }
+            Err(error) => store.notify(format!("Failed: {error}")),
+        }
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelTab {
+    Sessions,
     Agents,
     Runtimes,
     Policy,
@@ -260,11 +320,12 @@ pub enum PanelTab {
 impl PanelTab {
     /// Tabs in the order the panel shows them. `runtime` is the id the old panel
     /// used in `?tab=`, so existing deep links keep working.
-    pub const ORDER: [PanelTab; 5] =
-        [PanelTab::Agents, PanelTab::Runtimes, PanelTab::Policy, PanelTab::Codex, PanelTab::Status];
+    pub const ORDER: [PanelTab; 6] =
+        [PanelTab::Sessions, PanelTab::Agents, PanelTab::Runtimes, PanelTab::Policy, PanelTab::Codex, PanelTab::Status];
 
     pub fn key(self) -> &'static str {
         match self {
+            PanelTab::Sessions => "nav.sessions",
             PanelTab::Agents => "nav.agents",
             PanelTab::Runtimes => "panel.runtime",
             PanelTab::Policy => "panel.policy",
@@ -275,11 +336,13 @@ impl PanelTab {
 
     pub fn from_id(value: &str) -> Self {
         match value {
+            "sessions" => PanelTab::Sessions,
             "policy" => PanelTab::Policy,
             "codex" => PanelTab::Codex,
             "runtime" | "runtimes" => PanelTab::Runtimes,
             "status" => PanelTab::Status,
-            _ => PanelTab::Agents,
+            "agents" => PanelTab::Agents,
+            _ => PanelTab::Sessions,
         }
     }
 }

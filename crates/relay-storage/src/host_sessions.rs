@@ -86,6 +86,42 @@ impl HostSessionStore for SqliteHostSessionStore {
         }
         Ok(sessions)
     }
+
+    fn delete(&self, id: &str) -> Result<bool> {
+        let full_id = if id.starts_with("codex:") {
+            id.to_string()
+        } else {
+            format!("codex:{id}")
+        };
+        let native_id = id.strip_prefix("codex:").unwrap_or(id).to_string();
+
+        self.database.transaction(|tx| {
+            let mut stmt = tx.prepare(
+                "SELECT DISTINCT run_id FROM relay_events
+                 WHERE type = 'run/created'
+                   AND (json_extract(data_json, '$.run.host_session_id') = ?1
+                        OR json_extract(data_json, '$.run.host_session_id') = ?2)",
+            )?;
+            let run_ids: Vec<String> = stmt
+                .query_map(rusqlite::params![full_id, native_id], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            let mut events_deleted = 0;
+            for run_id in &run_ids {
+                events_deleted += tx.execute(
+                    "DELETE FROM relay_events WHERE run_id = ?1",
+                    rusqlite::params![run_id],
+                )?;
+            }
+
+            let session_deleted = tx.execute(
+                "DELETE FROM host_sessions WHERE id = ?1 OR native_session_id = ?2",
+                rusqlite::params![full_id, native_id],
+            )?;
+
+            Ok(session_deleted > 0 || events_deleted > 0)
+        })
+    }
 }
 
 /// Ends a session by native id, used by the `--session-end-hook` entry point.
@@ -105,4 +141,78 @@ pub fn end_session(
         status: HostSessionStatus::Ended,
     })?;
     Ok(Some(session))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use relay_core::{EventStore, RelayEvent, RelayEventType};
+
+    #[test]
+    fn delete_cascades_session_and_events() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Arc::new(Database::open(directory.path().join("relay.sqlite")).unwrap());
+        let session_store = SqliteHostSessionStore::new(Arc::clone(&database));
+        let event_store = crate::SqliteEventStore::new(Arc::clone(&database));
+
+        let session = session_store
+            .upsert_codex(HostSessionUpsert {
+                native_session_id: "thread-100".into(),
+                display_name: "Test Session".into(),
+                cwd: "/tmp/project".into(),
+                model: None,
+                status: HostSessionStatus::Active,
+            })
+            .unwrap();
+
+        assert_eq!(session_store.count().unwrap(), 1);
+
+        // Append run events for this session
+        let run_created_event = RelayEvent {
+            id: "evt-1".into(),
+            run_id: "run-100".into(),
+            step_id: None,
+            worker_session_id: None,
+            seq: 1,
+            timestamp: now(),
+            event_type: RelayEventType::RunCreated,
+            data: serde_json::json!({
+                "run": {
+                    "id": "run-100",
+                    "host_session_id": session.id,
+                }
+            }),
+            native_event: None,
+        };
+        event_store.append(run_created_event).unwrap();
+
+        let step_event = RelayEvent {
+            id: "evt-2".into(),
+            run_id: "run-100".into(),
+            step_id: Some("step-100".into()),
+            worker_session_id: None,
+            seq: 2,
+            timestamp: now(),
+            event_type: RelayEventType::StepCreated,
+            data: serde_json::json!({}),
+            native_event: None,
+        };
+        event_store.append(step_event).unwrap();
+
+        assert_eq!(event_store.list("run-100").unwrap().len(), 2);
+
+        // Delete using session id
+        let deleted = session_store.delete(&session.id).unwrap();
+        assert!(deleted);
+
+        // Session gone
+        assert_eq!(session_store.count().unwrap(), 0);
+        assert!(session_store.get(&session.id).unwrap().is_none());
+
+        // Events for that run gone
+        assert!(event_store.list("run-100").unwrap().is_empty());
+
+        // Second delete returns false
+        assert!(!session_store.delete(&session.id).unwrap());
+    }
 }

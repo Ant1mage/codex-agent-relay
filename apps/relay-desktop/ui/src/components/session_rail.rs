@@ -6,6 +6,7 @@
 use leptos::prelude::*;
 
 use crate::api::Route;
+use crate::components::controls::icon;
 use crate::format;
 use crate::state::{self, preferred_run, Store};
 
@@ -39,6 +40,7 @@ pub fn session_rail(route: RwSignal<Route>) -> impl IntoView {
                     list.into_iter()
                         .map(|view_item| {
                             let session = view_item.session.clone();
+                            let del_id = session.id.clone();
                             let selected = selected_id.as_deref() == Some(session.id.as_str());
                             let run_id = preferred_run(&view_item).map(|run| run.run.id.clone());
                             let next = Route { session: Some(session.id.clone()), run: run_id };
@@ -54,23 +56,35 @@ pub fn session_rail(route: RwSignal<Route>) -> impl IntoView {
                                 "dot dot-idle"
                             };
                             view! {
-                                <button
-                                    type="button"
+                                <div
                                     class=if selected { "rail-item rail-item-active" } else { "rail-item" }
                                     on:click=move |_| state::go(route, next.clone())
                                 >
-                                    <span class="rail-name">{session.display_name.clone()}</span>
-                                    <span class="rail-meta">
-                                        <i class=dot aria-hidden="true"></i>
-                                        {relative}
-                                        <span aria-hidden="true">"·"</span>
-                                        {runs} " " {t.t("runs.title")}
-                                        {(active > 0)
-                                            .then(|| view! { <span class="ok">"● " {active}</span> })}
-                                        {(awaiting > 0)
-                                            .then(|| view! { <span class="warn">"◆ " {awaiting}</span> })}
-                                    </span>
-                                </button>
+                                    <div class="rail-item-main">
+                                        <span class="rail-name">{session.display_name.clone()}</span>
+                                        <span class="rail-meta">
+                                            <i class=dot aria-hidden="true"></i>
+                                            {relative}
+                                            <span aria-hidden="true">"·"</span>
+                                            {runs} " " {t.t("runs.title")}
+                                            {(active > 0)
+                                                .then(|| view! { <span class="ok">"● " {active}</span> })}
+                                            {(awaiting > 0)
+                                                .then(|| view! { <span class="warn">"◆ " {awaiting}</span> })}
+                                        </span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        class="rail-item-del"
+                                        title=t.t("sessions.delete")
+                                        on:click=move |ev| {
+                                            ev.stop_propagation();
+                                            store.delete_session(del_id.clone());
+                                        }
+                                    >
+                                        {icon("trash", "icon icon-xs")}
+                                    </button>
+                                </div>
                             }
                         })
                         .collect_view()

@@ -10,19 +10,16 @@
 
 use std::sync::Mutex;
 
-use tauri::{
-    AppHandle, Manager, PhysicalPosition, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-};
+use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 
 use crate::menu_model::{PanelIntent, PanelTab};
 
 pub const PANEL_LABEL: &str = "panel";
-/// The panel's fixed geometry: a single-column popover.
-pub const PANEL_WIDTH: f64 = 420.0;
-pub const PANEL_HEIGHT: f64 = 640.0;
-/// Gap between the tray icon and the panel, and the margin kept to the screen edge.
-const TRAY_GAP: i32 = 6;
-const SCREEN_MARGIN: i32 = 8;
+/// The unified desktop window geometry.
+pub const PANEL_WIDTH: f64 = 1050.0;
+pub const PANEL_HEIGHT: f64 = 720.0;
+pub const MIN_WIDTH: f64 = 800.0;
+pub const MIN_HEIGHT: f64 = 560.0;
 
 /// Which daemon generation the open panel is talking to. A restart may reuse the
 /// port but always rotates the token, so the URL has to be rebuilt.
@@ -35,6 +32,8 @@ pub struct PanelTarget {
     pub tab: Option<PanelTab>,
     pub intent: Option<PanelIntent>,
     pub profile_id: Option<String>,
+    pub session_id: Option<String>,
+    pub run_id: Option<String>,
 }
 
 /// The URL the panel window loads. The token rides the fragment: it never
@@ -67,6 +66,12 @@ pub fn panel_url_with_dev(target: &PanelTarget, dev: Option<&str>) -> String {
         }
         if let Some(profile_id) = target.profile_id.as_deref() {
             query.append_pair("profileId", profile_id);
+        }
+        if let Some(session_id) = target.session_id.as_deref() {
+            query.append_pair("session", session_id);
+        }
+        if let Some(run_id) = target.run_id.as_deref() {
+            query.append_pair("run", run_id);
         }
     }
     url.set_fragment(Some(&format!("t={}", target.token)));
@@ -123,33 +128,40 @@ pub fn open(app: &AppHandle, target: PanelTarget) -> Result<(), String> {
             let _ = window.hide();
             window.navigate(url).map_err(|error| error.to_string())?;
         } else {
-            let _ = window.eval(navigation_event_script(&target));
-            place_under_tray(app, &window);
-            window.show().map_err(|error| error.to_string())?;
-            window.set_focus().map_err(|error| error.to_string())?;
+            let _ = window.eval(&navigation_event_script(&target));
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
         }
         return Ok(());
     }
 
     let url = Url::parse(&panel_url(&target)).map_err(|error| error.to_string())?;
     state.set_target(Some(target));
-    WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::External(url))
+    #[allow(unused_mut)]
+    let mut builder = WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::External(url))
         .title("Relay")
         .inner_size(PANEL_WIDTH, PANEL_HEIGHT)
-        .decorations(false)
+        .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
+        .decorations(true)
         .resizable(true)
-        .maximizable(false)
-        .minimizable(false)
-        .skip_taskbar(true)
-        .always_on_top(true)
-        .visible_on_all_workspaces(true)
+        .maximizable(true)
+        .minimizable(true)
+        .skip_taskbar(false)
+        .always_on_top(false)
+        .center()
         .visible(false)
-        .focused(true)
-        // Shown once the page is actually there: an empty window flashing over the
-        // desktop would be worse than a short delay. This also re-places the
-        // window after a reload moved it.
+        .focused(true);
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+
+    builder
         .on_page_load(|window, _payload| {
-            place_under_tray(window.app_handle(), &window);
             let _ = window.show();
             let _ = window.set_focus();
         })
@@ -158,52 +170,11 @@ pub fn open(app: &AppHandle, target: PanelTarget) -> Result<(), String> {
     Ok(())
 }
 
-/// Hides the panel; called when it loses focus.
+/// Hides the panel window.
 pub fn hide(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(PANEL_LABEL) {
         let _ = window.hide();
     }
-}
-
-/// Where the panel goes: under the tray icon, clamped into the work area of the
-/// screen the icon is on.
-fn place_under_tray(app: &AppHandle, window: &WebviewWindow) {
-    let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) else {
-        return;
-    };
-    let Ok(Some(rect)) = tray.rect() else {
-        return;
-    };
-    let Ok(size) = window.outer_size() else {
-        return;
-    };
-    let tray_position = rect.position.to_physical::<i32>(1.0);
-    let tray_size = rect.size.to_physical::<u32>(1.0);
-    let monitor = app
-        .monitor_from_point(tray_position.x as f64, tray_position.y as f64)
-        .ok()
-        .flatten();
-    let (work_x, work_y, work_width, work_height) = match monitor.as_ref() {
-        Some(monitor) => {
-            let area = monitor.work_area();
-            (
-                area.position.x,
-                area.position.y,
-                area.size.width as i32,
-                area.size.height as i32,
-            )
-        }
-        None => (0, 0, i32::MAX / 2, i32::MAX / 2),
-    };
-    let width = size.width as i32;
-    let height = size.height as i32;
-    let centered = tray_position.x + (tray_size.width as i32) / 2 - width / 2;
-    let right_edge = (work_x + work_width - width - SCREEN_MARGIN).max(work_x + SCREEN_MARGIN);
-    let bottom_edge = (work_y + work_height - height - SCREEN_MARGIN).max(work_y + SCREEN_MARGIN);
-    let x = centered.clamp(work_x + SCREEN_MARGIN, right_edge);
-    let y = (tray_position.y + tray_size.height as i32 + TRAY_GAP)
-        .clamp(work_y + SCREEN_MARGIN, bottom_edge);
-    let _ = window.set_position(PhysicalPosition::new(x, y));
 }
 
 /// The front-end has no Tauri IPC — it is served by relayd and built without any
@@ -221,6 +192,18 @@ pub fn navigation_event_script(target: &PanelTarget) -> String {
         payload.insert(
             "profileId".into(),
             serde_json::Value::String(profile_id.to_string()),
+        );
+    }
+    if let Some(session_id) = target.session_id.as_deref() {
+        payload.insert(
+            "session".into(),
+            serde_json::Value::String(session_id.to_string()),
+        );
+    }
+    if let Some(run_id) = target.run_id.as_deref() {
+        payload.insert(
+            "run".into(),
+            serde_json::Value::String(run_id.to_string()),
         );
     }
     // Double-encoded: the JSON is embedded as a string literal, so the payload
@@ -244,6 +227,8 @@ mod tests {
             tab: Some(PanelTab::Runtime),
             intent: None,
             profile_id: None,
+            session_id: None,
+            run_id: None,
         }
     }
 
@@ -269,6 +254,8 @@ mod tests {
             tab: Some(PanelTab::Codex),
             intent: Some(PanelIntent::CodexActions),
             profile_id: Some("agent-1".into()),
+            session_id: None,
+            run_id: None,
         };
         assert_eq!(
             panel_url_with_dev(&full, None),
@@ -283,6 +270,8 @@ mod tests {
             tab: None,
             intent: None,
             profile_id: None,
+            session_id: None,
+            run_id: None,
         };
         assert_eq!(
             panel_url_with_dev(&minimal, None),
@@ -340,6 +329,8 @@ mod tests {
             tab: Some(PanelTab::Agents),
             intent: Some(PanelIntent::EditAgent),
             profile_id: Some("a'b".into()),
+            session_id: None,
+            run_id: None,
         });
         // The payload is a JSON string literal, so nothing an id contains can
         // break out of the statement and the front-end receives a real object.
@@ -365,6 +356,8 @@ mod tests {
             tab: None,
             intent: None,
             profile_id: None,
+            session_id: None,
+            run_id: None,
         });
         assert!(bare.contains(r#"JSON.parse("{}")"#));
     }
