@@ -24,7 +24,7 @@ does not merge these levels.
 ```text
 crates/
 ├─ relay-core/        domain, events, projection, policy, run lifecycle, adapter trait
-├─ relay-adapters/    DeepSeek Harness, Kimi, Z.ai, Antigravity (+ shared CLI plumbing)
+├─ relay-adapters/    DeepSeek Harness, Kimi, Z.ai, Antigravity, Grok (+ shared CLI plumbing)
 ├─ relay-storage/     SQLite: event log, host sessions, startup reconciliation
 ├─ relay-config/      config.toml: agent profiles, policy, manual runtimes
 ├─ relay-api/         wire contract + the daemon's HTTP/SSE surface + projections
@@ -147,7 +147,9 @@ retry them.
 
 Capabilities are declared, not assumed: Relay only offers `send_agent` or
 `resume_agent` when the adapter reports that the CLI supports it, and every
-mapped event keeps the original native payload.
+tool event keeps the original native payload. Grok combines text chunks into
+complete response messages and copies only public usage/result fields; signed
+usage blobs and cached authentication fields never enter the event log.
 
 **Runtime ≠ Agent Profile.** A runtime is a CLI on this machine; a profile is a
 user-facing capability on top of it. One runtime can back several profiles.

@@ -1,6 +1,6 @@
 [package]
 name = "relay-adapters"
-description = "Runtime adapters: DeepSeek Harness, Kimi, Z.ai, Antigravity."
+description = "Runtime adapters: DeepSeek Harness, Kimi, Z.ai, Antigravity, Grok."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -19,7 +19,8 @@ serde_json.workspace = true
 serde_yaml = "0.9"
 tokio.workspace = true
 tracing.workspace = true
+uuid.workspace = true
+tempfile = "3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process"] }
-tempfile = "3"

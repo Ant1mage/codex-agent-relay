@@ -7,6 +7,7 @@
 pub mod antigravity;
 pub mod cli;
 pub mod deepseek;
+pub mod grok;
 pub mod instructions;
 pub mod kimi;
 pub mod models;
@@ -20,6 +21,7 @@ use relay_core::AgentAdapter;
 
 pub use cli::{ProcessSupervisor, StreamMode, StreamSpec};
 pub use deepseek::DeepSeekAdapter;
+pub use grok::GrokAdapter;
 
 /// Every adapter this build supports, freshly constructed.
 pub fn adapters() -> Vec<Arc<dyn AgentAdapter>> {
@@ -28,6 +30,7 @@ pub fn adapters() -> Vec<Arc<dyn AgentAdapter>> {
         Arc::new(antigravity::AntigravityAdapter::new()),
         Arc::new(kimi::KimiAdapter::new()),
         Arc::new(zai::ZaiAdapter::new()),
+        Arc::new(grok::GrokAdapter::new()),
     ]
 }
 
@@ -57,7 +60,8 @@ mod tests {
                 "deepseek-harness",
                 "antigravity-cli",
                 "kimi-code",
-                "zai-cli"
+                "zai-cli",
+                "grok-cli"
             ]
         );
         assert!(adapter_by_id("deepseek-harness").is_some());
@@ -76,6 +80,12 @@ mod tests {
         let antigravity = adapter_by_id("antigravity-cli").unwrap();
         assert!(antigravity.capabilities().resume);
         assert!(antigravity.capabilities().child_sessions);
+
+        let grok = adapter_by_id("grok-cli").unwrap();
+        assert!(grok.capabilities().resume);
+        assert!(grok.capabilities().cancel);
+        assert!(!grok.capabilities().send);
+        assert!(!grok.capabilities().child_sessions);
     }
 
     /// Relay's policy gates whether a run may start. Only a runtime with a real
@@ -86,6 +96,11 @@ mod tests {
         assert!(deepseek.capabilities().enforcement.workspace);
         assert!(!deepseek.capabilities().enforcement.commands);
         assert!(!deepseek.capabilities().enforcement.network);
+
+        let grok = adapter_by_id("grok-cli").unwrap();
+        assert!(grok.capabilities().enforcement.workspace);
+        assert!(!grok.capabilities().enforcement.commands);
+        assert!(!grok.capabilities().enforcement.network);
 
         for id in ["kimi-code", "zai-cli", "antigravity-cli"] {
             let adapter = adapter_by_id(id).unwrap();

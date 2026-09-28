@@ -3358,7 +3358,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "relay-adapters"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "dirs 6.0.0",
@@ -3373,11 +3373,12 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
 name = "relay-api"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -3396,7 +3397,7 @@ dependencies = [
 
 [[package]]
 name = "relay-codex"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "relay-api",
@@ -3412,7 +3413,7 @@ dependencies = [
 
 [[package]]
 name = "relay-config"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "relay-core",
  "serde",
@@ -3423,7 +3424,7 @@ dependencies = [
 
 [[package]]
 name = "relay-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3438,7 +3439,7 @@ dependencies = [
 
 [[package]]
 name = "relay-desktop"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fix-path-env",
  "libc",
@@ -3462,7 +3463,7 @@ dependencies = [
 
 [[package]]
 name = "relay-mcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -3485,7 +3486,7 @@ dependencies = [
 
 [[package]]
 name = "relay-storage"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "relay-core",
@@ -3498,7 +3499,7 @@ dependencies = [
 
 [[package]]
 name = "relayd"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "axum",
