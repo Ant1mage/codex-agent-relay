@@ -321,6 +321,7 @@ impl AgentAdapter for KimiAdapter {
                 cwd: input.cwd.clone(),
                 env: self.environment.clone(),
                 stdin: None,
+                stdin_gate: None,
                 supervisor_key: input.worker_session_id.clone(),
                 cleanup: None,
             },
