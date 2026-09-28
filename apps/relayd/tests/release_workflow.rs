@@ -290,12 +290,17 @@ fn the_release_job_declares_runnable_steps() {
     }
 }
 
-/// Releases are manually installed from GitHub; the app must not require an
-/// updater signing key or publish a Tauri updater feed.
+/// Releases are manually installed from GitHub and intentionally unsigned; the
+/// workflow must not require Apple credentials or publish a Tauri updater feed.
 #[test]
-fn releases_publish_the_dmg_without_tauri_updater_artifacts() {
+fn releases_publish_an_unsigned_dmg_without_updater_artifacts() {
     let workflow = workflow("release.yml");
     assert!(workflow.contains("bundle/dmg/*.dmg"));
+    assert!(workflow.contains("Build unsigned macOS app and DMG"));
+    assert!(!workflow.contains("APPLE_"));
+    assert!(!workflow.contains("KEYCHAIN_PASSWORD"));
+    assert!(!workflow.contains("codesign"));
+    assert!(!workflow.contains("notarytool"));
     assert!(!workflow.contains("TAURI_SIGNING_PRIVATE_KEY"));
     assert!(!workflow.contains("TAURI_UPDATER_PUBKEY"));
     assert!(!workflow.contains("latest.json"));

@@ -119,18 +119,16 @@ maps them from `target/release` to `bin/` inside the bundle, which is why
 `cargo tauri build`. The bundle lands in
 `target/aarch64-apple-darwin/release/bundle/`.
 
-## Release signing and update checks
+## Releases and update checks
 
-The release workflow builds and signs the app and bundled executables,
-notarizes the app, and uploads the DMG to the GitHub Release for its version
-tag. At startup and when the user selects **Check for updates**, the app
-compares its version with GitHub's latest published release. If a newer version
-exists, the user can open the release page and download the DMG manually.
-Hardened runtime and entitlements are configured in the project.
-
-Required CI secrets: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
-`KEYCHAIN_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_KEY_BASE64`,
-`APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`.
+The release workflow builds an unsigned macOS app and DMG, then uploads the DMG
+to the GitHub Release for its version tag. It requires no Apple signing or
+notarization credentials. Because the app is unsigned and not notarized, macOS
+may block the first launch; users can open it from Finder with Control-click →
+Open and confirm the prompt. At startup and when the user selects **Check for
+updates**, the app compares its version with GitHub's latest published release.
+If a newer version exists, the user can open the release page and download the
+DMG manually.
 
 ## Local state
 
