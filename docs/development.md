@@ -121,11 +121,11 @@ maps them from `target/release` to `bin/` inside the bundle, which is why
 
 ## Releases and update checks
 
-The release workflow builds an unsigned macOS app and DMG, then uploads the DMG
-to the GitHub Release for its version tag. It requires no Apple signing or
-notarization credentials. Because the app is unsigned and not notarized, macOS
-may block the first launch; users can open it from Finder with Control-click →
-Open and confirm the prompt. At startup and when the user selects **Check for
+The release workflow ad-hoc signs the macOS app bundle, packages it in a DMG,
+and uploads the DMG to the GitHub Release for its version tag. Ad-hoc signing
+seals the bundle without an Apple certificate; the app is not notarized, so
+macOS may still require users to approve it in System Settings → Privacy &
+Security on first launch. At startup and when the user selects **Check for
 updates**, the app compares its version with GitHub's latest published release.
 If a newer version exists, the user can open the release page and download the
 DMG manually.

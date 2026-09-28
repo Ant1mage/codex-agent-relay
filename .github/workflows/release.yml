@@ -37,15 +37,16 @@ jobs:
         # `bundle.resources` copies these two into Contents/Resources/bin, which
         # is where the shell and the Codex integration look for them.
         run: cargo build --release -p relayd -p relay-mcp
-      - name: Build unsigned macOS app and DMG
+      - name: Build and package the ad-hoc signed macOS app
         run: cargo tauri build --target aarch64-apple-darwin
         working-directory: apps/relay-desktop
-      - name: Release sanity check — bundled binaries and sidecar paths
-        # Fails the release instead of publishing an app whose daemon is missing
-        # or not executable. This release is intentionally unsigned.
+      - name: Release sanity check — ad-hoc signature and bundled binaries
+        # Ad-hoc signing needs no Apple certificate. It seals the app bundle so
+        # Apple Silicon does not mistake its linker-signed executable for damage.
         run: |
           set -euo pipefail
           APP="target/aarch64-apple-darwin/release/bundle/macos/Relay.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
           broken=0
           for binary in relayd relay-mcp; do
             path="$APP/Contents/Resources/bin/$binary"

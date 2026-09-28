@@ -35,6 +35,7 @@
       "../../../target/release/relay-mcp": "bin/relay-mcp"
     },
     "macOS": {
+      "signingIdentity": "-",
       "minimumSystemVersion": "13.0",
       "hardenedRuntime": true,
       "entitlements": "../../../build-resources/entitlements.mac.plist"
