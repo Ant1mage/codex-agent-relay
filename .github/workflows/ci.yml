@@ -59,13 +59,7 @@ jobs:
       - name: Build the app
         run: cargo tauri build --target aarch64-apple-darwin
         working-directory: apps/relay-desktop
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: Relay-macOS-arm64
-          path: |
-            target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-            target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
-            target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg

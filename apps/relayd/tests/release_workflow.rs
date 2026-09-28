@@ -119,13 +119,11 @@ fn run_scripts(text: &str) -> Vec<(usize, String)> {
 /// and nothing that is Bash (`${#array[@]}`, `#`, `-eq`) belongs inside one.
 #[test]
 fn every_github_expression_is_closed_and_is_not_shell_syntax() {
+    let mut expression_count = 0;
     for name in ["release.yml", "ci.yml"] {
         let text = workflow(name);
         let found = expressions(&text);
-        assert!(
-            !found.is_empty(),
-            "{name} declares no expressions at all; this test would no longer be checking anything"
-        );
+        expression_count += found.len();
         for (line, payload) in found {
             assert!(
                 !payload.is_empty(),
@@ -152,6 +150,10 @@ fn every_github_expression_is_closed_and_is_not_shell_syntax() {
             );
         }
     }
+    assert!(
+        expression_count > 0,
+        "the release workflows should exercise GitHub expressions"
+    );
 }
 
 /// The release is published for a version tag and for nothing else.
@@ -286,4 +288,23 @@ fn the_release_job_declares_runnable_steps() {
             "the release no longer runs {pattern}"
         );
     }
+}
+
+/// Releases are manually installed from GitHub; the app must not require an
+/// updater signing key or publish a Tauri updater feed.
+#[test]
+fn releases_publish_the_dmg_without_tauri_updater_artifacts() {
+    let workflow = workflow("release.yml");
+    assert!(workflow.contains("bundle/dmg/*.dmg"));
+    assert!(!workflow.contains("TAURI_SIGNING_PRIVATE_KEY"));
+    assert!(!workflow.contains("TAURI_UPDATER_PUBKEY"));
+    assert!(!workflow.contains("latest.json"));
+    assert!(!workflow.contains(".app.tar.gz"));
+
+    let config_path = repo_root().join("apps/relay-desktop/src-tauri/tauri.conf.json");
+    let config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(config_path).expect("Tauri config exists"))
+            .expect("Tauri config is valid JSON");
+    assert!(config.get("plugins").is_none());
+    assert_ne!(config["bundle"]["createUpdaterArtifacts"], true);
 }

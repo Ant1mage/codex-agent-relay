@@ -227,8 +227,8 @@ browser, and the UI never touches SQLite.
 - `server.json` (pid, port, token, nonce, 0600) identifies a running daemon;
   liveness is verified by nonce, never by PID. Restarts only ever signal a
   verified daemon.
-- Launch-at-login, the updater and clipboard access are the desktop shell's only
-  privileged operations.
+- Launch-at-login, release checks, native update prompts and clipboard access
+  are the desktop shell's only privileged operations.
 - No accounts, no telemetry, no remote sync: everything stays in `~/.relay`.
 
 ## 12. Adding a runtime

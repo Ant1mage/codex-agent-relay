@@ -20,12 +20,13 @@ pub mod key {
     pub const MENU_RESTART_DAEMON: &str = "menu.restartDaemon";
     pub const MENU_STARTING: &str = "menu.starting";
     pub const MENU_CHECK_UPDATES: &str = "menu.checkUpdates";
-    pub const MENU_DOWNLOAD_UPDATE: &str = "menu.downloadUpdate";
-    pub const MENU_INSTALL_UPDATE: &str = "menu.installUpdate";
     pub const MENU_UPDATE_AVAILABLE: &str = "menu.updateAvailable";
     pub const MENU_UPDATE_NONE: &str = "menu.updateNone";
     pub const MENU_UPDATE_CHECKING: &str = "menu.updateChecking";
-    pub const MENU_UPDATE_UNSUPPORTED: &str = "menu.updateUnsupported";
+    pub const UPDATE_DIALOG_TITLE: &str = "update.dialog.title";
+    pub const UPDATE_DIALOG_MESSAGE: &str = "update.dialog.message";
+    pub const UPDATE_DIALOG_OPEN: &str = "update.dialog.open";
+    pub const UPDATE_DIALOG_CLOSE: &str = "update.dialog.close";
     pub const MENU_DAEMON_STALE: &str = "menu.daemonStale";
     pub const MENU_OPEN_PANEL: &str = "menu.openPanel";
     pub const MENU_CODEX_SETTINGS: &str = "menu.codexSettings";
@@ -73,12 +74,13 @@ pub mod key {
             MENU_RESTART_DAEMON,
             MENU_STARTING,
             MENU_CHECK_UPDATES,
-            MENU_DOWNLOAD_UPDATE,
-            MENU_INSTALL_UPDATE,
             MENU_UPDATE_AVAILABLE,
             MENU_UPDATE_NONE,
             MENU_UPDATE_CHECKING,
-            MENU_UPDATE_UNSUPPORTED,
+            UPDATE_DIALOG_TITLE,
+            UPDATE_DIALOG_MESSAGE,
+            UPDATE_DIALOG_OPEN,
+            UPDATE_DIALOG_CLOSE,
             MENU_DAEMON_STALE,
             MENU_OPEN_PANEL,
             MENU_CODEX_SETTINGS,
@@ -218,12 +220,16 @@ const EN: &[(&str, &str)] = &[
     ("menu.restartDaemon", "Restart log service"),
     ("menu.starting", "Starting…"),
     ("menu.checkUpdates", "Check for updates…"),
-    ("menu.downloadUpdate", "Download update"),
-    ("menu.installUpdate", "Restart and install"),
     ("menu.updateAvailable", "Update {version} available"),
     ("menu.updateNone", "Relay is up to date"),
     ("menu.updateChecking", "Checking for updates…"),
-    ("menu.updateUnsupported", "Updates need an installed build"),
+    ("update.dialog.title", "Relay update available"),
+    (
+        "update.dialog.message",
+        "Relay {version} is available. Open the GitHub release page to download it?",
+    ),
+    ("update.dialog.open", "Open"),
+    ("update.dialog.close", "Close"),
     (
         "menu.daemonStale",
         "Log service is version {running} (app {app}) — restart it",
@@ -277,12 +283,16 @@ const ZH_CN: &[(&str, &str)] = &[
     ("menu.restartDaemon", "重启日志服务"),
     ("menu.starting", "正在启动…"),
     ("menu.checkUpdates", "检查更新…"),
-    ("menu.downloadUpdate", "下载更新"),
-    ("menu.installUpdate", "重启并安装"),
     ("menu.updateAvailable", "发现新版本 {version}"),
     ("menu.updateNone", "Relay 已是最新版本"),
     ("menu.updateChecking", "正在检查更新…"),
-    ("menu.updateUnsupported", "需要安装版才能检查更新"),
+    ("update.dialog.title", "发现 Relay 新版本"),
+    (
+        "update.dialog.message",
+        "Relay {version} 已发布。要打开 GitHub 发布页面下载吗？",
+    ),
+    ("update.dialog.open", "打开"),
+    ("update.dialog.close", "关闭"),
     (
         "menu.daemonStale",
         "日志服务版本 {running}（App {app}）— 建议重启",

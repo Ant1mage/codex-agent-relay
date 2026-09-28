@@ -477,41 +477,6 @@ pub fn dispatch(app: &AppHandle, action: MenuBarAction) {
                 refresh(&handle, true).await;
             });
         }
-        MenuBarAction::DownloadUpdate => {
-            let handle = app.clone();
-            let change = notify(app);
-            tauri::async_runtime::spawn(async move {
-                updater::download(&handle, &change).await;
-                refresh(&handle, true).await;
-            });
-        }
-        MenuBarAction::InstallUpdate => {
-            let handle = app.clone();
-            tauri::async_runtime::spawn(async move {
-                // The updater replaces the bundle on quit; the daemon we started
-                // must go first, or the new app would keep talking to the old
-                // daemon. This action is an explicit restart, so even a
-                // manually-started verified daemon is stopped here; ordinary App
-                // quit still preserves user-owned daemons.
-                let verified = with_state(&handle, |state| state.probe.verified);
-                if verified {
-                    if let Some(info) = info(&handle) {
-                        daemon::stop_daemon_and_wait(&info).await;
-                    }
-                }
-                // The record is dropped so the exit path cannot signal a PID that
-                // has already been reused.
-                with_state(&handle, |state| state.probe = DaemonProbe::default());
-                match updater::install(&handle) {
-                    // macOS: the plugin installs in place, so Relay relaunches it.
-                    Ok(()) => handle.restart(),
-                    Err(error) => {
-                        set_last_error(&handle, Some(error));
-                        refresh(&handle, true).await;
-                    }
-                }
-            });
-        }
         MenuBarAction::ToggleLaunchAtLogin => {
             let enabled = app.autolaunch().is_enabled().unwrap_or(false);
             let result = if enabled {
@@ -588,8 +553,8 @@ async fn quit(app: &AppHandle) {
     app.exit(0);
 }
 
-/// Backstop for an exit that does not come through the menu (a failed start, the
-/// updater, an OS request): the daemon this shell verified is asked to stop too.
+/// Backstop for an exit that does not come through the menu (a failed start or
+/// an OS request): the daemon this shell verified is asked to stop too.
 pub fn on_exit(app: &AppHandle) {
     if let Some(info) = with_state(app, |state| verified_daemon(&state.probe)) {
         daemon::stop_daemon(&info);
@@ -618,8 +583,8 @@ async fn start(app: AppHandle) {
         refresh(&app, true).await;
     }
 
-    // Check once at launch, like any other Mac app; the menu shows the result.
-    // Without a feed the status is `unsupported`, which renders nothing.
+    // Check once at launch; a newer published release prompts the user to open
+    // GitHub, where they can download and install it themselves.
     {
         let handle = app.clone();
         let change = notify(&app);
@@ -648,7 +613,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Shell::default())
         .manage(PanelState::default())
         .manage(UpdateStore::default())

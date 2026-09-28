@@ -101,8 +101,6 @@ pub enum MenuBarAction {
     InstallCodex,
     Refresh,
     CheckUpdates,
-    DownloadUpdate,
-    InstallUpdate,
     ToggleLaunchAtLogin,
     Quit,
 }
@@ -311,33 +309,15 @@ fn update_items(t: Translator, view: &MenuBarView) -> Vec<MenuBarItem> {
     let mut items = Vec::new();
     let update = view.update.as_ref();
     match update.map(|update| update.status) {
-        Some(crate::updater::UpdateStatus::Available)
-        | Some(crate::updater::UpdateStatus::Downloaded) => {
+        Some(crate::updater::UpdateStatus::Available) => {
             let update = update.expect("update state");
-            let downloaded = update.status == crate::updater::UpdateStatus::Downloaded;
-            items.push(MenuBarItem::normal(t.tv(
-                i18n::key::MENU_UPDATE_AVAILABLE,
-                &[("version", update.version.as_deref().unwrap_or(""))],
-            )));
             items.push(
-                MenuBarItem::normal(if downloaded {
-                    t.t(i18n::key::MENU_INSTALL_UPDATE)
-                } else {
-                    t.t(i18n::key::MENU_DOWNLOAD_UPDATE)
-                })
-                .action(if downloaded {
-                    MenuBarAction::InstallUpdate
-                } else {
-                    MenuBarAction::DownloadUpdate
-                }),
+                MenuBarItem::normal(t.tv(
+                    i18n::key::MENU_UPDATE_AVAILABLE,
+                    &[("version", update.version.as_deref().unwrap_or(""))],
+                ))
+                .enabled(false),
             );
-        }
-        Some(crate::updater::UpdateStatus::Downloading) => {
-            let percent = update.and_then(|update| update.percent).unwrap_or(0);
-            items.push(MenuBarItem::header(format!(
-                "{} {percent}%",
-                t.t(i18n::key::MENU_DOWNLOAD_UPDATE)
-            )));
         }
         Some(crate::updater::UpdateStatus::Checking) => {
             items.push(MenuBarItem::header(t.t(i18n::key::MENU_UPDATE_CHECKING)));
@@ -351,7 +331,7 @@ fn update_items(t: Translator, view: &MenuBarView) -> Vec<MenuBarItem> {
                 .unwrap_or_else(|| "update error".to_string());
             items.push(MenuBarItem::header(format!("⚠︎ {message}")));
         }
-        // `idle` and `unsupported` render nothing at all.
+        // `idle` renders nothing at all.
         _ => {}
     }
     items.push(
@@ -1208,24 +1188,22 @@ mod tests {
     fn the_update_block_matches_the_documented_menu() {
         let base = view(DaemonStatus::Running, Some(empty_menu("ready")));
 
-        // idle and unsupported render nothing but the check item.
-        for status in [UpdateStatus::Idle, UpdateStatus::Unsupported] {
-            let mut model = base.clone();
-            model.update = Some(UpdateState {
-                status,
-                ..UpdateState::default()
-            });
-            let items = build_menu_bar_items(&model);
-            assert!(labels(&items).contains(&"Check for updates…".to_string()));
-            assert_eq!(
-                labels(&items)
-                    .iter()
-                    .filter(|label| label.as_str() != "Check for updates…")
-                    .filter(|label| label.to_lowercase().contains("update"))
-                    .count(),
-                0
-            );
-        }
+        // idle renders nothing but the check item.
+        let mut idle = base.clone();
+        idle.update = Some(UpdateState {
+            status: UpdateStatus::Idle,
+            ..UpdateState::default()
+        });
+        let items = build_menu_bar_items(&idle);
+        assert!(labels(&items).contains(&"Check for updates…".to_string()));
+        assert_eq!(
+            labels(&items)
+                .iter()
+                .filter(|label| label.as_str() != "Check for updates…")
+                .filter(|label| label.to_lowercase().contains("update"))
+                .count(),
+            0
+        );
 
         let mut available = base.clone();
         available.update = Some(UpdateState {
@@ -1235,32 +1213,7 @@ mod tests {
         });
         let items = build_menu_bar_items(&available);
         assert!(labels(&items).contains(&"Update 0.3.0 available".to_string()));
-        assert_eq!(
-            find(&items, "Download update").action,
-            Some(MenuBarAction::DownloadUpdate)
-        );
-
-        let mut downloaded = base.clone();
-        downloaded.update = Some(UpdateState {
-            status: UpdateStatus::Downloaded,
-            version: Some("0.3.0".into()),
-            ..UpdateState::default()
-        });
-        let items = build_menu_bar_items(&downloaded);
-        assert!(labels(&items).contains(&"Update 0.3.0 available".to_string()));
-        assert_eq!(
-            find(&items, "Restart and install").action,
-            Some(MenuBarAction::InstallUpdate)
-        );
-
-        let mut downloading = base.clone();
-        downloading.update = Some(UpdateState {
-            status: UpdateStatus::Downloading,
-            percent: Some(42),
-            ..UpdateState::default()
-        });
-        let items = build_menu_bar_items(&downloading);
-        assert!(labels(&items).contains(&"Download update 42%".to_string()));
+        assert_eq!(find(&items, "Update 0.3.0 available").enabled, Some(false));
 
         let mut checking = base.clone();
         checking.update = Some(UpdateState {

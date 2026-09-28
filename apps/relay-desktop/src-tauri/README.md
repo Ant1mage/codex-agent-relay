@@ -1,8 +1,8 @@
 # Relay Desktop Shell
 
 This crate implements Relay's macOS menu bar app with Tauri 2. It opens the
-control panel and inspector, manages the local `relayd` process, and handles
-desktop lifecycle and updates. Runtime execution and configuration belong to
+control panel and inspector, manages the local `relayd` process, and checks
+GitHub releases for updates. Runtime execution and configuration belong to
 `relayd`, not the shell.
 
 ## Build and test
@@ -26,8 +26,9 @@ first. See [Development](../../../docs/development.md).
   app icons. The daemon serves the UI and reads the bundled integration assets.
 - The app is a menu bar accessory, with no Dock icon. Runtime icons come from
   `assets/appicon/`.
-- Signed updates require a Tauri updater public key in the release bundle and a
-  matching private key in the release environment. See the release workflow.
+- Update checks compare the app version with the latest published GitHub
+  release. The app offers to open that release page; users download and install
+  the DMG themselves.
 
 ## Runtime configuration
 
@@ -40,8 +41,6 @@ first. See [Development](../../../docs/development.md).
 | `RELAY_RESOURCES_DIR` | Override the packaged resources directory |
 | `RELAY_BROWSER` | Choose the browser used for the inspector |
 | `RELAY_PANEL_DEV_URL` | Load a panel from a development URL |
-| `RELAY_UPDATE_FEED` | Override the update feed |
-
 The panel receives its token in the URL fragment, not the query string. When an
 open panel keeps the same daemon URL and token, the shell sends a `relay:panel`
 event for navigation. A changed daemon URL or token reloads the panel.

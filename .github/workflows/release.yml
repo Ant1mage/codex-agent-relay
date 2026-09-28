@@ -37,34 +37,6 @@ jobs:
         # `bundle.resources` copies these two into Contents/Resources/bin, which
         # is where the shell and the Codex integration look for them.
         run: cargo build --release -p relayd -p relay-mcp
-      - name: Stage the updater public key
-        # The public half of TAURI_SIGNING_PRIVATE_KEY. It is not a secret, but it
-        # has to reach the bundle: an app built with an empty
-        # `plugins.updater.pubkey` can never verify an update, so it reports the
-        # updater as unsupported forever.
-        env:
-          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
-        run: |
-          set -euo pipefail
-          key="$(printf '%s' "$TAURI_UPDATER_PUBKEY" | tr -d '[:space:]')"
-          if [ -z "$key" ]; then
-            echo "::error title=TAURI_UPDATER_PUBKEY is missing::The release would embed an empty updater public key, so the packaged app could never install an update. Store the public half of TAURI_SIGNING_PRIVATE_KEY (cargo tauri signer generate) as the TAURI_UPDATER_PUBKEY repository secret."
-            exit 1
-          fi
-          python3 - "$key" <<'PY'
-          import base64
-          import sys
-
-          key = sys.argv[1]
-          try:
-              decoded = base64.b64decode(key + "=" * (-len(key) % 4), validate=True).decode("utf-8")
-          except Exception as error:
-              sys.exit(f"::error title=TAURI_UPDATER_PUBKEY is not a Tauri public key::the secret is not base64-encoded text ({error})")
-          if "minisign public key" not in decoded:
-              sys.exit("::error title=TAURI_UPDATER_PUBKEY is not a Tauri public key::the decoded secret is not a minisign public key; copy the `Public key` line printed by `cargo tauri signer generate`")
-          PY
-          python3 -c 'import json,sys; print(json.dumps({"plugins":{"updater":{"pubkey":sys.argv[1]}}}))' "$key" > "$RUNNER_TEMP/updater-pubkey.json"
-          echo "staged the updater key override in $RUNNER_TEMP/updater-pubkey.json"
       - name: Import the signing certificate
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -89,12 +61,7 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # The build script refuses to finish when this is set and the merged
-          # configuration carries no updater public key.
-          RELAY_REQUIRE_UPDATER_PUBKEY: "1"
-        run: cargo tauri build --target aarch64-apple-darwin --config "$RUNNER_TEMP/updater-pubkey.json"
+        run: cargo tauri build --target aarch64-apple-darwin
         working-directory: apps/relay-desktop
       - name: Sign the bundled daemon and MCP server
         # bundle.resources lands them in Contents/Resources/bin, so that is the
@@ -146,58 +113,12 @@ jobs:
             --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
           xcrun stapler staple "$APP"
           xcrun stapler validate "$APP"
-      - name: Verify the updater artifacts
-        # A release without a signed update must not be published: the updater
-        # refuses an artifact whose signature does not verify against the
-        # embedded public key.
-        run: |
-          set -euo pipefail
-          BUNDLE="target/aarch64-apple-darwin/release/bundle/macos"
-          shopt -s nullglob
-          archives=("$BUNDLE"/*.app.tar.gz)
-          signatures=("$BUNDLE"/*.app.tar.gz.sig)
-          if [ "${#archives[@]}" -eq 0 ]; then
-            echo "::error title=No updater archive::No $BUNDLE/*.app.tar.gz was produced. Keep bundle.createUpdaterArtifacts enabled."
-            exit 1
-          fi
-          if [ "${#signatures[@]}" -eq 0 ]; then
-            echo "::error title=No updater signature::No $BUNDLE/*.app.tar.gz.sig was produced, so no update can be verified. Check TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD."
-            exit 1
-          fi
-          for signature in "${signatures[@]}"; do
-            if [ ! -s "$signature" ]; then
-              echo "::error title=Empty updater signature::$signature is empty."
-              exit 1
-            fi
-          done
-          python3 - "$BUNDLE/latest.json" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          path = pathlib.Path(sys.argv[1])
-          if not path.is_file() or path.stat().st_size == 0:
-              sys.exit("::error title=Missing latest.json::" + str(path) + " was not produced")
-          manifest = json.loads(path.read_text())
-          platforms = manifest.get("platforms", {})
-          entry = platforms.get("darwin-aarch64")
-          if not entry:
-              sys.exit("::error title=latest.json has no darwin-aarch64 entry::" + ", ".join(sorted(platforms)))
-          if not entry.get("signature"):
-              sys.exit("::error title=latest.json has no signature::the darwin-aarch64 entry carries no signature")
-          if not entry.get("url"):
-              sys.exit("::error title=latest.json has no url::the darwin-aarch64 entry carries no url")
-          print("latest.json: darwin-aarch64 -> " + str(entry.get("url")))
-          PY
       - name: Publish the release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --title "Relay $GITHUB_REF_NAME" --generate-notes
+          gh release create "$GITHUB_REF_NAME" --title "Relay $GITHUB_REF_NAME" --generate-notes
           gh release upload "$GITHUB_REF_NAME" \
-            target/aarch64-apple-darwin/release/bundle/dmg/*.dmg \
-            target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz \
-            target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig \
-            target/aarch64-apple-darwin/release/bundle/macos/latest.json --clobber
+            target/aarch64-apple-darwin/release/bundle/dmg/*.dmg --clobber

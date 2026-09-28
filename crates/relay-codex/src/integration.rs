@@ -854,7 +854,8 @@ impl CodexIntegration for CodexIntegrationService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -925,7 +926,7 @@ command = "ignored"
 
     #[test]
     fn materialised_plugin_has_the_marketplace_manifest_and_current_version() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock().blocking_lock();
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("marketplace");
         let entry = directory.path().join("relay-mcp");
@@ -961,7 +962,7 @@ command = "ignored"
 
     #[tokio::test]
     async fn repair_installs_current_plugin_and_mcp_then_stays_correct_on_repeat() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock().lock().await;
         let directory = tempfile::tempdir().unwrap();
         let codex_home = directory.path().join("codex");
         let marketplace = directory.path().join("marketplace");

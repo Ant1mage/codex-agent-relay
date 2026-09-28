@@ -34,17 +34,10 @@
       "../../../target/release/relayd": "bin/relayd",
       "../../../target/release/relay-mcp": "bin/relay-mcp"
     },
-    "createUpdaterArtifacts": true,
     "macOS": {
       "minimumSystemVersion": "13.0",
       "hardenedRuntime": true,
       "entitlements": "../../../build-resources/entitlements.mac.plist"
-    }
-  },
-  "plugins": {
-    "updater": {
-      "endpoints": ["https://github.com/Ant1mage/codex-agent-relay/releases/latest/download/latest.json"],
-      "pubkey": ""
     }
   }
 }
