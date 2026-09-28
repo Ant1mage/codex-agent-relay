@@ -83,7 +83,7 @@ async fn inspector_connection_does_not_keep_daemon_alive_or_duplicate_it_after_r
     let port = listener.local_addr().unwrap().port();
     drop(listener);
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let mut first = Daemon::start(home.path(), port);
     let first_info = wait_for_server_info(home.path(), &mut first).await;
     assert_eq!(first_info.pid, first.pid());

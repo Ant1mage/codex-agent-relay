@@ -21,6 +21,7 @@ path = "src/main.rs"
 # the inspector are served by relayd, so nothing here bundles a JavaScript
 # toolchain.
 [dependencies]
+fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -30,7 +31,7 @@ tauri-plugin-single-instance = "2"
 relay-api.workspace = true
 relay-config.workspace = true
 libc.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "system-proxy"] }
 semver = "1"
 serde = { workspace = true }
 serde_json.workspace = true

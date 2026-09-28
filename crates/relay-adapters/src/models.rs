@@ -212,6 +212,7 @@ async fn request_models(query: HttpModelQuery, supplied: Option<&str>) -> HttpMo
     };
 
     let client = match reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(8))
         .build()
     {

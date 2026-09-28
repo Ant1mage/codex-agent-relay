@@ -27,7 +27,7 @@ runtimes already available on your machine.
 
 ## Status
 
-The current release is **v0.1.0**. The verified end-to-end setup is
+The current release is **v0.1.1**. The verified end-to-end setup is
 **macOS Apple silicon + Codex + DeepSeek Harness**.
 Relay itself is written in Rust, with a Tauri menu bar app and a local daemon.
 

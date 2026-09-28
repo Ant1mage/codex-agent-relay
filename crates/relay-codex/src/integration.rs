@@ -318,7 +318,7 @@ fn probe_relay_mcp() -> CodexCheck {
             id: CodexCheckId::RelayMcp,
             ok: false,
             status: CodexCheckStatus::Stale,
-            detail: format!("已配置: {command} {}", args.join(" ")),
+            detail: format!("当前配置: {command} {}", args.join(" ")),
             hint: Some(format!(
                 "入口不存在: {} — 运行\"修复\"",
                 entry_file.unwrap().display()
@@ -329,7 +329,7 @@ fn probe_relay_mcp() -> CodexCheck {
         id: CodexCheckId::RelayMcp,
         ok: false,
         status: CodexCheckStatus::Stale,
-        detail: format!("已配置: {command} {}", args.join(" ")),
+        detail: format!("当前配置: {command} {}", args.join(" ")),
         hint: Some(format!(
             "期望: {} {} — 运行\"修复\"",
             desired.command,
@@ -383,7 +383,7 @@ fn probe_relay_skill() -> CodexCheck {
             id: CodexCheckId::RelaySkill,
             ok: false,
             status: CodexCheckStatus::Outdated,
-            detail: "已安装的 skill 与当前 Relay 版本不一致".to_string(),
+            detail: "skill 安装内容与当前 Relay 版本不一致".to_string(),
             hint: Some("运行\"更新\"".to_string()),
         };
     }
@@ -440,7 +440,7 @@ async fn probe_relay_plugin(executable: Option<&CodexExecutable>) -> CodexCheck 
             id: CodexCheckId::RelayPlugin,
             ok: false,
             status: CodexCheckStatus::Stale,
-            detail: "插件已安装但被禁用".to_string(),
+            detail: "插件处于禁用状态".to_string(),
             hint: Some("在 Codex 中启用 relay 插件".to_string()),
         };
     }
@@ -451,7 +451,7 @@ async fn probe_relay_plugin(executable: Option<&CodexExecutable>) -> CodexCheck 
                     id: CodexCheckId::RelayPlugin,
                     ok: false,
                     status: CodexCheckStatus::Outdated,
-                    detail: format!("已安装 {version}，当前 Relay 需要 {expected}"),
+                    detail: format!("安装版本 {version}，当前 Relay 需要 {expected}"),
                     hint: Some("运行\"更新\"或\"修复\"".to_string()),
                 };
             }
@@ -666,7 +666,7 @@ pub async fn install_codex() -> InstallResult {
             }
         }
     };
-    messages.push(format!("已生成插件 {version} → {}", root.display()));
+    messages.push(format!("生成插件 {version} → {}", root.display()));
 
     let marketplaces = codex(&executable, &["plugin", "marketplace", "list"]).await;
     let current_root = if marketplaces.ok {
@@ -682,13 +682,13 @@ pub async fn install_codex() -> InstallResult {
                 &["plugin", "marketplace", "remove", MARKETPLACE_NAME],
             )
             .await;
-            messages.push(format!("已移除指向旧路径的 marketplace: {current}"));
+            messages.push(format!("移除指向旧路径的 marketplace: {current}"));
         }
     }
     if current_root.as_deref() != Some(root_text.as_str()) {
         let added = codex(&executable, &["plugin", "marketplace", "add", &root_text]).await;
         messages.push(if added.ok {
-            "已注册本地 marketplace".to_string()
+            "注册本地 marketplace 成功".to_string()
         } else {
             format!("marketplace 注册失败: {}", truncate(&added.text, 200))
         });
@@ -727,7 +727,7 @@ pub async fn install_codex() -> InstallResult {
     )
     .await;
     messages.push(if added.ok {
-        "已安装 relay 插件（skill + hooks）".to_string()
+        "安装 relay 插件成功（skill + hooks）".to_string()
     } else {
         format!("插件安装失败: {}", truncate(&added.text, 200))
     });
@@ -748,18 +748,18 @@ pub async fn install_codex() -> InstallResult {
         }
         let mcp_added = codex(&executable, &args).await;
         messages.push(if mcp_added.ok {
-            "已配置 relay MCP server".to_string()
+            "配置 relay MCP server 成功".to_string()
         } else {
             format!("MCP 配置失败: {}", truncate(&mcp_added.text, 200))
         });
     } else {
-        messages.push("relay MCP server 已是当前配置".to_string());
+        messages.push("relay MCP server 配置与当前版本一致".to_string());
     }
 
     let legacy = relay_config::codex_home().join("skills").join(PLUGIN_NAME);
     if legacy.exists() {
         let _ = std::fs::remove_dir_all(&legacy);
-        messages.push("已清理旧版手工复制的 skill".to_string());
+        messages.push("清理旧版手工复制的 skill 完成".to_string());
     }
 
     let status = codex_status().await;
@@ -786,9 +786,9 @@ pub async fn remove_codex() -> InstallResult {
             )
             .await;
             messages.push(if plugin.ok {
-                "已卸载 relay 插件".to_string()
+                "卸载 relay 插件成功".to_string()
             } else {
-                "relay 插件未安装或已卸载".to_string()
+                format!("卸载 relay 插件未完成: {}", truncate(&plugin.text, 200))
             });
             let marketplace = codex(
                 &executable,
@@ -796,15 +796,18 @@ pub async fn remove_codex() -> InstallResult {
             )
             .await;
             messages.push(if marketplace.ok {
-                "已移除 relay marketplace".to_string()
+                "移除 relay marketplace 成功".to_string()
             } else {
-                "relay marketplace 未注册或已移除".to_string()
+                format!(
+                    "移除 relay marketplace 未完成: {}",
+                    truncate(&marketplace.text, 200)
+                )
             });
             let mcp = codex(&executable, &["mcp", "remove", PLUGIN_NAME]).await;
             messages.push(if mcp.ok {
-                "已移除 relay MCP server".to_string()
+                "移除 relay MCP server 成功".to_string()
             } else {
-                "relay MCP server 未配置或已移除".to_string()
+                format!("移除 relay MCP server 未完成: {}", truncate(&mcp.text, 200))
             });
         }
         None => messages.push("未找到 codex CLI；只能清理本地文件".to_string()),
@@ -814,7 +817,7 @@ pub async fn remove_codex() -> InstallResult {
     if legacy.exists() {
         let _ = std::fs::remove_dir_all(&legacy);
     }
-    messages.push("已删除本地插件与旧 skill 副本".to_string());
+    messages.push("删除本地插件与旧 skill 副本完成".to_string());
     InstallResult {
         status: codex_status().await,
         messages,

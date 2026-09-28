@@ -306,7 +306,10 @@ fn wire_string<T: Serialize>(value: &T) -> String {
 /// Relay can be available while the log service is down, and the Codex
 /// integration has its own lifecycle.
 fn update_items(t: Translator, view: &MenuBarView) -> Vec<MenuBarItem> {
-    let mut items = Vec::new();
+    let mut items = vec![MenuBarItem::header(t.tv(
+        i18n::key::MENU_VERSION,
+        &[("version", env!("CARGO_PKG_VERSION"))],
+    ))];
     let update = view.update.as_ref();
     match update.map(|update| update.status) {
         Some(crate::updater::UpdateStatus::Available) => {
@@ -819,6 +822,7 @@ mod tests {
                 "",
                 "Copy diagnostics",
                 "",
+                concat!("Version ", env!("CARGO_PKG_VERSION")),
                 "Check for updates…",
                 "",
                 "Quit Relay",
@@ -858,6 +862,7 @@ mod tests {
                 "Copy diagnostics",
                 "Launch at login",
                 "",
+                concat!("Version ", env!("CARGO_PKG_VERSION")),
                 "Check for updates…",
                 "",
                 "Quit Relay",
@@ -1113,9 +1118,9 @@ mod tests {
         let items = build_menu_bar_items(&view(DaemonStatus::Running, Some(menu)));
         let codex = find(&items, "Codex integration").submenu.as_ref().unwrap();
         assert_eq!(codex[0].label, "Not configured");
-        assert_eq!(codex[1].label, "✓ Codex detected");
-        assert_eq!(codex[2].label, "✗ Relay MCP configured — missing");
-        assert_eq!(codex[3].label, "✗ Relay hooks registered — stale");
+        assert_eq!(codex[1].label, "✓ Codex CLI detection");
+        assert_eq!(codex[2].label, "✗ Relay MCP configuration — missing");
+        assert_eq!(codex[3].label, "✗ Relay hooks registration — stale");
         assert_eq!(codex[4].kind, MenuItemKind::Separator);
         assert_eq!(codex[5].label, "Codex integration settings…");
         // Any broken check turns the last entry into "repair".

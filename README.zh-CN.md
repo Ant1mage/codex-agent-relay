@@ -26,7 +26,7 @@ Relay 不是 AI IDE，也不创建第二套 Agent loop；它将 Codex 与本机�
 
 ## 项目状态
 
-当前版本为 **v0.1.0**。已验证的端到端组合是
+当前版本为 **v0.1.1**。已验证的端到端组合是
 **Apple 芯片 Mac + Codex + DeepSeek Harness**。Relay 使用
 Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
 

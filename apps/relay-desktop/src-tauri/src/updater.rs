@@ -66,6 +66,27 @@ struct LatestRelease {
     tag_name: String,
 }
 
+async fn latest_release_tag() -> Result<String, reqwest::Error> {
+    // Only the public GitHub request follows environment/macOS proxies. Relay's
+    // daemon and model-discovery clients explicitly use no_proxy().
+    let client = reqwest::Client::builder()
+        .user_agent(concat!(
+            env!("CARGO_PKG_NAME"),
+            "/",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .timeout(REQUEST_TIMEOUT)
+        .build()?;
+    Ok(client
+        .get(LATEST_RELEASE_API)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<LatestRelease>()
+        .await?
+        .tag_name)
+}
+
 /// Compare the app's semantic version with a GitHub release tag such as `v0.2.0`.
 fn is_newer_release(current: &str, tag: &str) -> Result<bool, String> {
     let current = Version::parse(current).map_err(|error| format!("当前版本号无效: {error}"))?;
@@ -109,28 +130,12 @@ pub async fn check<R: Runtime>(
     on_change();
 
     let result = async {
-        let client = reqwest::Client::builder()
-            .user_agent(concat!(
-                env!("CARGO_PKG_NAME"),
-                "/",
-                env!("CARGO_PKG_VERSION")
-            ))
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .map_err(|error| error.to_string())?;
-        let latest = client
-            .get(LATEST_RELEASE_API)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?
-            .json::<LatestRelease>()
+        let tag = latest_release_tag()
             .await
             .map_err(|error| error.to_string())?;
         let current = app.package_info().version.to_string();
-        let newer = is_newer_release(&current, &latest.tag_name)?;
-        Ok::<_, String>((latest.tag_name, newer))
+        let newer = is_newer_release(&current, &tag)?;
+        Ok::<_, String>((tag, newer))
     }
     .await;
 
@@ -161,6 +166,16 @@ pub async fn check<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires access to GitHub using the machine's current network/proxy settings"]
+    async fn github_release_check_uses_current_network_settings() {
+        let tag = latest_release_tag()
+            .await
+            .expect("GitHub release check failed");
+        assert!(Version::parse(tag.trim_start_matches('v')).is_ok());
+        println!("GitHub latest release: {tag}");
+    }
 
     #[test]
     fn release_tags_are_compared_as_semantic_versions() {

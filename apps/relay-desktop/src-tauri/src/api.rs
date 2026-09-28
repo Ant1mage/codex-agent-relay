@@ -68,7 +68,7 @@ impl RelayClient {
             .no_proxy()
             .timeout(timeout)
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .expect("Relay's direct loopback HTTP client must be constructible");
         Self {
             base_url: normalize_base_url(&base_url.into()),
             token: token.into(),

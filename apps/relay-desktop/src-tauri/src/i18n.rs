@@ -20,6 +20,7 @@ pub mod key {
     pub const MENU_RESTART_DAEMON: &str = "menu.restartDaemon";
     pub const MENU_STARTING: &str = "menu.starting";
     pub const MENU_CHECK_UPDATES: &str = "menu.checkUpdates";
+    pub const MENU_VERSION: &str = "menu.version";
     pub const MENU_UPDATE_AVAILABLE: &str = "menu.updateAvailable";
     pub const MENU_UPDATE_NONE: &str = "menu.updateNone";
     pub const MENU_UPDATE_CHECKING: &str = "menu.updateChecking";
@@ -74,6 +75,7 @@ pub mod key {
             MENU_RESTART_DAEMON,
             MENU_STARTING,
             MENU_CHECK_UPDATES,
+            MENU_VERSION,
             MENU_UPDATE_AVAILABLE,
             MENU_UPDATE_NONE,
             MENU_UPDATE_CHECKING,
@@ -220,6 +222,7 @@ const EN: &[(&str, &str)] = &[
     ("menu.restartDaemon", "Restart log service"),
     ("menu.starting", "Starting…"),
     ("menu.checkUpdates", "Check for updates…"),
+    ("menu.version", "Version {version}"),
     ("menu.updateAvailable", "Update {version} available"),
     ("menu.updateNone", "Relay is up to date"),
     ("menu.updateChecking", "Checking for updates…"),
@@ -264,11 +267,11 @@ const EN: &[(&str, &str)] = &[
     ("panel.rescan", "Rescan runtimes"),
     ("agents.authRequired", "Authentication required"),
     ("agents.notInstalled", "Not installed"),
-    ("onboarding.check.codex-cli", "Codex detected"),
-    ("onboarding.check.relay-mcp", "Relay MCP configured"),
-    ("onboarding.check.relay-skill", "Relay skill installed"),
-    ("onboarding.check.relay-plugin", "Relay plugin installed"),
-    ("onboarding.check.relay-hooks", "Relay hooks registered"),
+    ("onboarding.check.codex-cli", "Codex CLI detection"),
+    ("onboarding.check.relay-mcp", "Relay MCP configuration"),
+    ("onboarding.check.relay-skill", "Relay skill installation"),
+    ("onboarding.check.relay-plugin", "Relay plugin installation"),
+    ("onboarding.check.relay-hooks", "Relay hooks registration"),
 ];
 
 const ZH_CN: &[(&str, &str)] = &[
@@ -283,6 +286,7 @@ const ZH_CN: &[(&str, &str)] = &[
     ("menu.restartDaemon", "重启日志服务"),
     ("menu.starting", "正在启动…"),
     ("menu.checkUpdates", "检查更新…"),
+    ("menu.version", "当前版本 {version}"),
     ("menu.updateAvailable", "发现新版本 {version}"),
     ("menu.updateNone", "Relay 已是最新版本"),
     ("menu.updateChecking", "正在检查更新…"),
@@ -309,7 +313,7 @@ const ZH_CN: &[(&str, &str)] = &[
     ("menu.sessions", "会话"),
     ("menu.agents", "智能体"),
     ("menu.codex", "Codex 集成"),
-    ("menu.codexConnected", "已连接"),
+    ("menu.codexConnected", "连接正常"),
     ("menu.codexMissing", "未配置"),
     ("menu.cancelWorker", "取消 worker"),
     ("menu.stopAll", "停止所有 worker"),
@@ -327,11 +331,11 @@ const ZH_CN: &[(&str, &str)] = &[
     ("panel.rescan", "重新扫描运行时"),
     ("agents.authRequired", "需要认证"),
     ("agents.notInstalled", "未安装"),
-    ("onboarding.check.codex-cli", "已检测到 Codex"),
-    ("onboarding.check.relay-mcp", "已配置 Relay MCP"),
-    ("onboarding.check.relay-skill", "已安装 Relay skill"),
-    ("onboarding.check.relay-plugin", "已安装 Relay 插件"),
-    ("onboarding.check.relay-hooks", "已注册 Relay hooks"),
+    ("onboarding.check.codex-cli", "Codex CLI 检测"),
+    ("onboarding.check.relay-mcp", "Relay MCP 配置"),
+    ("onboarding.check.relay-skill", "Relay skill 安装"),
+    ("onboarding.check.relay-plugin", "Relay 插件安装"),
+    ("onboarding.check.relay-hooks", "Relay hooks 注册"),
 ];
 
 #[cfg(test)]

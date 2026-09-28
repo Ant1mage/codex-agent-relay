@@ -1,7 +1,7 @@
 [package]
 name = "relay-ui"
 description = "Relay's Leptos + Trunk UI: the read-only inspector and the control panel in one bundle."
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.85"
 publish = false

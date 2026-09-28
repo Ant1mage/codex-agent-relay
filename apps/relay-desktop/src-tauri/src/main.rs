@@ -8,5 +8,10 @@
 )]
 
 fn main() {
+    // GUI-launched apps do not inherit the user's shell PATH. Restore it before
+    // the bundled daemon starts so JS CLIs such as dsh can find Node.
+    if let Err(error) = fix_path_env::fix() {
+        eprintln!("[relay] could not load the user's shell PATH: {error}");
+    }
     relay_desktop::run();
 }
