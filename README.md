@@ -27,7 +27,7 @@ runtimes already available on your machine.
 
 ## Status
 
-The current release is **v0.1.1**. The verified end-to-end setup is
+The current release is **v0.1.2**. The verified end-to-end setup is
 **macOS Apple silicon + Codex + DeepSeek Harness**.
 Relay itself is written in Rust, with a Tauri menu bar app and a local daemon.
 
@@ -37,6 +37,17 @@ Relay itself is written in Rust, with a Tauri menu bar app and a local daemon.
 | Kimi Code | `kimi` | `kimi-code` | Experimental; not end-to-end verified |
 | Antigravity CLI | `agy` | `antigravity-cli` | Experimental; not end-to-end verified |
 | Z.ai / GLM | `zai-cli` | `zai-cli` | Experimental; not end-to-end verified |
+| Grok Build | `grok` | `grok-cli` | Native CLI integration; live daemon validation recorded below |
+
+Grok reuses the CLI's existing login. Model and reasoning choices come from
+`grok models` and its matching native model metadata. On macOS, Relay also
+passes enabled system proxies to Grok when no proxy environment override is
+present. Read-only/propose runs use Grok's read-only sandbox; write runs use
+its workspace sandbox. Child proxy exclusions always include loopback addresses;
+Relay's own local connections stay direct, while update checks use system proxies.
+Resume and cancellation are supported; live message injection and child agents
+are not offered. See the
+[Grok validation report](docs/reports/grok-cli-2026-09-28.md) for the tested scope.
 
 ## Quick start
 

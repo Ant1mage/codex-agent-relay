@@ -26,7 +26,7 @@ Relay 不是 AI IDE，也不创建第二套 Agent loop；它将 Codex 与本机�
 
 ## 项目状态
 
-当前版本为 **v0.1.1**。已验证的端到端组合是
+当前版本为 **v0.1.2**。已验证的端到端组合是
 **Apple 芯片 Mac + Codex + DeepSeek Harness**。Relay 使用
 Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
 
@@ -36,6 +36,14 @@ Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
 | Kimi Code | `kimi` | `kimi-code` | 实验性，尚未完成端到端验证 |
 | Antigravity CLI | `agy` | `antigravity-cli` | 实验性，尚未完成端到端验证 |
 | Z.ai / GLM | `zai-cli` | `zai-cli` | 实验性，尚未完成端到端验证 |
+| Grok Build | `grok` | `grok-cli` | 已接入原生 CLI，调试守护进程实测范围见下文 |
+
+Grok 复用 CLI 已有的登录。模型和推理强度取自 `grok models` 及同版本的
+原生模型元数据。macOS 下，未显式设置代理环境变量时，Relay 会把已启用的
+系统代理传给 Grok。只读和建议模式使用只读沙箱，写入模式使用工作区沙箱。
+子进程代理排除项始终包含本地回环地址，Relay 自身的本地连接直连，更新检查
+使用系统代理。支持继续会话和取消任务。运行中发送消息和子 Agent 暂不提供。
+实测范围见 [Grok 验证报告](docs/reports/grok-cli-2026-09-28.md)。
 
 ## 快速开始
 
