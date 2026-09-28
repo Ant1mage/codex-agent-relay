@@ -26,8 +26,8 @@ Relay 不是 AI IDE，也不创建第二套 Agent loop；它将 Codex 与本机�
 
 ## 项目状态
 
-当前版本为 **v0.1.2**。已验证的端到端组合是
-**Apple 芯片 Mac + Codex + DeepSeek Harness**。Relay 使用
+当前版本为 **v0.1.2**。已在 **Apple 芯片 Mac + Codex** 上验证
+**DeepSeek Harness** 和 **Grok Build** 的端到端派发。Relay 使用
 Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
 
 | Agent 运行时 | CLI | Adapter | 状态 |
@@ -36,7 +36,7 @@ Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
 | Kimi Code | `kimi` | `kimi-code` | 实验性，尚未完成端到端验证 |
 | Antigravity CLI | `agy` | `antigravity-cli` | 实验性，尚未完成端到端验证 |
 | Z.ai / GLM | `zai-cli` | `zai-cli` | 实验性，尚未完成端到端验证 |
-| Grok Build | `grok` | `grok-cli` | 已接入原生 CLI，调试守护进程实测范围见下文 |
+| Grok Build | `grok` | `grok-cli` | 已支持并完成端到端验证 |
 
 Grok 复用 CLI 已有的登录。模型和推理强度取自 `grok models` 及同版本的
 原生模型元数据。macOS 下，未显式设置代理环境变量时，Relay 会把已启用的

@@ -27,8 +27,8 @@ runtimes already available on your machine.
 
 ## Status
 
-The current release is **v0.1.2**. The verified end-to-end setup is
-**macOS Apple silicon + Codex + DeepSeek Harness**.
+The current release is **v0.1.2**. End-to-end delegation is verified on
+**macOS Apple silicon + Codex**, using **DeepSeek Harness** or **Grok Build**.
 Relay itself is written in Rust, with a Tauri menu bar app and a local daemon.
 
 | Agent runtime | CLI | Adapter | Status |
@@ -37,7 +37,7 @@ Relay itself is written in Rust, with a Tauri menu bar app and a local daemon.
 | Kimi Code | `kimi` | `kimi-code` | Experimental; not end-to-end verified |
 | Antigravity CLI | `agy` | `antigravity-cli` | Experimental; not end-to-end verified |
 | Z.ai / GLM | `zai-cli` | `zai-cli` | Experimental; not end-to-end verified |
-| Grok Build | `grok` | `grok-cli` | Native CLI integration; live daemon validation recorded below |
+| Grok Build | `grok` | `grok-cli` | Supported; end-to-end verified |
 
 Grok reuses the CLI's existing login. Model and reasoning choices come from
 `grok models` and its matching native model metadata. On macOS, Relay also
