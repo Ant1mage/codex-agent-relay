@@ -5,7 +5,7 @@
 //! copied exactly: which events are visible, how a run of reads collapses, how a
 //! diff stat is summed and how a status becomes a glyph.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use relay_api::RunView;
 use relay_core::{RelayEvent, RelayEventType, RunStatus, StepStatus};
@@ -337,14 +337,81 @@ fn diff_stat(event: &RelayEvent) -> Option<(f64, f64)> {
     ))
 }
 
-fn to_row(event: &RelayEvent) -> Option<ConsoleRow> {
+/// The one-line replacement for a completion whose final answer is already on
+/// screen as the worker's final message.
+const COMPLETION_STATUS_LABEL: &str = "Completed";
+
+/// `(worker, text)` for a final assistant message: `worker/message` with
+/// `kind == "final"`. The worker session id is what keeps two iterations from
+/// collapsing into each other, because every iteration runs as its own worker.
+fn final_message(event: &RelayEvent) -> Option<(&str, &str)> {
+    if event.event_type != RelayEventType::WorkerMessage {
+        return None;
+    }
+    let data = event.data.as_object()?;
+    if data.get("kind").and_then(Value::as_str) != Some("final") {
+        return None;
+    }
+    let text = data.get("text").and_then(Value::as_str)?;
+    Some((event.worker_session_id.as_deref()?, text))
+}
+
+/// `(worker, summary)` for a completion event, when it carries one.
+fn completion_summary(event: &RelayEvent) -> Option<(&str, &str)> {
+    if event.event_type != RelayEventType::WorkerCompleted {
+        return None;
+    }
+    let data = event.data.as_object()?;
+    let summary = data.get("summary").and_then(Value::as_str)?;
+    Some((event.worker_session_id.as_deref()?, summary))
+}
+
+/// Ids of `worker/completed` events whose summary repeats, verbatim, the final
+/// message of the same worker.
+///
+/// The two rows are the same answer twice and the console must show it once.
+/// The match is deliberately narrow: same worker and byte-identical content.
+/// A different worker, a different round of the same worker, or any difference
+/// in the text keeps the completion's own summary, so nothing is ever lost.
+fn repeated_completions(events: &[RelayEvent]) -> BTreeSet<String> {
+    let mut finals: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut repeated = BTreeSet::new();
+    for event in events {
+        if let Some((worker, text)) = final_message(event) {
+            if !text.is_empty() {
+                finals.entry(worker).or_default().push(text);
+            }
+        }
+        if let Some((worker, summary)) = completion_summary(event) {
+            if summary.is_empty() {
+                continue;
+            }
+            if let Some(texts) = finals.get_mut(worker) {
+                if let Some(position) = texts.iter().position(|text| *text == summary) {
+                    // Pair a completion with one final message at most: a second
+                    // completion is its own fact and keeps its full summary.
+                    texts.remove(position);
+                    repeated.insert(event.id.clone());
+                }
+            }
+        }
+    }
+    repeated
+}
+
+fn to_row(event: &RelayEvent, repeated_completion: bool) -> Option<ConsoleRow> {
     let kind = event_kind(event)?;
-    let stat = if kind == ConsoleKind::Edit { diff_stat(event) } else { None };
+    let stat =
+        if kind == ConsoleKind::Edit && !repeated_completion { diff_stat(event) } else { None };
     Some(ConsoleRow {
         id: event.id.clone(),
         kind,
         timestamp: event.timestamp.clone(),
-        label: event_summary(event),
+        label: if repeated_completion {
+            COMPLETION_STATUS_LABEL.to_string()
+        } else {
+            event_summary(event)
+        },
         additions: stat.map(|(additions, _)| additions),
         deletions: stat.map(|(_, deletions)| deletions),
         count: None,
@@ -353,11 +420,16 @@ fn to_row(event: &RelayEvent) -> Option<ConsoleRow> {
 
 /// Builds Console rows, collapsing runs of three or more consecutive Read/Search
 /// events into one summary row so repetitive low-value work stays quiet.
+///
+/// A completion that repeats its worker's final message is shown as a short
+/// status instead of the same long answer twice. Both events stay in the log and
+/// in the Raw view; only the Console row is shortened.
 pub fn console_rows(events: &[RelayEvent]) -> Vec<ConsoleRow> {
+    let repeated = repeated_completions(events);
     let mut rows: Vec<ConsoleRow> = Vec::new();
     let mut index = 0usize;
     while index < events.len() {
-        let Some(row) = to_row(&events[index]) else {
+        let Some(row) = to_row(&events[index], repeated.contains(&events[index].id)) else {
             index += 1;
             continue;
         };
@@ -368,7 +440,7 @@ pub fn console_rows(events: &[RelayEvent]) -> Vec<ConsoleRow> {
         }
         let mut end = index;
         while end + 1 < events.len() {
-            match to_row(&events[end + 1]) {
+            match to_row(&events[end + 1], repeated.contains(&events[end + 1].id)) {
                 Some(next) if next.kind == row.kind => end += 1,
                 _ => break,
             }
@@ -386,7 +458,7 @@ pub fn console_rows(events: &[RelayEvent]) -> Vec<ConsoleRow> {
             });
         } else {
             for item in run {
-                if let Some(single) = to_row(item) {
+                if let Some(single) = to_row(item, repeated.contains(&item.id)) {
                     rows.push(single);
                 }
             }
@@ -469,5 +541,148 @@ pub fn number(value: f64) -> String {
         format!("{}", value as i64)
     } else {
         format!("{value}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(
+        id: &str,
+        seq: u64,
+        worker: Option<&str>,
+        event_type: RelayEventType,
+        data: Value,
+    ) -> RelayEvent {
+        RelayEvent {
+            id: id.to_string(),
+            run_id: "run-1".to_string(),
+            step_id: Some("step-1".to_string()),
+            worker_session_id: worker.map(str::to_string),
+            seq,
+            timestamp: "2026-09-28T00:00:00.000Z".to_string(),
+            event_type,
+            data,
+            native_event: None,
+        }
+    }
+
+    fn final_message(id: &str, seq: u64, worker: &str, text: &str) -> RelayEvent {
+        event(
+            id,
+            seq,
+            Some(worker),
+            RelayEventType::WorkerMessage,
+            serde_json::json!({ "kind": "final", "text": text }),
+        )
+    }
+
+    fn completed(id: &str, seq: u64, worker: &str, summary: &str) -> RelayEvent {
+        event(
+            id,
+            seq,
+            Some(worker),
+            RelayEventType::WorkerCompleted,
+            serde_json::json!({ "summary": summary, "exitCode": 0 }),
+        )
+    }
+
+    fn labels_for(rows: &[ConsoleRow], text: &str) -> usize {
+        rows.iter().filter(|row| row.label == text).count()
+    }
+
+    /// The reported case: `worker/message(kind=final,text)` and
+    /// `worker/completed(summary)` carry the same 13,854-character answer for the
+    /// same worker. The Console must show the answer once and the completion as a
+    /// short status.
+    #[test]
+    fn a_completion_repeating_its_final_message_is_not_expanded_twice() {
+        let answer = "x".repeat(13_854);
+        let events = vec![
+            final_message("m1", 4, "worker-1", &answer),
+            completed("c1", 5, "worker-1", &answer),
+        ];
+        let rows = console_rows(&events);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(labels_for(&rows, &answer), 1, "the long answer must appear once");
+        let completion = rows.iter().find(|row| row.id == "c1").unwrap();
+        assert_eq!(completion.label, COMPLETION_STATUS_LABEL);
+        assert_eq!(completion.kind, ConsoleKind::Result);
+
+        // Raw output keeps the original events: nothing is dropped from the log.
+        let raw = visible_events(&events);
+        assert_eq!(raw.len(), 2);
+        assert!(raw.iter().any(|event| event.id == "m1"));
+        assert!(raw.iter().any(|event| event.id == "c1"));
+    }
+
+    /// The counter-example the fix must not break: a different worker's
+    /// completion is never collapsed by another worker's identical message.
+    #[test]
+    fn a_completion_from_another_worker_keeps_its_summary() {
+        let answer = "same text".to_string();
+        let events = vec![
+            final_message("m1", 4, "worker-1", &answer),
+            completed("c2", 5, "worker-2", &answer),
+        ];
+        let rows = console_rows(&events);
+        assert_eq!(labels_for(&rows, &answer), 2);
+        assert!(rows.iter().all(|row| row.label != COMPLETION_STATUS_LABEL));
+    }
+
+    /// Different final content is two different answers; neither is suppressed.
+    #[test]
+    fn a_completion_with_different_text_keeps_its_summary() {
+        let events = vec![
+            final_message("m1", 4, "worker-1", "the message"),
+            completed("c1", 5, "worker-1", "the completion summary"),
+        ];
+        let rows = console_rows(&events);
+        assert_eq!(labels_for(&rows, "the message"), 1);
+        assert_eq!(labels_for(&rows, "the completion summary"), 1);
+        assert!(rows.iter().all(|row| row.label != COMPLETION_STATUS_LABEL));
+    }
+
+    /// Multiple rounds of the same worker keep every message; only the completion
+    /// that repeats the latest one is shortened.
+    #[test]
+    fn multiple_rounds_of_one_worker_keep_every_message() {
+        let events = vec![
+            final_message("m1", 4, "worker-1", "first answer"),
+            final_message("m2", 5, "worker-1", "second answer"),
+            completed("c1", 6, "worker-1", "second answer"),
+        ];
+        let rows = console_rows(&events);
+        assert_eq!(labels_for(&rows, "first answer"), 1);
+        assert_eq!(labels_for(&rows, "second answer"), 1);
+        assert_eq!(labels_for(&rows, COMPLETION_STATUS_LABEL), 1);
+    }
+
+    /// A completion with no matching final message is untouched.
+    #[test]
+    fn a_lone_completion_keeps_its_summary() {
+        let events = vec![completed("c1", 4, "worker-1", "only here")];
+        let rows = console_rows(&events);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "only here");
+    }
+
+    /// A delta is progress, not the final answer, so it never pairs with a
+    /// completion — even when the text happens to be identical.
+    #[test]
+    fn a_delta_message_never_replaces_a_completion() {
+        let events = vec![
+            event(
+                "m1",
+                4,
+                Some("worker-1"),
+                RelayEventType::WorkerMessage,
+                serde_json::json!({ "kind": "delta", "text": "answer" }),
+            ),
+            completed("c1", 5, "worker-1", "answer"),
+        ];
+        let rows = console_rows(&events);
+        assert_eq!(labels_for(&rows, "answer"), 2);
     }
 }

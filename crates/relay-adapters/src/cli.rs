@@ -25,11 +25,29 @@ pub struct StreamSpec {
     /// Written to the child's stdin, then stdin is closed. Keeps the delegated
     /// task out of the process list.
     pub stdin: Option<String>,
+    /// When set, `stdin` is withheld until the child's own output has identified
+    /// the session, so a stale resume id can never be handed the task. See
+    /// [`StdinGate`].
+    pub stdin_gate: Option<StdinGate>,
     /// Key the process is registered under so `cancel` can find it.
     pub supervisor_key: String,
     /// A file this launch created that must not outlive the process — a per-run
     /// configuration overlay, for instance. Removed once the child is reaped.
     pub cleanup: Option<std::path::PathBuf>,
+}
+
+/// Defers a worker's stdin until it has announced a valid session.
+///
+/// Some CLIs accept a resume id they do not actually know and silently start a
+/// new conversation; writing the task immediately would then run it against the
+/// wrong session. With a gate the task is written only after the parse callback
+/// reports the session the CLI really opened. If that never happens within
+/// `timeout` — or the callback rejects the output first — stdin is closed
+/// without the task and the child is terminated and reaped.
+#[derive(Debug, Clone)]
+pub struct StdinGate {
+    /// How long to wait for the child to identify its session before giving up.
+    pub timeout: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +56,22 @@ pub enum StreamMode {
     Lines,
     /// A single JSON document printed at exit — `zai-cli --output json`.
     WholeOutput,
+}
+
+/// What the most recent terminal tool step reported publicly.
+///
+/// A CLI can call the whole turn a success while the tool it needed ended in an
+/// error and the answer is empty. Adapters that publish tool steps set this so
+/// the terminal decision can tell a genuine clean answer from one that followed
+/// a failed (or denied) tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolTerminalState {
+    /// The tool step ended without a public error.
+    Ok,
+    /// The tool step ended with a public error that was a permission denial.
+    PermissionDenied,
+    /// The tool step ended with some other public error.
+    Error,
 }
 
 /// What one parsed line (or the whole output) contributes.
@@ -49,6 +83,9 @@ pub struct ParsedOutput {
     pub error_message: Option<String>,
     pub turn_end_kind: Option<String>,
     pub result_status: Option<String>,
+    /// The last terminal tool step's public outcome, when the adapter reports
+    /// one. `None` leaves the terminal decision to the other fields.
+    pub tool_terminal: Option<ToolTerminalState>,
 }
 
 /// Everything observed about a finished process, for the terminal event.
@@ -59,6 +96,9 @@ pub struct StreamOutcome {
     pub error_message: Option<String>,
     pub turn_end_kind: Option<String>,
     pub result_status: Option<String>,
+    /// The last terminal tool step's public outcome, carried to the terminal
+    /// event so an empty success after a failed tool is not read as completion.
+    pub tool_terminal: Option<ToolTerminalState>,
     pub stderr_tail: String,
     pub exit_code: Option<i32>,
     pub signal: Option<i32>,
@@ -226,16 +266,45 @@ pub async fn run_cli(
         .ok_or_else(|| RelayError::new("ADAPTER_FAILURE", "worker stdout is unavailable"))?;
     let stderr = child.stderr.take();
 
-    if let Some(payload) = spec.stdin.clone() {
-        if let Some(mut stdin) = child.stdin.take() {
+    // A gated worker's stdin is held back until the output task has validated
+    // the handshake. Until then the delegated task exists only in memory; on
+    // timeout or rejection the pipe is closed without ever writing it.
+    let mut gate_sender: Option<oneshot::Sender<()>> = None;
+    match (
+        spec.stdin_gate.clone(),
+        spec.stdin.clone(),
+        child.stdin.take(),
+    ) {
+        (Some(gate), Some(payload), Some(mut stdin)) => {
+            let (sender, receiver) = oneshot::channel::<()>();
+            gate_sender = Some(sender);
+            let supervisor_for_gate = Arc::clone(&supervisor);
+            let key_for_gate = spec.supervisor_key.clone();
+            let timeout = gate.timeout;
+            tokio::spawn(async move {
+                let opened = tokio::time::timeout(timeout, receiver)
+                    .await
+                    .ok()
+                    .is_some_and(|result| result.is_ok());
+                if opened {
+                    let _ = stdin.write_all(payload.as_bytes()).await;
+                    let _ = stdin.shutdown().await;
+                } else {
+                    // No task: close the pipe and reclaim the child.
+                    drop(stdin);
+                    supervisor_for_gate.terminate(&key_for_gate);
+                }
+            });
+        }
+        (_, Some(payload), Some(mut stdin)) => {
             let write = async move {
                 let _ = stdin.write_all(payload.as_bytes()).await;
                 let _ = stdin.shutdown().await;
             };
             tokio::spawn(write);
         }
-    } else {
-        drop(child.stdin.take());
+        (_, None, stdin) => drop(stdin),
+        (_, _, None) => {}
     }
 
     let (sender, receiver) = mpsc::channel::<AdapterEvent>(256);
@@ -273,6 +342,7 @@ pub async fn run_cli(
     tokio::spawn(async move {
         let mut outcome = StreamOutcome::default();
         let mut ready_sender = Some(ready_sender);
+        let mut gate_sender = gate_sender;
         let reader = BufReader::new(stdout);
         let mut exited = false;
         let mut exit_status: Option<std::process::ExitStatus> = None;
@@ -304,7 +374,7 @@ pub async fn run_cli(
                     match next {
                         Ok(Some(line)) => {
                             let parsed = parse_for_task(&line);
-                            absorb(
+                            let established = absorb(
                                 &mut outcome,
                                 &parsed,
                                 &session_for_task,
@@ -312,6 +382,19 @@ pub async fn run_cli(
                                 &supervisor_for_task,
                                 &key,
                             );
+                            if let Some(sender) = gate_sender.take() {
+                                if established {
+                                    // The handshake is real: release the task.
+                                    let _ = sender.send(());
+                                } else if parsed.error_message.is_some() {
+                                    // A rejected handshake must never receive the
+                                    // task; dropping the sender closes stdin.
+                                    drop(sender);
+                                    break;
+                                } else {
+                                    gate_sender = Some(sender);
+                                }
+                            }
                             for event in parsed.events {
                                 if sender.send(event).await.is_err() {
                                     break;
@@ -334,7 +417,7 @@ pub async fn run_cli(
                     outcome.spawn_error = Some(error.to_string());
                 }
                 let parsed = parse_for_task(&buffer);
-                absorb(
+                let established = absorb(
                     &mut outcome,
                     &parsed,
                     &session_for_task,
@@ -342,12 +425,27 @@ pub async fn run_cli(
                     &supervisor_for_task,
                     &key,
                 );
+                if let Some(sender) = gate_sender.take() {
+                    if established {
+                        let _ = sender.send(());
+                    } else {
+                        drop(sender);
+                    }
+                }
                 for event in parsed.events {
                     if sender.send(event).await.is_err() {
                         break;
                     }
                 }
             }
+        }
+
+        // A gated launch that never opened its gate ended without announcing a
+        // session. That is a failure, not a cancellation: Relay reclaimed a
+        // worker whose handshake never completed.
+        if gate_sender.is_some() && outcome.error_message.is_none() {
+            outcome.error_message =
+                Some("worker ended before it announced its session".to_string());
         }
 
         // Whatever happened above, the exit status is known by now: either the
@@ -421,7 +519,8 @@ fn absorb(
     ready_sender: &mut Option<oneshot::Sender<String>>,
     supervisor: &Arc<ProcessSupervisor>,
     key: &str,
-) {
+) -> bool {
+    let mut established = false;
     if let Some(session_id) = &parsed.session_id {
         if outcome.session_id.is_none() {
             outcome.session_id = Some(session_id.clone());
@@ -431,6 +530,7 @@ fn absorb(
             if let Some(sender) = ready_sender.take() {
                 let _ = sender.send(session_id.clone());
             }
+            established = true;
         }
     }
     if let Some(text) = &parsed.final_text {
@@ -445,6 +545,12 @@ fn absorb(
     if let Some(status) = &parsed.result_status {
         outcome.result_status = Some(status.clone());
     }
+    // The most recent terminal tool step wins: a clean retry clears an earlier
+    // failure, so a recovered tool call does not fail an otherwise empty turn.
+    if let Some(state) = parsed.tool_terminal {
+        outcome.tool_terminal = Some(state);
+    }
+    established
 }
 
 fn append_tail(tail: &Arc<Mutex<String>>, line: &str) {
@@ -512,6 +618,7 @@ mod tests {
             cwd: "/tmp".to_string(),
             env: Vec::new(),
             stdin: None,
+            stdin_gate: None,
             supervisor_key: "worker:test".to_string(),
             cleanup: None,
         }
@@ -673,5 +780,224 @@ mod tests {
         // A zombie would still answer signal 0; the child is reaped by now.
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
         assert!(!supervisor.terminate("worker:test"));
+    }
+
+    fn gated_spec(directory: &std::path::Path, script: &str, timeout: Duration) -> StreamSpec {
+        StreamSpec {
+            executable: "/bin/sh".to_string(),
+            args: vec!["-c".to_string(), script.to_string()],
+            cwd: directory.to_string_lossy().into_owned(),
+            env: Vec::new(),
+            stdin: Some("{\"task\":\"PRIVATE\"}\n".to_string()),
+            stdin_gate: Some(StdinGate { timeout }),
+            supervisor_key: "worker:gate".to_string(),
+            cleanup: None,
+        }
+    }
+
+    /// A gated task is written only after the child has identified its session,
+    /// so the child must announce itself before it can read the payload.
+    #[tokio::test]
+    async fn a_gated_task_is_written_only_after_the_session_is_reported() {
+        let directory = tempfile::tempdir().unwrap();
+        let supervisor = Arc::new(ProcessSupervisor::new());
+        let handle = run_cli(
+            gated_spec(
+                directory.path(),
+                "printf '%s\\n' '{\"type\":\"session\",\"id\":\"s-1\"}'; \
+                 cat > got.txt; \
+                 printf '%s\\n' '{\"type\":\"text\",\"text\":\"hi\"}'",
+                Duration::from_secs(5),
+            ),
+            StreamMode::Lines,
+            Arc::new(parse_line),
+            Arc::new(terminal),
+            Arc::clone(&supervisor),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(handle.native_session_id.as_deref(), Some("s-1"));
+        let mut receiver = handle.events;
+        while receiver.recv().await.is_some() {}
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("got.txt")).unwrap(),
+            "{\"task\":\"PRIVATE\"}\n"
+        );
+    }
+
+    /// When the child never announces a session, the task is never written and
+    /// the child is terminated and reaped instead of leaving a stuck worker.
+    #[tokio::test]
+    async fn a_missing_session_never_delivers_the_task_and_reaps_the_child() {
+        let directory = tempfile::tempdir().unwrap();
+        let supervisor = Arc::new(ProcessSupervisor::new());
+        let result = run_cli(
+            gated_spec(
+                directory.path(),
+                "if read line; then printf '%s' \"$line\" > got.txt; fi; sleep 30",
+                Duration::from_millis(300),
+            ),
+            StreamMode::Lines,
+            Arc::new(parse_line),
+            Arc::new(terminal),
+            Arc::clone(&supervisor),
+            true,
+        )
+        .await;
+        assert!(result.is_err(), "no session must fail, not hang");
+        wait_untracked(&supervisor).await;
+        assert!(
+            !directory.path().join("got.txt").exists(),
+            "the gated task must not reach the child"
+        );
+    }
+
+    /// A parse-level rejection before the session closes stdin and reclaims the
+    /// child without ever writing the task.
+    #[tokio::test]
+    async fn a_rejected_handshake_never_delivers_the_task() {
+        fn rejecting(line: &str) -> ParsedOutput {
+            let mut parsed = ParsedOutput::default();
+            if line.contains("bad") {
+                parsed.error_message = Some("rejected".to_string());
+            }
+            parsed
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let supervisor = Arc::new(ProcessSupervisor::new());
+        let result = run_cli(
+            gated_spec(
+                directory.path(),
+                "printf 'bad\\n'; if read line; then printf '%s' \"$line\" > got.txt; fi; sleep 30",
+                Duration::from_secs(5),
+            ),
+            StreamMode::Lines,
+            Arc::new(rejecting),
+            Arc::new(terminal),
+            Arc::clone(&supervisor),
+            true,
+        )
+        .await;
+        assert!(result.is_err());
+        wait_untracked(&supervisor).await;
+        assert!(!directory.path().join("got.txt").exists());
+    }
+
+    /// Cancelling by worker key while the handshake is still pending stops the
+    /// worker without deadlocking.
+    #[tokio::test]
+    async fn a_gated_worker_can_be_cancelled_before_any_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let supervisor = Arc::new(ProcessSupervisor::new());
+        let task = tokio::spawn(run_cli(
+            gated_spec(directory.path(), "sleep 30", Duration::from_secs(5)),
+            StreamMode::Lines,
+            Arc::new(parse_line),
+            Arc::new(terminal),
+            Arc::clone(&supervisor),
+            true,
+        ));
+        for _ in 0..100 {
+            if supervisor.is_tracked("worker:gate") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(supervisor.terminate("worker:gate"));
+        let result = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("cancel must not deadlock the worker")
+            .unwrap();
+        assert!(result.is_err());
+        wait_untracked(&supervisor).await;
+    }
+
+    /// A one-line parser that only publishes a terminal tool state, plus a
+    /// terminal event that surfaces it, so the merge can be observed end to end.
+    fn tool_parse(line: &str) -> ParsedOutput {
+        ParsedOutput {
+            tool_terminal: match line.trim() {
+                "denied" => Some(ToolTerminalState::PermissionDenied),
+                "ok" => Some(ToolTerminalState::Ok),
+                _ => None,
+            },
+            ..ParsedOutput::default()
+        }
+    }
+
+    fn tool_terminal(outcome: &StreamOutcome) -> AdapterEvent {
+        AdapterEvent::new(
+            RelayEventType::WorkerCompleted,
+            serde_json::json!({ "toolTerminal": format!("{:?}", outcome.tool_terminal) }),
+        )
+    }
+
+    async fn last_tool_state(script: &str) -> String {
+        let handle = run_cli(
+            spec(script),
+            StreamMode::Lines,
+            Arc::new(tool_parse),
+            Arc::new(tool_terminal),
+            Arc::new(ProcessSupervisor::new()),
+            false,
+        )
+        .await
+        .unwrap();
+        let mut receiver = handle.events;
+        let mut last = None;
+        while let Some(event) = receiver.recv().await {
+            last = Some(event);
+        }
+        last.unwrap().data["toolTerminal"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// The last terminal tool state published by the parser reaches the terminal
+    /// event: a clean retry clears an earlier failure, and a later failure
+    /// replaces an earlier clean state.
+    #[tokio::test]
+    async fn the_last_terminal_tool_state_reaches_the_terminal_event() {
+        assert_eq!(last_tool_state("printf 'denied\\nok\\n'").await, "Some(Ok)");
+        assert_eq!(
+            last_tool_state("printf 'ok\\ndenied\\n'").await,
+            "Some(PermissionDenied)"
+        );
+        assert_eq!(last_tool_state("printf 'plain\\n'").await, "None");
+    }
+
+    async fn wait_untracked(supervisor: &ProcessSupervisor) {
+        for _ in 0..200 {
+            if supervisor.tracked_keys().is_empty() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("worker process was not reaped");
+    }
+
+    /// A launch that cannot even spawn the executable fails immediately instead
+    /// of leaving a worker waiting forever.
+    #[tokio::test]
+    async fn a_worker_that_cannot_spawn_fails_without_hanging() {
+        let supervisor = Arc::new(ProcessSupervisor::new());
+        let mut broken = spec("exit 0");
+        broken.executable = "/nonexistent/relay-missing-binary".to_string();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            run_cli(
+                broken,
+                StreamMode::Lines,
+                Arc::new(parse_line),
+                Arc::new(terminal),
+                supervisor,
+                false,
+            ),
+        )
+        .await
+        .expect("a failed spawn must not hang");
+        assert!(result.is_err());
     }
 }

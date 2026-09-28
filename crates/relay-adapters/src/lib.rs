@@ -7,6 +7,7 @@
 pub mod antigravity;
 pub mod cli;
 pub mod deepseek;
+mod environment;
 pub mod grok;
 pub mod instructions;
 pub mod kimi;

@@ -27,14 +27,19 @@ Relay 不是 AI IDE，也不创建第二套 Agent loop；它将 Codex 与本机�
 ## 项目状态
 
 当前版本为 **v0.1.2**。已在 **Apple 芯片 Mac + Codex** 上验证
-**DeepSeek Harness** 和 **Grok Build** 的端到端派发。Relay 使用
-Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
+**DeepSeek Harness**、**Grok Build** 和 **Antigravity CLI** 的端到端派发；
+其中 Antigravity 的在线验证范围为 echo/read-file 与会话
+`run`/`resume`/`cancel`/`accept` 流程（详见下方范围说明）。
+Relay 使用 Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
+
+Antigravity CLI 接入属于当前开发分支，**尚未包含在已发布的 v0.1.2 DMG 中**：
+下载 v0.1.2 还不会获得此接入。
 
 | Agent 运行时 | CLI | Adapter | 状态 |
 | --- | --- | --- | --- |
 | DeepSeek Harness | `dsh` | `deepseek-harness` | 已支持并完成端到端验证 |
 | Kimi Code | `kimi` | `kimi-code` | 实验性，尚未完成端到端验证 |
-| Antigravity CLI | `agy` | `antigravity-cli` | 实验性，尚未完成端到端验证 |
+| Antigravity CLI | `agy` | `antigravity-cli` | 当前开发分支已支持（仅写入模式）；范围见下方说明 |
 | Z.ai / GLM | `zai-cli` | `zai-cli` | 实验性，尚未完成端到端验证 |
 | Grok Build | `grok` | `grok-cli` | 已支持并完成端到端验证 |
 
@@ -44,6 +49,37 @@ Grok 复用 CLI 已有的登录。模型和推理强度取自 `grok models` 及�
 子进程代理排除项始终包含本地回环地址，Relay 自身的本地连接直连，更新检查
 使用系统代理。支持继续会话和取消任务。运行中发送消息和子 Agent 暂不提供。
 实测范围见 [Grok 验证报告](docs/reports/grok-cli-2026-09-28.md)。
+
+Antigravity CLI（`agy`）通过其原生 headless 流接入：任务作为一条私有
+`user` 事件写入 stdin，CLI 的 `init`、`step_update`、`result` NDJSON 帧
+转换为 Relay 事件；文本增量合并为一条完整回复。模型 ID 严格解析 `agy models`
+的 `<id>\t<label>` 两列表格，通过 CLI 自身的 `--model` 应用；reasoning 取值
+严格采用 CLI help 枚举的 `--effort`（`low|medium|high|max`），绝不从模型 ID
+后缀推断。Relay 先等待并校验 `init` 的会话 UUID，通过后才把任务写入 stdin：
+缺少 UUID、UUID 非规范、无法识别的旧会话 ID、或握手超时都会失败，此时关闭
+stdin、不送达任务并回收子进程。任务送达后若会话 ID 发生变化，只会将该轮判为
+失败，无法撤销已发送或已执行的内容。继续会话使用 `--conversation` 和原生
+UUID。工具步骤会暴露真实文件路径（CLI 发布的 `AbsolutePath` 与 `TargetFile`
+归一化为 `path`，供 Changes 视图使用）和命令（CLI 发布的 `CommandLine`
+归一化为 `command`）。支持取消。真实 Codex 会话已通过 Relay 跑通原生
+`list`/`run`/`wait`/`resume`/`accept`/`cancel` 全流程：续接轮次保持同一原生
+会话，无效模型会失败而非误报成功，取消会回收原生进程。
+
+**权限与验证范围。** 原生 headless 运行继承用户已有的 Antigravity 权限设置。
+Relay 不添加 `--dangerously-skip-permissions` 或任何绕过参数，也绝不自动批准
+被拒绝的工具。按官方 headless 文档 *Permissions in headless mode*：权限默认继承
+用户 settings；headless 无法获取确认时可能 soft-denied，但进程仍可能 exit 0。
+在本轮验证所用主机上，`request-review` 策略拒绝了测试写入——临时目录与仓库
+`target/` 下的路径均被拒；shell 命令同样可能需要既有 allow 规则，实测的真实
+`run_command` 样本即被拒绝。拒绝**不会**触发自动重新登录，也不会自动绕过权限。
+由于没有在线完成任何写入或 shell 编码任务，本接入不声称整个工具生命周期均已
+验证。工具被拒且最终 `SUCCESS` 回复为空时，不再误报为任务完成；该修复由实测
+拒绝样本与离线回归测试覆盖。echo 与 read-file 任务，以及当前会话的
+`run`/`resume`/`cancel`/`accept` 流程已端到端通过。由于 headless Antigravity
+无法强制只读工作区，只读与建议模式会被诚实拒绝，仅提供写入模式。不提供运行中
+发送消息；CLI 报告子 Agent 步骤时会映射为 child 事件，但子 Agent 生命周期
+尚未完成端到端验证。实测范围与保留限制见
+[Antigravity 验证报告](docs/reports/antigravity-cli-2026-09-28.md)。
 
 ## 快速开始
 

@@ -313,6 +313,7 @@ impl GrokAdapter {
                 cwd: input.cwd,
                 env,
                 stdin: None,
+                stdin_gate: None,
                 // Preallocate the native UUID so cancel is available before Grok
                 // emits its terminal sessionId, without waiting on a full channel.
                 supervisor_key: native_id.clone(),
@@ -511,6 +512,7 @@ case "$1" in
 esac
 printf '%s\n' "$@" > args.txt
 printf '%s\n%s\n' "$NO_PROXY" "$no_proxy" > child-exclusions.txt
+printf '%s' "$GROK_DISABLE_AUTOUPDATER" > child-autoupdate.txt
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --prompt-file) prompt="$2"; shift;;
@@ -587,6 +589,11 @@ printf '{"type":"end","sessionId":"%s","stopReason":"end_turn"}\n' "$session"
         assert!(lines[0].split(',').any(|value| value == "::1"));
         assert_eq!(std::env::var_os("NO_PROXY"), parent_no_proxy);
         assert_eq!(std::env::var_os("no_proxy"), parent_no_proxy_lower);
+        // The shared child environment keeps Grok's auto-updater switch.
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("child-autoupdate.txt")).unwrap(),
+            "1"
+        );
         let prompt_path = args
             .lines()
             .skip_while(|arg| *arg != "--prompt-file")
