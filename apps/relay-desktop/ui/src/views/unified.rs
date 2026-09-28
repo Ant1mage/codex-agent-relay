@@ -8,7 +8,7 @@ use leptos::prelude::*;
 use crate::api::Route;
 use crate::components::controls::icon;
 use crate::components::notice::notice_pill;
-use crate::components::session_rail::session_rail;
+use crate::components::session_rail::session_rail_collapsible;
 use crate::components::timeline_stream::TimelineStream;
 use crate::dom;
 use crate::i18n::Locale;
@@ -33,6 +33,7 @@ pub fn unified_app() -> AnyView {
         .into_any();
     };
 
+    let sidebar_open = RwSignal::new(true);
     let route = RwSignal::new(dom::parse_path(&dom::pathname()));
     dom::on_popstate(move || route.set(dom::parse_path(&dom::pathname())));
 
@@ -144,8 +145,8 @@ pub fn unified_app() -> AnyView {
         <div class="unified-layout">
             // Left Navigation Rail
             <aside class="unified-rail">
-                <div class="unified-rail-drag-region">
-                    <span class="mark unified-rail-logo" role="img" aria-label="Relay"></span>
+                <div class="unified-rail-header">
+                    {crate::components::controls::relay_logo("unified-rail-logo")}
                 </div>
 
                 <div class="unified-rail-nav">
@@ -291,9 +292,22 @@ pub fn unified_app() -> AnyView {
                     {move || match panel_store.tab.get() {
                         PanelTab::Sessions => {
                             view! {
-                                <div class="unified-sessions-pane">
-                                    {session_rail(route)}
+                                <div class=move || format!("unified-sessions-pane {}", if sidebar_open.get() { "" } else { "sidebar-collapsed" })>
+                                    {session_rail_collapsible(route, Some(sidebar_open))}
                                     <div class="unified-timeline-column">
+                                        {move || (!sidebar_open.get()).then(|| view! {
+                                            <div class="sidebar-expand-bar">
+                                                <button
+                                                    type="button"
+                                                    class="btn btn-outline btn-xs sidebar-expand-btn"
+                                                    title=t.t("timeline.expand")
+                                                    on:click=move |_| sidebar_open.set(true)
+                                                >
+                                                    {icon("chevron-right", "icon icon-xs")}
+                                                    <span>{t.t("nav.sessions")}</span>
+                                                </button>
+                                            </div>
+                                        })}
                                         <TimelineStream route=route />
                                     </div>
                                 </div>

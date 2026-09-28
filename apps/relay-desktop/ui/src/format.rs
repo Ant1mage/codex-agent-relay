@@ -544,6 +544,297 @@ pub fn number(value: f64) -> String {
     }
 }
 
+/// Heuristic to detect whether a text string contains markdown formatting or multiple lines.
+pub fn is_markdown_content(input: &str) -> bool {
+    input.contains('\n')
+        || input.contains("```")
+        || input.contains("**")
+        || input.contains("__")
+        || input.contains("##")
+        || input.starts_with("# ")
+        || input.starts_with("- ")
+        || input.starts_with("* ")
+}
+
+pub fn html_escape(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+fn parse_ordered_list(s: &str) -> Option<(usize, &str)> {
+    let dot_idx = s.find(". ")?;
+    let num_str = &s[..dot_idx];
+    if num_str.chars().all(|c| c.is_ascii_digit()) && !num_str.is_empty() {
+        let num = num_str.parse::<usize>().ok()?;
+        Some((num, &s[dot_idx + 2..]))
+    } else {
+        None
+    }
+}
+
+pub fn format_inline(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+    let mut idx = 0;
+
+    while idx < len {
+        // Inline code `...`
+        if chars[idx] == '`' {
+            if let Some(end) = chars[idx + 1..].iter().position(|&c| c == '`') {
+                let code_content: String = chars[idx + 1..idx + 1 + end].iter().collect();
+                out.push_str("<code class=\"md-code\">");
+                out.push_str(&html_escape(&code_content));
+                out.push_str("</code>");
+                idx += end + 2;
+                continue;
+            }
+        }
+
+        // Bold **...**
+        if idx + 1 < len && chars[idx] == '*' && chars[idx + 1] == '*' {
+            let slice = &chars[idx + 2..];
+            if let Some(pos) = (0..slice.len().saturating_sub(1)).find(|&p| slice[p] == '*' && slice[p + 1] == '*') {
+                let inner: String = slice[..pos].iter().collect();
+                out.push_str("<strong>");
+                out.push_str(&format_inline(&inner));
+                out.push_str("</strong>");
+                idx += 2 + pos + 2;
+                continue;
+            }
+        }
+
+        // Italic *...*
+        if chars[idx] == '*' {
+            let slice = &chars[idx + 1..];
+            if let Some(pos) = slice.iter().position(|&c| c == '*') {
+                let inner: String = slice[..pos].iter().collect();
+                out.push_str("<em>");
+                out.push_str(&format_inline(&inner));
+                out.push_str("</em>");
+                idx += 1 + pos + 1;
+                continue;
+            }
+        }
+
+        // Link [text](url)
+        if chars[idx] == '[' {
+            if let Some(close_bracket) = chars[idx + 1..].iter().position(|&c| c == ']') {
+                let text_start = idx + 1;
+                let text_end = idx + 1 + close_bracket;
+                if text_end + 1 < len && chars[text_end + 1] == '(' {
+                    if let Some(close_paren) = chars[text_end + 2..].iter().position(|&c| c == ')') {
+                        let text: String = chars[text_start..text_end].iter().collect();
+                        let url: String = chars[text_end + 2..text_end + 2 + close_paren].iter().collect();
+                        out.push_str(&format!(
+                            "<a href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"md-link\">{}</a>",
+                            html_escape(&url),
+                            html_escape(&text)
+                        ));
+                        idx = text_end + 2 + close_paren + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Standard escaping
+        match chars[idx] {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c => out.push(c),
+        }
+        idx += 1;
+    }
+
+    out
+}
+
+/// Minimal, safe Markdown parser converting markdown strings into structured HTML.
+pub fn markdown_to_html(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 3 / 2);
+    let mut in_code_block = false;
+    let mut in_ul = false;
+    let mut in_ol = false;
+    let mut in_p = false;
+
+    let lines: Vec<&str> = input.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+
+        // 1. Code block delimiter (```)
+        if trimmed.starts_with("```") {
+            if in_p {
+                out.push_str("</p>\n");
+                in_p = false;
+            }
+            if in_ul {
+                out.push_str("</ul>\n");
+                in_ul = false;
+            }
+            if in_ol {
+                out.push_str("</ol>\n");
+                in_ol = false;
+            }
+
+            if in_code_block {
+                out.push_str("</code></pre>\n");
+                in_code_block = false;
+            } else {
+                let lang = trimmed.trim_start_matches('`').trim();
+                if lang.is_empty() {
+                    out.push_str("<pre class=\"md-pre\"><code>");
+                } else {
+                    out.push_str(&format!("<pre class=\"md-pre\"><code class=\"language-{}\">", html_escape(lang)));
+                }
+                in_code_block = true;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Inside code block: preserve literal lines escaped
+        if in_code_block {
+            out.push_str(&html_escape(line));
+            out.push('\n');
+            i += 1;
+            continue;
+        }
+
+        // Empty line
+        if trimmed.is_empty() {
+            if in_p {
+                out.push_str("</p>\n");
+                in_p = false;
+            }
+            if in_ul {
+                out.push_str("</ul>\n");
+                in_ul = false;
+            }
+            if in_ol {
+                out.push_str("</ol>\n");
+                in_ol = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Headings (#, ##, ###, ####)
+        if trimmed.starts_with('#') {
+            let level = trimmed.chars().take_while(|&c| c == '#').count();
+            if level <= 6 && trimmed[level..].starts_with(' ') {
+                if in_p {
+                    out.push_str("</p>\n");
+                    in_p = false;
+                }
+                if in_ul {
+                    out.push_str("</ul>\n");
+                    in_ul = false;
+                }
+                if in_ol {
+                    out.push_str("</ol>\n");
+                    in_ol = false;
+                }
+
+                let content = trimmed[level..].trim();
+                out.push_str(&format!("<h{level} class=\"md-h{level}\">{}</h{level}>\n", format_inline(content)));
+                i += 1;
+                continue;
+            }
+        }
+
+        // Unordered lists (- or *)
+        if (trimmed.starts_with("- ") || trimmed.starts_with("* ")) && !trimmed.starts_with("***") {
+            if in_p {
+                out.push_str("</p>\n");
+                in_p = false;
+            }
+            if in_ol {
+                out.push_str("</ol>\n");
+                in_ol = false;
+            }
+            if !in_ul {
+                out.push_str("<ul class=\"md-ul\">\n");
+                in_ul = true;
+            }
+            let item_text = &trimmed[2..];
+            out.push_str(&format!("  <li>{}</li>\n", format_inline(item_text)));
+            i += 1;
+            continue;
+        }
+
+        // Ordered lists (1. , 2. , etc.)
+        if let Some((_num, rest)) = parse_ordered_list(trimmed) {
+            if in_p {
+                out.push_str("</p>\n");
+                in_p = false;
+            }
+            if in_ul {
+                out.push_str("</ul>\n");
+                in_ul = false;
+            }
+            if !in_ol {
+                out.push_str("<ol class=\"md-ol\">\n");
+                in_ol = true;
+            }
+            out.push_str(&format!("  <li>{}</li>\n", format_inline(rest)));
+            i += 1;
+            continue;
+        }
+
+        // Regular paragraph or continuing line
+        if in_ul {
+            out.push_str("</ul>\n");
+            in_ul = false;
+        }
+        if in_ol {
+            out.push_str("</ol>\n");
+            in_ol = false;
+        }
+
+        if !in_p {
+            out.push_str("<p class=\"md-p\">");
+            in_p = true;
+            out.push_str(&format_inline(trimmed));
+        } else {
+            out.push_str("<br/>\n");
+            out.push_str(&format_inline(trimmed));
+        }
+
+        i += 1;
+    }
+
+    if in_p {
+        out.push_str("</p>\n");
+    }
+    if in_ul {
+        out.push_str("</ul>\n");
+    }
+    if in_ol {
+        out.push_str("</ol>\n");
+    }
+    if in_code_block {
+        out.push_str("</code></pre>\n");
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,5 +975,27 @@ mod tests {
         ];
         let rows = console_rows(&events);
         assert_eq!(labels_for(&rows, "answer"), 2);
+    }
+
+    #[test]
+    fn markdown_parser_handles_headings_lists_code_and_formatting() {
+        let md = "# Title\n\nHere is **bold** and `code`.\n\n- item 1\n- item 2\n\n```rust\nfn main() {}\n```";
+        let html = markdown_to_html(md);
+        assert!(html.contains("<h1 class=\"md-h1\">Title</h1>"));
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("<code class=\"md-code\">code</code>"));
+        assert!(html.contains("<ul class=\"md-ul\">"));
+        assert!(html.contains("<li>item 1</li>"));
+        assert!(html.contains("<li>item 2</li>"));
+        assert!(html.contains("<pre class=\"md-pre\"><code class=\"language-rust\">fn main() {}"));
+    }
+
+    #[test]
+    fn is_markdown_heuristic_detects_formatting() {
+        assert!(is_markdown_content("Hello\nworld"));
+        assert!(is_markdown_content("## Heading"));
+        assert!(is_markdown_content("**bold**"));
+        assert!(is_markdown_content("- bullet"));
+        assert!(!is_markdown_content("plain text message"));
     }
 }

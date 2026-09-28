@@ -72,6 +72,15 @@ pub fn TimelineStream(route: RwSignal<Route>) -> impl IntoView {
                 let is_running = run_status == "running" || run_status == "starting";
                 let is_awaiting = run_status == "awaiting_host";
                 let active_worker = run_view.workers.iter().filter(|w| w.status.is_active()).next_back().cloned();
+                let expand_all = {
+                    let collapsed = collapsed_steps;
+                    move |_| collapsed.set(HashSet::new())
+                };
+                let collapse_all = {
+                    let collapsed = collapsed_steps;
+                    let s_ids: Vec<String> = steps.iter().map(|s| s.id.clone()).collect();
+                    move |_| collapsed.set(s_ids.iter().cloned().collect())
+                };
 
                 view! {
                     <div class="timeline-header">
@@ -135,6 +144,16 @@ pub fn TimelineStream(route: RwSignal<Route>) -> impl IntoView {
                                     }
                                 })
                                 .collect_view()}
+                        </div>
+                        <div class="step-stream-actions">
+                            <button type="button" class="btn btn-ghost btn-xs step-action-btn" on:click=expand_all>
+                                {icon("chevrons-down", "icon icon-xs")}
+                                <span>{t.t("timeline.expandAll")}</span>
+                            </button>
+                            <button type="button" class="btn btn-ghost btn-xs step-action-btn" on:click=collapse_all>
+                                {icon("chevrons-up", "icon icon-xs")}
+                                <span>{t.t("timeline.collapseAll")}</span>
+                            </button>
                         </div>
                     </nav>
 
@@ -320,11 +339,26 @@ fn StepCard(
                             format!("{} {}", count, t.t("inspector.events"))
                         }}
                     </span>
-                    <button type="button" class="btn-icon step-card-toggle">
+                    <button
+                        type="button"
+                        class="btn btn-outline btn-xs step-card-toggle-btn"
+                        on:click=move |ev| {
+                            ev.stop_propagation();
+                            on_toggle.run(());
+                        }
+                    >
                         {move || if is_collapsed.get() {
-                            icon("chevron-down", "icon icon-xs")
+                            view! {
+                                {icon("chevron-down", "icon icon-xs")}
+                                <span>{t.t("timeline.expand")}</span>
+                            }
+                            .into_any()
                         } else {
-                            icon("chevron-up", "icon icon-xs")
+                            view! {
+                                {icon("chevron-up", "icon icon-xs")}
+                                <span>{t.t("timeline.collapse")}</span>
+                            }
+                            .into_any()
                         }}
                     </button>
                 </div>
@@ -406,19 +440,38 @@ fn render_log_row(row: ConsoleRow, t: &crate::i18n::Translator) -> impl IntoView
     let label = row.label.clone();
     let count = row.count;
     let diff = state::diff_label(row.additions, row.deletions);
+    let is_markdown = format::is_markdown_content(&label);
 
     view! {
-        <div class=format!("log-row {accent}")>
+        <div class=format!("log-row {} {}", accent, if is_markdown { "log-row-markdown" } else { "" })>
             <time class="log-time tabular">{time}</time>
             <span class="log-kind">{kind}</span>
-            <code class="log-label">
-                {label}
-                {count
-                    .map(|count| {
-                        view! { <i class="log-note">" " {count} " " {t.t("console.files")}</i> }
-                    })}
-                {(!diff.is_empty()).then(|| view! { <i class="log-note tabular">{diff}</i> })}
-            </code>
+            {if is_markdown {
+                let html = format::markdown_to_html(&label);
+                view! {
+                    <div class="log-content-wrap">
+                        <div class="log-markdown-block markdown-body" inner_html=html></div>
+                        {count
+                            .map(|count| {
+                                view! { <i class="log-note">" " {count} " " {t.t("console.files")}</i> }
+                            })}
+                        {(!diff.is_empty()).then(|| view! { <i class="log-note tabular">{diff}</i> })}
+                    </div>
+                }
+                .into_any()
+            } else {
+                view! {
+                    <code class="log-label">
+                        {label}
+                        {count
+                            .map(|count| {
+                                view! { <i class="log-note">" " {count} " " {t.t("console.files")}</i> }
+                            })}
+                        {(!diff.is_empty()).then(|| view! { <i class="log-note tabular">{diff}</i> })}
+                    </code>
+                }
+                .into_any()
+            }}
         </div>
     }
 }

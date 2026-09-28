@@ -189,6 +189,30 @@ pub fn confirm_dialog(
     }
 }
 
+pub fn relay_logo(class: &'static str) -> impl IntoView {
+    view! {
+        <svg
+            class=class
+            viewBox="0 0 512 512"
+            fill="none"
+            aria-hidden="true"
+        >
+            <g stroke="currentColor" stroke-width="42" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M92 256 H196" />
+                <path d="M196 256 C250 256 260 126 336 126 H410" />
+                <path d="M196 256 H410" />
+                <path d="M196 256 C250 256 260 386 336 386 H410" />
+            </g>
+            <g fill="currentColor">
+                <circle cx="76" cy="256" r="28" />
+                <circle cx="436" cy="126" r="28" />
+                <circle cx="436" cy="256" r="28" />
+                <circle cx="436" cy="386" r="28" />
+            </g>
+        </svg>
+    }
+}
+
 /// Lucide-shaped icons, inline: no icon font, no dependency, no network.
 pub fn icon(name: &'static str, class: &'static str) -> impl IntoView {
     view! {

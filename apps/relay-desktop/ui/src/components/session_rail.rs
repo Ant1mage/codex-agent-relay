@@ -11,6 +11,10 @@ use crate::format;
 use crate::state::{self, preferred_run, Store};
 
 pub fn session_rail(route: RwSignal<Route>) -> impl IntoView {
+    session_rail_collapsible(route, None)
+}
+
+pub fn session_rail_collapsible(route: RwSignal<Route>, sidebar_open: Option<RwSignal<bool>>) -> impl IntoView {
     let store = expect_context::<Store>();
     let t = store.translator();
 
@@ -23,6 +27,17 @@ pub fn session_rail(route: RwSignal<Route>) -> impl IntoView {
             <div class="rail-head">
                 <span class="rail-title">{t.t("nav.sessions")}</span>
                 <span class="rail-count tabular">{move || sessions().len()}</span>
+                {sidebar_open.map(|open| view! {
+                    <div class="rail-head-spacer"></div>
+                    <button
+                        type="button"
+                        class="btn btn-ghost btn-xs rail-collapse-btn"
+                        title=t.t("timeline.collapse")
+                        on:click=move |_| open.set(false)
+                    >
+                        {icon("chevron-left", "icon icon-xs")}
+                    </button>
+                })}
             </div>
             <div class="rail-scroll">
                 {move || {

@@ -618,9 +618,43 @@ async fn start(app: AppHandle) {
         });
     }
 
+    let mut initial_window_shown = false;
     loop {
+        if !initial_window_shown && with_state(&app, |state| state.probe.status == DaemonStatus::Running) {
+            show_panel(&app);
+            initial_window_shown = true;
+        }
         tokio::time::sleep(Duration::from_millis(POLL_MS)).await;
         refresh(&app, false).await;
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_dock_icon() {
+    use std::ffi::c_void;
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+
+    const ICON_PNG: &[u8] = include_bytes!("../../../../assets/appicon/png/light/relay-icon-512.png");
+    unsafe {
+        let nsdata_cls = class!(NSData);
+        let data: *mut AnyObject = msg_send![nsdata_cls, dataWithBytes: ICON_PNG.as_ptr() as *const c_void, length: ICON_PNG.len()];
+        if data.is_null() {
+            return;
+        }
+
+        let nsimage_cls = class!(NSImage);
+        let alloc_image: *mut AnyObject = msg_send![nsimage_cls, alloc];
+        let image: *mut AnyObject = msg_send![alloc_image, initWithData: data];
+        if image.is_null() {
+            return;
+        }
+
+        let nsapp_cls = class!(NSApplication);
+        let app: *mut AnyObject = msg_send![nsapp_cls, sharedApplication];
+        if !app.is_null() {
+            let _: () = msg_send![app, setApplicationIconImage: image];
+        }
     }
 }
 
@@ -651,6 +685,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let _ = handle.set_activation_policy(tauri::ActivationPolicy::Regular);
+                set_macos_dock_icon();
             }
             if let Err(error) = tray::build(&handle) {
                 eprintln!("[relay] {error}; Relay cannot show a menu bar item");

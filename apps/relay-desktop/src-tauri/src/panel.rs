@@ -138,8 +138,7 @@ pub fn open(app: &AppHandle, target: PanelTarget) -> Result<(), String> {
 
     let url = Url::parse(&panel_url(&target)).map_err(|error| error.to_string())?;
     state.set_target(Some(target));
-    #[allow(unused_mut)]
-    let mut builder = WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::External(url))
+    let _builder = WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::External(url))
         .title("Relay")
         .inner_size(PANEL_WIDTH, PANEL_HEIGHT)
         .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
@@ -151,16 +150,7 @@ pub fn open(app: &AppHandle, target: PanelTarget) -> Result<(), String> {
         .always_on_top(false)
         .center()
         .visible(false)
-        .focused(true);
-
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true);
-    }
-
-    builder
+        .focused(true)
         .on_page_load(|window, _payload| {
             let _ = window.show();
             let _ = window.set_focus();

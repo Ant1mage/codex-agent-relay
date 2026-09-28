@@ -3443,6 +3443,7 @@ version = "0.1.2"
 dependencies = [
  "fix-path-env",
  "libc",
+ "objc2",
  "relay-api",
  "relay-config",
  "reqwest 0.12.28",
