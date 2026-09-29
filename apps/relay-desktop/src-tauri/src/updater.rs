@@ -89,15 +89,20 @@ async fn latest_release_tag() -> Result<String, reqwest::Error> {
 
 /// Compare the app's semantic version with a GitHub release tag such as `v0.2.0`.
 fn is_newer_release(current: &str, tag: &str) -> Result<bool, String> {
-    let current = Version::parse(current).map_err(|error| format!("当前版本号无效: {error}"))?;
+    let current = Version::parse(current).map_err(|error| {
+        Translator::new(i18n::current_locale())
+            .tv("update.invalidCurrent", &[("error", &error.to_string())])
+    })?;
     let tag = tag.strip_prefix('v').unwrap_or(tag);
-    let latest =
-        Version::parse(tag).map_err(|error| format!("GitHub release tag 无效: {error}"))?;
+    let latest = Version::parse(tag).map_err(|error| {
+        Translator::new(i18n::current_locale())
+            .tv("update.invalidTag", &[("error", &error.to_string())])
+    })?;
     Ok(latest > current)
 }
 
 fn update_prompt<R: Runtime>(app: &AppHandle<R>, version: &str) {
-    let t = Translator::new(i18n::system_locale());
+    let t = Translator::new(i18n::current_locale());
     let title = t.t(key::UPDATE_DIALOG_TITLE);
     let message = t.tv(key::UPDATE_DIALOG_MESSAGE, &[("version", version)]);
     let open = t.t(key::UPDATE_DIALOG_OPEN);

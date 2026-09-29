@@ -54,11 +54,11 @@ impl CodexCheckId {
     /// Translation key the tray and the panel use for this check.
     pub fn label_key(self) -> &'static str {
         match self {
-            CodexCheckId::CodexCli => "onboarding.check.codex-cli",
-            CodexCheckId::RelayMcp => "onboarding.check.relay-mcp",
-            CodexCheckId::RelaySkill => "onboarding.check.relay-skill",
-            CodexCheckId::RelayPlugin => "onboarding.check.relay-plugin",
-            CodexCheckId::RelayHooks => "onboarding.check.relay-hooks",
+            CodexCheckId::CodexCli => "codex.check.codex-cli",
+            CodexCheckId::RelayMcp => "codex.check.relay-mcp",
+            CodexCheckId::RelaySkill => "codex.check.relay-skill",
+            CodexCheckId::RelayPlugin => "codex.check.relay-plugin",
+            CodexCheckId::RelayHooks => "codex.check.relay-hooks",
         }
     }
 }

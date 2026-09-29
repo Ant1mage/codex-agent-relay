@@ -229,6 +229,27 @@ impl RunService for RelayEngine {
         }
         Ok(cancelled)
     }
+
+    async fn delete_session(&self, host_session_id: &str) -> Result<(), String> {
+        let doomed: Vec<String> = self
+            .controller
+            .list_active()
+            .into_iter()
+            .filter(|(run, _worker)| run.host_session_id == host_session_id)
+            .map(|(run, _worker)| run.id)
+            .collect();
+        for run_id in doomed {
+            let _ = self.controller.cancel(&run_id).await;
+        }
+
+        self.controller.policies.clear_session(host_session_id);
+
+        self.sessions
+            .delete(host_session_id)
+            .map_err(service_error)?;
+
+        Ok(())
+    }
 }
 
 /// Ends every worker this daemon owns, then waits for the supervisor tasks to

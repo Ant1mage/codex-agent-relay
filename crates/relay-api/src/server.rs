@@ -21,7 +21,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures::stream::Stream;
 use relay_core::{AgentProfile, HostSession, RuntimeOptions};
@@ -85,6 +85,8 @@ pub trait RunService: Send + Sync {
     async fn accept(&self, worker_session_id: &str) -> Result<RunProjectionView, String>;
     /// Cancels every worker a host session still has running.
     async fn cancel_session(&self, host_session_id: &str) -> Result<u32, String>;
+    /// Cancels active workers, deletes a host session and all its associated runs and events.
+    async fn delete_session(&self, host_session_id: &str) -> Result<(), String>;
 }
 
 /// The Codex integration lifecycle, implemented outside the HTTP layer.
@@ -587,6 +589,19 @@ async fn cancel_session(
     }
 }
 
+async fn delete_session(
+    State(state): State<Arc<RelayServerState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    match state.runs.delete_session(&id).await {
+        Ok(()) => {
+            state.store.invalidate();
+            Json(serde_json::json!({ "deleted": true })).into_response()
+        }
+        Err(error) => failed(error),
+    }
+}
+
 async fn accept_worker(
     State(state): State<Arc<RelayServerState>>,
     AxumPath(id): AxumPath<String>,
@@ -842,6 +857,7 @@ pub fn router(state: Arc<RelayServerState>) -> Router {
         .route("/api/workers/{id}/resume", post(resume_worker))
         .route("/api/sessions/sync", post(sync_session))
         .route("/api/sessions/end", post(end_session))
+        .route("/api/sessions/{id}", delete(delete_session))
         .route("/api/sessions/{id}/cancel", post(cancel_session))
         .route("/api/codex/{action}", post(codex_action))
         .route("/api/refresh", post(refresh))
@@ -1110,6 +1126,9 @@ mod tests {
             unavailable()
         }
         async fn cancel_session(&self, _host_session_id: &str) -> Result<u32, String> {
+            unavailable()
+        }
+        async fn delete_session(&self, _host_session_id: &str) -> Result<(), String> {
             unavailable()
         }
     }

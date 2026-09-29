@@ -7,7 +7,9 @@
 use leptos::prelude::*;
 use relay_core::{AgentProfile, CapabilitySet, Runtime};
 
-use crate::components::controls::{badge, confirm_dialog, icon, select_input, switch, text_input, textarea, Choice};
+use crate::components::controls::{
+    badge, confirm_dialog, icon, select_input, switch, text_input, textarea, Choice,
+};
 use crate::dom;
 use crate::i18n::Translator;
 use crate::state::{PanelIntent, PanelStore};
@@ -64,9 +66,17 @@ impl AgentDraft {
         AgentProfile {
             id: self.id.clone(),
             name: self.name.clone(),
-            description: if self.description.is_empty() { self.name.clone() } else { self.description.clone() },
+            description: if self.description.is_empty() {
+                self.name.clone()
+            } else {
+                self.description.clone()
+            },
             runtime_id: self.runtime_id.clone(),
-            instructions: if self.instructions.is_empty() { None } else { Some(self.instructions.clone()) },
+            instructions: if self.instructions.is_empty() {
+                None
+            } else {
+                Some(self.instructions.clone())
+            },
             model: self.model.clone(),
             reasoning: self.reasoning.clone(),
             capabilities: self.capabilities,
@@ -93,27 +103,25 @@ pub fn agents_view(store: PanelStore) -> AnyView {
     // died with the tab branch. The result now lives in PanelStore.
 
     // The tray navigates the open panel with an intent instead of a reload.
-    Effect::new(move |_| {
-        match store.intent.get() {
-            Some(PanelIntent::NewAgent) => {
-                open_new(store, editing, draft, runtime_id);
-                store.consume_intent();
-            }
-            Some(PanelIntent::EditAgent) => {
-                let wanted = store.intent_profile.get();
-                let profile = wanted.and_then(|id| {
-                    store
-                        .config
-                        .get_untracked()
-                        .and_then(|config| config.profiles.into_iter().find(|profile| profile.id == id))
-                });
-                if let Some(profile) = profile {
-                    open_existing(store, editing, draft, runtime_id, &profile);
-                }
-                store.consume_intent();
-            }
-            _ => {}
+    Effect::new(move |_| match store.intent.get() {
+        Some(PanelIntent::NewAgent) => {
+            open_new(store, editing, draft, runtime_id);
+            store.consume_intent();
         }
+        Some(PanelIntent::EditAgent) => {
+            let Some(config) = store.config.get() else {
+                return;
+            };
+            let wanted = store.intent_profile.get();
+            let profile = wanted.and_then(|id| {
+                config.profiles.into_iter().find(|profile| profile.id == id)
+            });
+            if let Some(profile) = profile {
+                open_existing(store, editing, draft, runtime_id, &profile);
+            }
+            store.consume_intent();
+        }
+        _ => {}
     });
 
     view! {
@@ -129,11 +137,19 @@ pub fn agents_view(store: PanelStore) -> AnyView {
 }
 
 fn runtimes_snapshot(store: PanelStore) -> Vec<Runtime> {
-    store.snapshot.get_untracked().map(|snapshot| snapshot.runtimes).unwrap_or_default()
+    store
+        .snapshot
+        .get_untracked()
+        .map(|snapshot| snapshot.runtimes)
+        .unwrap_or_default()
 }
 
 fn runtime_name(runtimes: &[Runtime], id: &str) -> String {
-    runtimes.iter().find(|runtime| runtime.id == id).map(|runtime| runtime.adapter_id.clone()).unwrap_or_else(|| id.to_string())
+    runtimes
+        .iter()
+        .find(|runtime| runtime.id == id)
+        .map(|runtime| runtime.adapter_id.clone())
+        .unwrap_or_else(|| id.to_string())
 }
 
 /// Points the editor at a runtime and asks PanelStore for that runtime's model
@@ -182,8 +198,22 @@ fn agent_list(
     runtime_id: RwSignal<String>,
     _delete_open: RwSignal<bool>,
 ) -> impl IntoView {
-    let profiles = move || store.config.with(|config| config.as_ref().map(|value| value.profiles.clone()).unwrap_or_default());
-    let runtimes = move || store.snapshot.with(|snapshot| snapshot.as_ref().map(|value| value.runtimes.clone()).unwrap_or_default());
+    let profiles = move || {
+        store.config.with(|config| {
+            config
+                .as_ref()
+                .map(|value| value.profiles.clone())
+                .unwrap_or_default()
+        })
+    };
+    let runtimes = move || {
+        store.snapshot.with(|snapshot| {
+            snapshot
+                .as_ref()
+                .map(|value| value.runtimes.clone())
+                .unwrap_or_default()
+        })
+    };
 
     view! {
         <div class="stack">
@@ -191,7 +221,7 @@ fn agent_list(
                 <div class="view-head-text">
                     <h2 class="view-title truncate">{t.t("nav.agents")}</h2>
                     <p class="view-sub tabular">
-                        {move || profiles().len()} " " {t.t("panel.agent.profiles")}
+                        {move || t.tp("counts.profiles", profiles().len())}
                     </p>
                 </div>
                 <button
@@ -199,7 +229,7 @@ fn agent_list(
                     disabled=move || runtimes().is_empty()
                     on:click=move |_| open_new(store, editing, draft, runtime_id)
                 >
-                    {icon("plus", "icon icon-xs")}
+                    {icon(icondata::LuPlus, "icon icon-xs")}
                     <span>{t.t("panel.newAgent")}</span>
                 </button>
             </div>
@@ -292,7 +322,10 @@ fn agent_editor(
             } else {
                 format!(" ({})", crate::format::health_name(runtime.health))
             };
-            Choice::new(runtime.id.clone(), format!("{}{suffix}", runtime.adapter_id))
+            Choice::new(
+                runtime.id.clone(),
+                format!("{}{suffix}", runtime.adapter_id),
+            )
         })
         .collect();
 
@@ -301,8 +334,18 @@ fn agent_editor(
     // that arrives after the selection moved on cannot land in this form.
     let options = move || store.runtime_options_for(&runtime_id.get());
 
-    let model_value = move || draft.get().model.unwrap_or_else(|| DEFAULT_MODEL.to_string());
-    let reasoning_value = move || draft.get().reasoning.unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    let model_value = move || {
+        draft
+            .get()
+            .model
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string())
+    };
+    let reasoning_value = move || {
+        draft
+            .get()
+            .reasoning
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string())
+    };
 
     let model_choices = move || {
         let mut choices = vec![Choice::new(DEFAULT_MODEL, t.t("panel.modelAuto"))];
@@ -338,128 +381,157 @@ fn agent_editor(
     ];
 
     view! {
-        <div class="stack">
-            <div class="view-head">
+        <div class="editor-layout">
+            <div class="view-head editor-head">
                 <button class="btn-icon" title=move || t.t("action.cancel") on:click=move |_| editing.set(false)>
-                    {icon("back", "icon icon-xs")}
+                    {icon(icondata::LuArrowLeft, "icon icon-xs")}
                 </button>
                 <span class="view-title truncate">
                     {move || if draft.get().persisted { t.t("agents.edit") } else { t.t("panel.newAgent") }}
                 </span>
             </div>
 
-            <div class="field-group">
-                <div class="field">
-                    <label class="field-label">{t.t("agents.name")}</label>
-                    {text_input(
-                        move || draft.get().name,
-                        t.t("panel.newAgent"),
-                        move |value| draft.update(|draft| draft.name = value),
-                    )}
-                </div>
-                <div class="field">
-                    <label class="field-label">{t.t("agents.description")}</label>
-                    {text_input(
-                        move || draft.get().description,
-                        String::new(),
-                        move |value| draft.update(|draft| draft.description = value),
-                    )}
-                </div>
-                <div class="field">
-                    <label class="field-label">{t.t("cliInfo.runtime")}</label>
-                    {select_input(
-                        move || runtime_id.get(),
-                        runtime_choices,
-                        move |value| {
-                            select_runtime(store, runtime_id, value.clone());
-                            draft.update(|draft| draft.runtime_id = value);
-                        },
-                    )}
-                </div>
-                <div class="field">
-                    <label class="field-label">{t.t("agents.model")}</label>
-                    <div class="select-row">{move || select_input(model_value, model_choices(), move |value| {
-                        let model = if value == DEFAULT_MODEL { None } else { Some(value) };
-                        // A level the newly selected model does not accept would be
-                        // refused by the runtime, so the draft forgets it instead of
-                        // saving a combination the run cannot apply.
-                        let allowed = levels_for(model.as_ref());
-                        draft.update(|draft| {
-                            draft.model = model;
-                            if let Some(reasoning) = &draft.reasoning {
-                                if !allowed.iter().any(|level| &level.value == reasoning) {
-                                    draft.reasoning = None;
-                                }
-                            }
-                        });
-                    })}
+            <div class="editor-content">
+            <div class="editor-grid agent-editor-grid">
+            // Basic information
+            <div class="editor-card">
+                <h3 class="editor-card-title">{t.t("agents.sectionBasic")}</h3>
+                <div class="field-group">
+                    <div class="field">
+                        <label class="field-label">{t.t("agents.name")}</label>
+                        {text_input(
+                            move || draft.get().name,
+                            t.t("panel.newAgent"),
+                            move |value| draft.update(|draft| draft.name = value),
+                        )}
                     </div>
-                    <p class="field-hint wrap">
-                        {move || match options() {
-                            Some(loaded) if !loaded.models.is_empty() => t.t("agents.modelHint"),
-                            Some(_) => t.t("agents.noModelList"),
-                            None if store.runtime_options_loading(&runtime_id.get()) => t.t("agents.readingRuntime"),
-                            None => t.t("agents.noModelList"),
-                        }}
-                    </p>
-                </div>
-                <div class="field">
-                    <label class="field-label">{t.t("agents.reasoning")}</label>
-                    <div class="select-row">{move || select_input(reasoning_value, reasoning_choices(), move |value| {
-                        draft.update(|draft| {
-                            draft.reasoning = if value == DEFAULT_MODEL { None } else { Some(value) };
-                        });
-                    })}
+                    <div class="field">
+                        <label class="field-label">{t.t("agents.description")}</label>
+                        {text_input(
+                            move || draft.get().description,
+                            String::new(),
+                            move |value| draft.update(|draft| draft.description = value),
+                        )}
                     </div>
-                    {move || {
-                        options()
-                            .filter(|_| levels_for(draft.get().model.as_ref()).is_empty())
-                            .map(|_| view! { <p class="field-hint wrap">{t.t("agents.noReasoningLevels")}</p> })
-                    }}
-                </div>
-                <div class="field">
-                    <label class="field-label">{t.t("panel.instructions")}</label>
-                    {textarea(
-                        move || draft.get().instructions,
-                        3,
-                        move |value| draft.update(|draft| draft.instructions = value),
-                    )}
-                </div>
-                <div class="field">
-                    <label class="field-label">{t.t("agents.permissions")}</label>
-                    <div class="switch-rows">
-                        {capabilities
-                            .into_iter()
-                            .map(|(key, label)| {
-                                view! {
-                                    <div class="switch-row">
-                                        <span class="switch-label truncate">{t.t(label)}</span>
-                                        {switch(
-                                            move || capability(draft.get().capabilities, key),
-                                            move |next| {
-                                                draft.update(|draft| {
-                                                    draft.capabilities = with_capability(draft.capabilities, key, next)
-                                                })
-                                            },
-                                        )}
-                                    </div>
-                                }
-                            })
-                            .collect_view()}
-                    </div>
-                </div>
-                <div class="switch-row">
-                    <span class="switch-label truncate">{t.t("agents.enabled")}</span>
-                    {switch(
-                        move || draft.get().enabled,
-                        move |next| draft.update(|draft| draft.enabled = next),
-                    )}
                 </div>
             </div>
 
-            <div class="row-actions">
+            // Card 2: 模型与推理 (Model & Reasoning)
+            <div class="editor-card">
+                <h3 class="editor-card-title">{t.t("agents.sectionModel")}</h3>
+                <div class="field-group">
+                    <div class="field">
+                        <label class="field-label">{t.t("cliInfo.runtime")}</label>
+                        {select_input(
+                            move || runtime_id.get(),
+                            runtime_choices,
+                            move |value| {
+                                select_runtime(store, runtime_id, value.clone());
+                                draft.update(|draft| draft.runtime_id = value);
+                            },
+                        )}
+                    </div>
+                    <div class="field">
+                        <label class="field-label">{t.t("agents.model")}</label>
+                        <div class="select-row">{move || select_input(model_value, model_choices(), move |value| {
+                            let model = if value == DEFAULT_MODEL { None } else { Some(value) };
+                            // A level the newly selected model does not accept would be
+                            // refused by the runtime, so the draft forgets it instead of
+                            // saving a combination the run cannot apply.
+                            let allowed = levels_for(model.as_ref());
+                            draft.update(|draft| {
+                                draft.model = model;
+                                if let Some(reasoning) = &draft.reasoning {
+                                    if !allowed.iter().any(|level| &level.value == reasoning) {
+                                        draft.reasoning = None;
+                                    }
+                                }
+                            });
+                        })}
+                        </div>
+                        <p class="field-hint wrap">
+                            {move || match options() {
+                                Some(loaded) if !loaded.models.is_empty() => t.t("agents.modelHint"),
+                                Some(_) => t.t("agents.noModelList"),
+                                None if store.runtime_options_loading(&runtime_id.get()) => t.t("agents.readingRuntime"),
+                                None => t.t("agents.noModelList"),
+                            }}
+                        </p>
+                    </div>
+                    <div class="field">
+                        <label class="field-label">{t.t("agents.reasoning")}</label>
+                        <div class="select-row">{move || select_input(reasoning_value, reasoning_choices(), move |value| {
+                            draft.update(|draft| {
+                                draft.reasoning = if value == DEFAULT_MODEL { None } else { Some(value) };
+                            });
+                        })}
+                        </div>
+                        {move || {
+                            options()
+                                .filter(|_| levels_for(draft.get().model.as_ref()).is_empty())
+                                .map(|_| view! { <p class="field-hint wrap">{t.t("agents.noReasoningLevels")}</p> })
+                        }}
+                    </div>
+                </div>
+            </div>
+
+            // Card 3: 提示词指令 (Prompt Instructions)
+            <div class="editor-card editor-card-wide">
+                <h3 class="editor-card-title">{t.t("agents.sectionPrompt")}</h3>
+                <div class="field-group">
+                    <div class="field">
+                        <label class="field-label">{t.t("panel.instructions")}</label>
+                        {textarea(
+                            move || draft.get().instructions,
+                            3,
+                            move |value| draft.update(|draft| draft.instructions = value),
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            // Card 4: 权限与状态 (Permissions & Status)
+            <div class="editor-card editor-card-wide">
+                <h3 class="editor-card-title">{t.t("agents.sectionPermissions")}</h3>
+                <div class="field-group">
+                    <div class="field">
+                        <label class="field-label">{t.t("agents.permissions")}</label>
+                        <div class="switch-rows permissions-grid">
+                            {capabilities
+                                .into_iter()
+                                .map(|(key, label)| {
+                                    view! {
+                                        <div class="switch-row">
+                                            <span class="switch-label truncate">{t.t(label)}</span>
+                                            {switch(
+                                                move || capability(draft.get().capabilities, key),
+                                                move |next| {
+                                                    draft.update(|draft| {
+                                                        draft.capabilities = with_capability(draft.capabilities, key, next)
+                                                    })
+                                                },
+                                            )}
+                                        </div>
+                                    }
+                                })
+                                .collect_view()}
+                        </div>
+                    </div>
+                    <div class="switch-row">
+                        <span class="switch-label truncate">{t.t("agents.enabled")}</span>
+                        {switch(
+                            move || draft.get().enabled,
+                            move |next| draft.update(|draft| draft.enabled = next),
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            </div>
+            </div>
+            <div class="row-actions editor-actions">
                 <button
-                    class="btn btn-primary btn-sm grow"
+                    class="btn btn-primary btn-sm"
                     disabled=move || {
                         let current = draft.get();
                         current.name.trim().is_empty() || current.runtime_id.is_empty()
@@ -486,7 +558,7 @@ fn agent_editor(
                                     title=move || t.t("panel.delete")
                                     on:click=move |_| delete_open.set(true)
                                 >
-                                    {icon("trash", "icon icon-xs")}
+                                    {icon(icondata::LuTrash2, "icon icon-xs")}
                                 </button>
                             }
                         })

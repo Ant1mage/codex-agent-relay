@@ -64,6 +64,14 @@ pub mod key {
     /// can be checked against each other.
     pub fn all_keys() -> Vec<&'static str> {
         let mut keys: Vec<&'static str> = vec![
+            "shell.daemonDownInspector",
+            "shell.daemonDownPanel",
+            "shell.daemonDown",
+            "daemon.stale",
+            "daemon.missing",
+            "daemon.logFailed",
+            "update.invalidCurrent",
+            "update.invalidTag",
             MENU_STATUS_STARTING,
             MENU_STATUS_DAEMON_DOWN,
             MENU_STATUS_READY,
@@ -158,6 +166,48 @@ pub fn system_locale() -> Locale {
     resolve_locale(sys_locale::get_locale().as_deref())
 }
 
+/// User preference is shared by the tray, dialogs and daemon error messages.
+/// The tiny native record survives daemon port changes (webview storage is per origin).
+static ACTIVE_LOCALE: std::sync::OnceLock<std::sync::RwLock<Locale>> = std::sync::OnceLock::new();
+
+pub fn preference_path() -> std::path::PathBuf {
+    relay_config::relay_home().join("desktop-locale")
+}
+
+pub fn current_locale() -> Locale {
+    *ACTIVE_LOCALE
+        .get_or_init(|| {
+            let saved = std::fs::read_to_string(preference_path()).ok();
+            let locale = match saved.as_deref().map(str::trim) {
+                Some("en") => Locale::En,
+                Some("zh-CN") => Locale::ZhCn,
+                _ => system_locale(),
+            };
+            std::sync::RwLock::new(locale)
+        })
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+pub fn set_locale(locale: Locale) -> Result<(), String> {
+    let _ = current_locale();
+    let path = preference_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(&path, locale.as_str()).map_err(|error| error.to_string())?;
+    *ACTIVE_LOCALE
+        .get()
+        .expect("initialized")
+        .write()
+        .unwrap_or_else(|error| error.into_inner()) = locale;
+    Ok(())
+}
+
+pub fn message(key: &'static str) -> String {
+    Translator::new(current_locale()).t(key)
+}
+
 /// Looks a key up, falling back to English like `translate()` did.
 pub fn translate(locale: Locale, key: &'static str) -> &'static str {
     let table = match locale {
@@ -208,6 +258,26 @@ impl Translator {
 }
 
 const EN: &[(&str, &str)] = &[
+    (
+        "shell.daemonDownInspector",
+        "The daemon is not running; cannot open the workspace",
+    ),
+    (
+        "shell.daemonDownPanel",
+        "The daemon is not running; cannot open settings",
+    ),
+    ("shell.daemonDown", "The daemon is not running"),
+    (
+        "daemon.stale",
+        "server.json does not match the running daemon (stale record)",
+    ),
+    (
+        "daemon.missing",
+        "Cannot find relayd in the app bundle or source checkout",
+    ),
+    ("daemon.logFailed", "Cannot write log {path}: {error}"),
+    ("update.invalidCurrent", "Invalid current version: {error}"),
+    ("update.invalidTag", "Invalid GitHub release tag: {error}"),
     ("menu.status.starting", "Relay · Starting the log service…"),
     (
         "menu.status.daemonDown",
@@ -267,14 +337,28 @@ const EN: &[(&str, &str)] = &[
     ("panel.rescan", "Rescan runtimes"),
     ("agents.authRequired", "Authentication required"),
     ("agents.notInstalled", "Not installed"),
-    ("onboarding.check.codex-cli", "Codex CLI detection"),
-    ("onboarding.check.relay-mcp", "Relay MCP configuration"),
-    ("onboarding.check.relay-skill", "Relay skill installation"),
-    ("onboarding.check.relay-plugin", "Relay plugin installation"),
-    ("onboarding.check.relay-hooks", "Relay hooks registration"),
+    ("codex.check.codex-cli", "Codex CLI detection"),
+    ("codex.check.relay-mcp", "Relay MCP configuration"),
+    ("codex.check.relay-skill", "Relay skill installation"),
+    ("codex.check.relay-plugin", "Relay plugin installation"),
+    ("codex.check.relay-hooks", "Relay hooks registration"),
 ];
 
 const ZH_CN: &[(&str, &str)] = &[
+    (
+        "shell.daemonDownInspector",
+        "日志服务未运行，无法打开工作台",
+    ),
+    ("shell.daemonDownPanel", "日志服务未运行，无法打开配置面板"),
+    ("shell.daemonDown", "日志服务未运行"),
+    (
+        "daemon.stale",
+        "server.json 与运行的日志服务不匹配（记录已过期）",
+    ),
+    ("daemon.missing", "在应用包或源码目录中找不到 relayd"),
+    ("daemon.logFailed", "无法写入日志 {path}：{error}"),
+    ("update.invalidCurrent", "当前版本号无效：{error}"),
+    ("update.invalidTag", "GitHub 发布标签无效：{error}"),
     ("menu.status.starting", "Relay · 正在启动日志服务…"),
     ("menu.status.daemonDown", "Relay · 日志服务未运行"),
     ("menu.status.ready", "Relay · 就绪"),
@@ -331,11 +415,11 @@ const ZH_CN: &[(&str, &str)] = &[
     ("panel.rescan", "重新扫描运行时"),
     ("agents.authRequired", "需要认证"),
     ("agents.notInstalled", "未安装"),
-    ("onboarding.check.codex-cli", "Codex CLI 检测"),
-    ("onboarding.check.relay-mcp", "Relay MCP 配置"),
-    ("onboarding.check.relay-skill", "Relay skill 安装"),
-    ("onboarding.check.relay-plugin", "Relay 插件安装"),
-    ("onboarding.check.relay-hooks", "Relay hooks 注册"),
+    ("codex.check.codex-cli", "Codex CLI 检测"),
+    ("codex.check.relay-mcp", "Relay MCP 配置"),
+    ("codex.check.relay-skill", "Relay skill 安装"),
+    ("codex.check.relay-plugin", "Relay 插件安装"),
+    ("codex.check.relay-hooks", "Relay hooks 注册"),
 ];
 
 #[cfg(test)]

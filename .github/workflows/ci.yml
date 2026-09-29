@@ -27,6 +27,9 @@ jobs:
         run: cargo test --workspace
       - name: Build
         run: cargo build --workspace
+      - name: UI translations and formatters
+        run: cargo test --locked
+        working-directory: apps/relay-desktop/ui
       - name: UI (Leptos → WASM)
         run: cargo check --target wasm32-unknown-unknown
         working-directory: apps/relay-desktop/ui

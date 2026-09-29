@@ -6,7 +6,7 @@
 //! ```text
 //! session      → native session id
 //! thinking     → worker/reasoning
-//! text         → worker/message
+//! text         → worker/message (assistant text delta) + nativeEvent
 //! status       → worker/message (status) + turn_end kind
 //! tool_call    → tool/read · tool/search · tool/edit · tool/command
 //! tool_result  → tool/result
@@ -14,7 +14,10 @@
 //! error        → worker/message (diagnostic) + the failure message
 //! ```
 //!
-//! Core never sees any of this: only the mapped Relay events leave this module.
+//! `dsh --json` publishes whole committed assistant messages today, not
+//! token-level increments: every `text` frame opens a message in Relay's unified
+//! worker-text contract ([`relay_core::worker_text`]). Core never sees any of
+//! this: only the mapped Relay events leave this module.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -23,9 +26,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, EnforcementSet, ModelOption,
-    OptionsSource, ReasoningLevel, RelayError, RelayEventType, Result, ResumeInput, Runtime,
-    RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, AssistantTextDelta, DetectionResult,
+    EnforcementSet, ModelOption, OptionsSource, ReasoningLevel, RelayError, RelayEventType, Result,
+    ResumeInput, Runtime, RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
 use serde::Deserialize;
 
@@ -653,9 +656,15 @@ pub fn parse_line(line: &str) -> ParsedOutput {
             ));
         }
         "text" => {
-            parsed.events.push(AdapterEvent::with_native(
-                RelayEventType::WorkerMessage,
-                serde_json::json!({ "text": object.get("text").cloned().unwrap_or(serde_json::Value::String(String::new())) }),
+            // One committed assistant message per frame: the flag opens a new
+            // message so two frames never merge into one answer. This is not a
+            // token-level stream and is not described as one.
+            let text = object
+                .get("text")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            parsed.events.push(AdapterEvent::text_delta_with_native(
+                AssistantTextDelta::message(text),
                 value,
             ));
         }
@@ -1163,6 +1172,7 @@ impl DeepSeekAdapter {
                 cwd: input.cwd.clone(),
                 env: self.run_environment(input.access_mode),
                 stdin: Some(prepared.task.clone()),
+                stdin_gate: None,
                 supervisor_key: input.worker_session_id.clone(),
                 cleanup: prepared.overlay,
             },
@@ -1214,6 +1224,7 @@ impl DeepSeekAdapter {
                 cwd: input.cwd.clone(),
                 env: self.run_environment(input.access_mode),
                 stdin: None,
+                stdin_gate: None,
                 supervisor_key: input.worker_session_id.clone(),
                 cleanup: prepared.overlay,
             },
@@ -1605,11 +1616,59 @@ mod tests {
 
         let text = parse_line(r#"{"type":"text","text":"hello"}"#);
         assert_eq!(text.events[0].event_type, RelayEventType::WorkerMessage);
+        assert_eq!(text.events[0].data["kind"], "delta");
         assert_eq!(text.events[0].data["text"], "hello");
+        assert_eq!(
+            text.events[0].data["messageStart"], true,
+            "a committed message opens a message; it is not a token-level chunk"
+        );
+        assert!(
+            text.events[0].native_event.is_some(),
+            "the provider frame stays in the log"
+        );
 
         let final_event = parse_line(r#"{"type":"final","text":"done"}"#);
         assert_eq!(final_event.final_text.as_deref(), Some("done"));
         assert_eq!(final_event.events[0].data["kind"], "final");
+    }
+
+    /// The mapped frames go through the same aggregation Antigravity and Grok
+    /// use: two committed `text` frames stay two messages, not one glued answer,
+    /// and the authoritative `final` is not repeated by the stream.
+    #[test]
+    fn committed_text_frames_reach_the_shared_assistant_message_path() {
+        let frames = [
+            r#"{"type":"text","text":"first"}"#,
+            r#"{"type":"text","text":"second"}"#,
+        ];
+        let mut seq = 0;
+        let mut events = Vec::new();
+        for frame in frames {
+            for event in parse_line(frame).events {
+                seq += 1;
+                events.push(crate::test_support::relay_event(seq, event));
+            }
+        }
+        assert_eq!(
+            crate::test_support::assistant_messages(&events),
+            vec!["first".to_string(), "second".to_string()]
+        );
+
+        let mut seq = 0;
+        let mut with_final = Vec::new();
+        for frame in [
+            r#"{"type":"text","text":"the answer"}"#,
+            r#"{"type":"final","text":"the answer"}"#,
+        ] {
+            for event in parse_line(frame).events {
+                seq += 1;
+                with_final.push(crate::test_support::relay_event(seq, event));
+            }
+        }
+        assert_eq!(
+            crate::test_support::assistant_messages(&with_final),
+            vec!["the answer".to_string()]
+        );
     }
 
     #[test]

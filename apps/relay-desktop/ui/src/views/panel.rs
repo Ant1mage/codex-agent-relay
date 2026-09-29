@@ -49,13 +49,13 @@ pub fn panel_app() -> AnyView {
                         title=move || t.t("panel.openInspector")
                         on:click=move |_| store.open_inspector()
                     >
-                        {icon("external", "icon icon-xs")}
+                        {icon(icondata::LuExternalLink, "icon icon-xs")}
                     </button>
                     <button class="btn-icon" title=move || t.t("common.refresh") on:click=move |_| store.reload()>
-                        {icon("refresh", "icon icon-xs")}
+                        {icon(icondata::LuRefreshCw, "icon icon-xs")}
                     </button>
                     <button class="btn-icon" title=move || t.t("panel.close") on:click=move |_| dom::close_window()>
-                        {icon("close", "icon icon-xs")}
+                        {icon(icondata::LuX, "icon icon-xs")}
                     </button>
                 </span>
             </header>
@@ -93,7 +93,7 @@ pub fn panel_app() -> AnyView {
                                     .map(|warning| {
                                         view! {
                                             <p class="panel-warning">
-                                                {icon("warning", "icon icon-xs")}
+                                                {icon(icondata::LuTriangleAlert, "icon icon-xs")}
                                                 <span class="wrap">{warning}</span>
                                             </p>
                                         }
@@ -113,6 +113,7 @@ pub fn panel_app() -> AnyView {
                 // lives in PanelStore, which is created once in App and outlives
                 // every branch; see PanelStore in state.rs.
                 {move || match store.tab.get() {
+                    PanelTab::Sessions => ().into_any(),
                     PanelTab::Agents => agents::agents_view(store).into_any(),
                     PanelTab::Runtimes => runtimes::runtimes_view(store).into_any(),
                     PanelTab::Policy => policy::policy_view(store).into_any(),

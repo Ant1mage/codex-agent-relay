@@ -52,12 +52,47 @@ const MESSAGES: &[(&str, &str, &str)] = &[
     ("app.name", "Relay", "Relay"),
     ("nav.sessions", "Sessions", "会话"),
     ("nav.agents", "Agents", "智能体"),
+    ("nav.runtimes", "Runtimes", "运行时"),
+    ("nav.policy", "Policy", "权限策略"),
+    ("nav.codex", "Codex integration", "Codex 集成"),
+    ("nav.status", "Status", "状态"),
+    ("theme.auto", "Theme: System · Switch to light", "主题：跟随系统 · 切换浅色"),
+    ("theme.lightNext", "Theme: Light · Switch to dark", "主题：浅色 · 切换深色"),
+    ("theme.darkNext", "Theme: Dark · Follow system", "主题：深色 · 跟随系统"),
+    ("counts.files.one", "{count} file", "{count} 个文件"),
+    ("counts.files.other", "{count} files", "{count} 个文件"),
+    ("counts.events.one", "{count} event", "{count} 条事件"),
+    ("counts.events.other", "{count} events", "{count} 条事件"),
+    ("counts.steps.one", "{count} step", "{count} 个步骤"),
+    ("counts.steps.other", "{count} steps", "{count} 个步骤"),
+    ("counts.runs.one", "{count} run", "{count} 次运行"),
+    ("counts.runs.other", "{count} runs", "{count} 次运行"),
+    ("counts.profiles.one", "{count} profile", "{count} 个智能体配置"),
+    ("counts.profiles.other", "{count} profiles", "{count} 个智能体配置"),
+    ("counts.runtimes.one", "{count} runtime", "{count} 个运行时"),
+    ("counts.runtimes.other", "{count} runtimes", "{count} 个运行时"),
     ("sessions.empty", "No sessions yet", "还没有会话"),
     (
         "sessions.emptyHint",
         "Start a Relay delegation from Codex to see it here.",
         "从 Codex 发起一次 Relay 委派后，会话会显示在这里。",
     ),
+    ("sessions.delete", "Delete session", "删除会话"),
+    ("sessions.deleteConfirm", "Delete this session and all its history?", "确定删除此会话及其所有历史记录？"),
+    ("sessions.deleted", "Session deleted", "会话已删除"),
+    ("timeline.title", "Mission Timeline", "任务流水线"),
+    ("timeline.empty", "Select a session to view its timeline", "选择一个会话查看其任务流水线"),
+    ("timeline.scrollToBottom", "Jump to latest", "跳至最新"),
+    ("timeline.autoScroll", "Auto-scroll", "自动滚动"),
+    ("timeline.accept", "Accept", "接受"),
+    ("timeline.resume", "Resume", "继续"),
+    ("timeline.feedbackPlaceholder", "Add instructions or feedback for next step…", "输入补充指令或反馈意见…"),
+    ("timeline.expand", "Expand", "展开"),
+    ("timeline.collapse", "Collapse", "收起"),
+    ("timeline.expandAll", "Expand all", "全部展开"),
+    ("timeline.collapseAll", "Collapse all", "全部收起"),
+    ("run.accepted", "Run accepted", "任务已接受"),
+    ("run.resumed", "Run resumed", "任务已继续"),
     ("runs.title", "Runs", "运行任务"),
     ("steps.step", "Step", "步骤"),
     ("console.title", "Console", "控制台"),
@@ -101,12 +136,18 @@ const MESSAGES: &[(&str, &str, &str)] = &[
         "This CLI does not expose reasoning levels",
         "该 CLI 未提供推理强度选项",
     ),
-    ("onboarding.check.codex-cli", "Codex CLI detection", "Codex CLI 检测"),
-    ("onboarding.check.relay-mcp", "Relay MCP configuration", "Relay MCP 配置"),
-    ("onboarding.check.relay-skill", "Relay skill installation", "Relay skill 安装"),
-    ("onboarding.check.relay-plugin", "Relay plugin installation", "Relay 插件安装"),
-    ("onboarding.check.relay-hooks", "Relay hooks registration", "Relay hooks 注册"),
-    ("onboarding.back", "Back", "返回"),
+    ("agents.sectionBasic", "Basic Info", "基本信息"),
+    ("agents.sectionModel", "Model & Reasoning", "模型与推理"),
+    ("agents.sectionPrompt", "Prompt Instructions", "提示词指令"),
+    ("agents.sectionPermissions", "Permissions & Status", "权限与状态"),
+    ("runtimes.sectionBasic", "Basic Info", "基本信息"),
+    ("runtimes.sectionConnection", "Connection", "连接配置"),
+    ("codex.check.codex-cli", "Codex CLI detection", "Codex CLI 检测"),
+    ("codex.check.relay-mcp", "Relay MCP configuration", "Relay MCP 配置"),
+    ("codex.check.relay-skill", "Relay skill installation", "Relay skill 安装"),
+    ("codex.check.relay-plugin", "Relay plugin installation", "Relay 插件安装"),
+    ("codex.check.relay-hooks", "Relay hooks registration", "Relay hooks 注册"),
+    ("action.back", "Back", "返回"),
     ("panel.addRuntime", "Add runtime", "添加运行时"),
     ("panel.runtime.edit", "Edit runtime", "编辑运行时"),
     ("panel.runtime.name", "Name", "名称"),
@@ -157,7 +198,7 @@ const MESSAGES: &[(&str, &str, &str)] = &[
         "Remove Relay from Codex? The MCP server, plugin, skill and hooks will all be uninstalled.",
         "从 Codex 中移除 Relay？MCP server、插件、skill 与 hooks 都会被卸载。",
     ),
-    ("panel.instructions", "Instructions", "Instructions"),
+    ("panel.instructions", "Instructions", "系统指令"),
     ("panel.modelAuto", "Runtime default", "跟随运行时默认"),
     ("panel.workspace.clear", "Clear this override", "清除该工作区覆盖"),
     ("panel.workspace.none", "No workspace override yet", "还没有工作区覆盖"),
@@ -195,7 +236,7 @@ const MESSAGES: &[(&str, &str, &str)] = &[
         "This page needs the daemon token. Use \"Open inspector\" in the Relay menu bar, or copy the token from ~/.relay/server.json into the URL fragment, for example http://127.0.0.1:7352/#t=<token>.",
         "此页面需要 daemon 令牌。请使用 Relay 菜单栏里的“打开检查器”，或把 ~/.relay/server.json 中的 token 拼进 URL 片段，例如 http://127.0.0.1:7352/#t=<token>。",
     ),
-    ("inspector.codexFixInMenuBar", "Fix this in the Relay menu bar → Codex integration", "请在 Relay 菜单栏 → Codex 集成 中处理"),
+    ("codex.fixHint", "Open Codex integration in the left navigation to fix this", "请前往左侧导航的 Codex 集成页面修复"),
     ("inspector.copyDiagnostics", "Copy diagnostics", "复制诊断信息"),
     ("inspector.diagnosticsCopied", "Diagnostics copied to the clipboard", "诊断信息已复制到剪贴板"),
     ("inspector.codexMissing", "Codex is not wired up yet", "Codex 尚未接入"),
@@ -219,6 +260,13 @@ const MESSAGES: &[(&str, &str, &str)] = &[
     ("menu.codexMissing", "Not configured", "未配置"),
     ("common.active", "Active", "活跃"),
     ("common.refresh", "Refresh", "刷新"),
+    ("common.error", "Error", "错误"),
+    ("common.retry", "Retry", "重试"),
+    ("common.loading", "Loading…", "加载中…"),
+    ("common.failed", "Operation failed", "操作失败"),
+    ("event.workerStarted", "Worker started", "智能体已启动"),
+    ("event.awaitingHost", "Worker finished; waiting for Codex review", "智能体已结束，等待 Codex 审核"),
+    ("event.accepted", "Accepted by Codex", "Codex 已采纳"),
     ("run.status.queued", "Queued", "排队中"),
     ("run.status.starting", "Starting", "启动中"),
     ("run.status.running", "Running", "运行中"),
@@ -244,8 +292,45 @@ const MESSAGES: &[(&str, &str, &str)] = &[
     ("status.sessions", "Sessions", "会话"),
     ("status.runs", "Runs", "运行任务"),
     ("status.runtimes", "Runtimes", "运行时"),
-    ("status.profiles", "Profiles", "Profile"),
+    ("status.profiles", "Profiles", "智能体配置"),
     ("status.counts", "State", "状态统计"),
+    ("theme.dark", "Dark mode", "深色模式"),
+    ("theme.light", "Light mode", "浅色模式"),
+    ("codex.configureNow", "Configure Codex", "前往配置 Codex"),
+    ("codex.allReady", "✓ All Ready (Reinstall)", "✓ 已就绪 (可重新安装)"),
+    ("sessions.deleteConfirmTitle", "Delete session?", "确认删除该会话？"),
+    (
+        "sessions.deleteConfirmBody",
+        "This permanently deletes this session and all associated history logs. This action cannot be undone.",
+        "将永久删除该会话及所有关联的运行记录与历史日志，操作无法撤销。",
+    ),
+    ("sessions.deleteConfirmBtn", "Delete permanently", "确认删除"),
+    ("sessions.searchPlaceholder", "Search sessions…", "搜索会话…"),
+    ("sessions.noSearchResults", "No matching sessions found", "未找到匹配的会话"),
+    ("timeline.diff", "Code Diff", "代码改动对比"),
+    ("timeline.terminal", "Terminal Command", "终端命令执行"),
+    ("timeline.activity", "Execution Activity", "执行活动记录"),
+    ("timeline.stepFormat", "Step {step}", "第 {step} 步"),
+    ("timeline.thinking", "Thought Process", "深度思考"),
+    ("timeline.characters", "characters", "字符"),
+    ("timeline.taskPrefix", "Task #{num}", "任务 #{num}"),
+    ("timeline.process", "Execution Trail", "执行过程"),
+    ("timeline.actionsCount", "{count} actions", "{count} 个执行动作"),
+    ("timeline.reads", "read {count} files", "读取 {count} 个文件"),
+    ("timeline.edits", "edited {count} files", "修改 {count} 个文件"),
+    ("timeline.commands", "{count} commands", "执行 {count} 条命令"),
+    ("timeline.subagents", "{count} subagents", "{count} 个子智能体"),
+    ("timeline.running", "Running…", "执行中…"),
+    ("timeline.finalAnswer", "Final Response", "最终答复"),
+    ("action.clear", "Clear", "清空"),
+    ("action.dismiss", "Dismiss notification", "关闭通知"),
+    ("action.increment", "Increase value", "增加数值"),
+    ("action.decrement", "Decrease value", "减少数值"),
+    ("codex.status.ok", "Ready", "已就绪"),
+    ("codex.status.missing", "Missing", "缺失"),
+    ("codex.status.stale", "Needs repair", "需修复"),
+    ("codex.status.outdated", "Update available", "有更新"),
+    ("codex.status.legacy", "Legacy", "旧版本"),
 ];
 
 /// Looks a key up for one locale: exact match, then English, then the key.
@@ -272,5 +357,140 @@ impl Translator {
 
     pub fn t(&self, key: &str) -> String {
         translate(self.locale.get(), key)
+    }
+
+    /// Parameterized translation with variable replacement (`{var}`).
+    pub fn tv(&self, key: &str, vars: &[(&str, &str)]) -> String {
+        interpolate(&self.t(key), vars)
+    }
+
+    pub fn tp(&self, key: &str, count: usize) -> String {
+        let suffix = if count == 1 { "one" } else { "other" };
+        self.tv(&format!("{key}.{suffix}"), &[("count", &count.to_string())])
+    }
+}
+
+fn interpolate(template: &str, vars: &[(&str, &str)]) -> String {
+    let mut result = String::new();
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        result.push_str(&rest[..start]);
+        let Some(end) = rest[start..].find('}').map(|end| start + end) else {
+            result.push_str(&rest[start..]);
+            return result;
+        };
+        let name = &rest[start + 1..end];
+        if let Some((_, value)) = vars.iter().find(|(key, _)| *key == name) {
+            result.push_str(value);
+        } else {
+            result.push_str(&rest[start..=end]);
+        }
+        rest = &rest[end + 1..];
+    }
+    result.push_str(rest);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn placeholders(text: &str) -> BTreeSet<&str> {
+        text.split('{')
+            .skip(1)
+            .filter_map(|part| part.split_once('}').map(|(key, _)| key))
+            .collect()
+    }
+
+    #[test]
+    fn catalog_has_unique_keys_and_matching_placeholders() {
+        let mut keys = BTreeSet::new();
+        for (key, en, zh) in MESSAGES {
+            assert!(keys.insert(key), "Duplicate translation {key}");
+            assert!(
+                !en.is_empty() && !zh.is_empty(),
+                "Missing translation {key}"
+            );
+            assert_eq!(
+                placeholders(en),
+                placeholders(zh),
+                "Placeholder mismatch {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn interpolation_preserves_values_and_localized_order() {
+        assert_eq!(
+            interpolate(
+                &translate(Locale::ZhCn, "timeline.stepFormat"),
+                &[("step", "3")]
+            ),
+            "第 3 步"
+        );
+        assert_eq!(
+            interpolate("{a} {b}", &[("a", "{b}"), ("b", "literal")]),
+            "{b} literal"
+        );
+        assert_eq!(
+            interpolate(
+                &translate(Locale::En, "counts.files.one"),
+                &[("count", "1")]
+            ),
+            "1 file"
+        );
+    }
+
+    #[test]
+    fn every_literal_ui_key_and_contract_check_label_exists() {
+        let sources = [
+            include_str!("views/unified.rs"),
+            include_str!("views/agents.rs"),
+            include_str!("views/runtimes.rs"),
+            include_str!("views/status.rs"),
+            include_str!("views/policy.rs"),
+            include_str!("views/codex.rs"),
+            include_str!("views/inspector.rs"),
+            include_str!("views/panel.rs"),
+            include_str!("state.rs"),
+            include_str!("components/header.rs"),
+            include_str!("components/session_rail.rs"),
+            include_str!("components/run_strip.rs"),
+            include_str!("components/console_pane.rs"),
+            include_str!("components/timeline_stream.rs"),
+            include_str!("components/notice.rs"),
+            include_str!("components/controls.rs"),
+        ];
+        let keys: BTreeSet<_> = MESSAGES.iter().map(|(key, _, _)| *key).collect();
+        for status in [
+            relay_api::CodexCheckStatus::Ok,
+            relay_api::CodexCheckStatus::Missing,
+            relay_api::CodexCheckStatus::Stale,
+            relay_api::CodexCheckStatus::Outdated,
+            relay_api::CodexCheckStatus::Legacy,
+        ] {
+            assert!(keys.contains(crate::views::codex::status_key(status)));
+        }
+        for source in sources {
+            for marker in [".t(\"", ".tv(\""] {
+                for part in source.split(marker).skip(1) {
+                    let key = part.split('"').next().unwrap();
+                    assert!(keys.contains(key), "UI uses missing key {key}");
+                }
+            }
+        }
+        for tab in crate::state::PanelTab::ORDER {
+            assert!(keys.contains(tab.key()));
+        }
+        for check in [
+            relay_api::CodexCheckId::CodexCli,
+            relay_api::CodexCheckId::RelayMcp,
+            relay_api::CodexCheckId::RelaySkill,
+            relay_api::CodexCheckId::RelayPlugin,
+            relay_api::CodexCheckId::RelayHooks,
+        ] {
+            assert!(keys.contains(check.label_key()));
+        }
     }
 }

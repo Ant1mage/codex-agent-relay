@@ -60,6 +60,10 @@ impl RelayStore {
         Arc::clone(&self.sessions)
     }
 
+    pub fn invalidate(&self) {
+        *self.cache.write().unwrap() = None;
+    }
+
     /// Cheap change stamp for the SSE tick.
     pub fn revision(&self) -> String {
         let events = self

@@ -122,10 +122,7 @@ pub async fn probe(app_version: &str) -> DaemonProbe {
         Err(error) => return DaemonProbe::stopped(Some(info), Some(error.message)),
     };
     if !identity_verified(&info, &health) {
-        return DaemonProbe::stopped(
-            Some(info),
-            Some("server.json 与运行的 daemon 不匹配（已过期）".to_string()),
-        );
+        return DaemonProbe::stopped(Some(info), Some(crate::i18n::message("daemon.stale")));
     }
     // Identity is proven from here on: the daemon answered with the nonce from its
     // own record. A menu that cannot be fetched is a rendering problem, not a
@@ -262,7 +259,7 @@ fn daemon_command() -> Option<DaemonCommand> {
 /// user has left.
 pub fn start_daemon() -> Result<(), String> {
     let Some(command) = daemon_command() else {
-        return Err("找不到 relayd 入口（既没有打包产物，也不在源码仓库里）".to_string());
+        return Err(crate::i18n::message("daemon.missing"));
     };
     let log_path = daemon_log_path();
     if let Some(parent) = log_path.parent() {
@@ -272,7 +269,15 @@ pub fn start_daemon() -> Result<(), String> {
         .create(true)
         .append(true)
         .open(&log_path)
-        .map_err(|error| format!("无法写入日志 {}：{error}", log_path.display()))?;
+        .map_err(|error| {
+            crate::i18n::Translator::new(crate::i18n::current_locale()).tv(
+                "daemon.logFailed",
+                &[
+                    ("path", &log_path.display().to_string()),
+                    ("error", &error.to_string()),
+                ],
+            )
+        })?;
     let stdout = log.try_clone().map_err(|error| error.to_string())?;
     let mut process = Command::new(&command.program);
     process

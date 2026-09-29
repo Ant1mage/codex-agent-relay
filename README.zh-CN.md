@@ -26,15 +26,19 @@ Relay 不是 AI IDE，也不创建第二套 Agent loop；它将 Codex 与本机�
 
 ## 项目状态
 
-当前版本为 **v0.1.2**。已在 **Apple 芯片 Mac + Codex** 上验证
-**DeepSeek Harness** 和 **Grok Build** 的端到端派发。Relay 使用
-Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
+当前版本为 **v0.1.3**。已在 **Apple 芯片 Mac + Codex** 上验证
+**DeepSeek Harness**、**Grok Build** 和 **Antigravity CLI** 的端到端派发；
+Antigravity 文件写入、白名单命令执行及会话
+`run`/`resume`/`cancel`/`accept` 流程均已通过验证（详见下方范围说明）。
+Relay 使用 Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
+
+Antigravity CLI 接入和统一桌面 UI 已包含在 **v0.1.3** 中。
 
 | Agent 运行时 | CLI | Adapter | 状态 |
 | --- | --- | --- | --- |
 | DeepSeek Harness | `dsh` | `deepseek-harness` | 已支持并完成端到端验证 |
 | Kimi Code | `kimi` | `kimi-code` | 实验性，尚未完成端到端验证 |
-| Antigravity CLI | `agy` | `antigravity-cli` | 实验性，尚未完成端到端验证 |
+| Antigravity CLI | `agy` | `antigravity-cli` | 已支持；文件写入及白名单命令已验证 |
 | Z.ai / GLM | `zai-cli` | `zai-cli` | 实验性，尚未完成端到端验证 |
 | Grok Build | `grok` | `grok-cli` | 已支持并完成端到端验证 |
 
@@ -44,6 +48,34 @@ Grok 复用 CLI 已有的登录。模型和推理强度取自 `grok models` 及�
 子进程代理排除项始终包含本地回环地址，Relay 自身的本地连接直连，更新检查
 使用系统代理。支持继续会话和取消任务。运行中发送消息和子 Agent 暂不提供。
 实测范围见 [Grok 验证报告](docs/reports/grok-cli-2026-09-28.md)。
+
+Antigravity CLI（`agy`）通过其原生 headless 流接入：任务作为一条私有
+`user` 事件写入 stdin，CLI 的 `init`、`step_update`、`result` NDJSON 帧
+转换为 Relay 事件；`agent_response.text_delta` 增量统一走 Relay 的 worker 文本
+契约（每个 `agent_response` 步骤一条助手消息，`result` 帧仍是权威结果），
+与 DeepSeek Harness、Grok 共用同一条展示路径。模型 ID 严格解析 `agy models`
+的 `<id>\t<label>` 两列表格，通过 CLI 自身的 `--model` 应用；reasoning 取值
+严格采用 CLI help 枚举的 `--effort`（`low|medium|high|max`），绝不从模型 ID
+后缀推断。Relay 先等待并校验 `init` 的会话 UUID，通过后才把任务写入 stdin：
+缺少 UUID、UUID 非规范、无法识别的旧会话 ID、或握手超时都会失败，此时关闭
+stdin、不送达任务并回收子进程。任务送达后若会话 ID 发生变化，只会将该轮判为
+失败，无法撤销已发送或已执行的内容。继续会话使用 `--conversation` 和原生
+UUID。工具步骤会暴露真实文件路径（CLI 发布的 `AbsolutePath` 与 `TargetFile`
+归一化为 `path`，供 Changes 视图使用）和命令（CLI 发布的 `CommandLine`
+归一化为 `command`）。支持取消。真实 Codex 会话已通过 Relay 跑通原生
+`list`/`run`/`wait`/`resume`/`accept`/`cancel` 全流程：续接轮次保持同一原生
+会话，无效模型会失败而非误报成功，取消会回收原生进程。
+
+**权限与验证范围。** 原生 headless 运行继承用户已有的 Antigravity 权限设置。
+Relay 的 Write 任务使用 `--mode accept-edits`，允许文件编辑确认，但不授予
+shell 或网络权限；不添加 `--dangerously-skip-permissions`，也不会自动批准
+被拒绝的工具。经 Relay 创建文件、执行本机已有精确白名单中的命令均已通过端到端
+验证；未获准的 `pwd` 按预期被拒绝。Headless 权限拒绝后 CLI 仍可能返回 exit 0，
+因此工具失败且最终结果为空时 Relay 会判为失败。由于 headless Antigravity
+无法强制只读工作区，只读与建议模式会被诚实拒绝，仅提供写入模式。不提供运行中
+发送消息；CLI 报告子 Agent 步骤时会映射为 child 事件，但子 Agent 生命周期
+尚未完成端到端验证。实测范围与保留限制见
+[Antigravity 验证报告](docs/reports/antigravity-cli-2026-09-28.md)。
 
 ## 快速开始
 
@@ -82,6 +114,13 @@ Relay 当前面向 Apple 芯片 Mac。源码构建需要 stable Rust、
 cargo build --workspace
 cargo test --workspace
 ./scripts/dev.sh
+```
+
+每次打包指定一种模式：
+
+```bash
+./scripts/package-app.sh --mode dev       # debug 版：Relay Dev.app
+./scripts/package-app.sh --mode release   # release 版：Relay.app 和 DMG
 ```
 
 完整的桌面构建、打包和发布要求见[开发文档](docs/development.md)。

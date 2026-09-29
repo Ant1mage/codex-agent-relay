@@ -4,7 +4,9 @@
 use leptos::prelude::*;
 use relay_core::{ManualRuntime, Runtime, RuntimeHealth};
 
-use crate::components::controls::{badge, confirm_dialog, icon, select_input, text_input, text_input_with_class, Choice};
+use crate::components::controls::{
+    badge, confirm_dialog, icon, select_input, text_input, text_input_with_class, Choice,
+};
 use crate::dom;
 use crate::i18n::Translator;
 use crate::state::{PanelIntent, PanelStore};
@@ -81,14 +83,19 @@ pub fn runtimes_view(store: PanelStore) -> AnyView {
 /// rather than this view.
 fn open_editor(store: PanelStore, draft: RwSignal<RuntimeDraft>, editing: RwSignal<bool>) {
     let known = store.adapters_cached().unwrap_or_default();
-    draft.set(RuntimeDraft::blank(known.first().cloned().unwrap_or_default()));
+    draft.set(RuntimeDraft::blank(
+        known.first().cloned().unwrap_or_default(),
+    ));
     store.clear_probe();
     store.ensure_adapters();
     editing.set(true);
 }
 
 /// Automatic and manual entries stay in one list, matched by id.
-fn runtime_rows(runtimes: &[Runtime], manual: &[ManualRuntime]) -> Vec<(Option<Runtime>, Option<ManualRuntime>)> {
+fn runtime_rows(
+    runtimes: &[Runtime],
+    manual: &[ManualRuntime],
+) -> Vec<(Option<Runtime>, Option<ManualRuntime>)> {
     let mut rows: Vec<(Option<Runtime>, Option<ManualRuntime>)> = runtimes
         .iter()
         .map(|runtime| {
@@ -115,7 +122,9 @@ fn health_tone(health: Option<RuntimeHealth>) -> &'static str {
 fn health_key(health: Option<RuntimeHealth>) -> &'static str {
     match health {
         Some(RuntimeHealth::Available) => "panel.runtime.health.available",
-        Some(RuntimeHealth::AuthenticationRequired) => "panel.runtime.health.authentication_required",
+        Some(RuntimeHealth::AuthenticationRequired) => {
+            "panel.runtime.health.authentication_required"
+        }
         None | Some(RuntimeHealth::Unavailable) => "panel.runtime.health.unavailable",
     }
 }
@@ -147,9 +156,18 @@ fn runtime_list(
     delete_entry: RwSignal<Option<ManualRuntime>>,
 ) -> impl IntoView {
     let rows = move || {
-        let runtimes = store.snapshot.with(|snapshot| snapshot.as_ref().map(|value| value.runtimes.clone()).unwrap_or_default());
-        let manual =
-            store.config.with(|config| config.as_ref().map(|value| value.manual_runtimes.clone()).unwrap_or_default());
+        let runtimes = store.snapshot.with(|snapshot| {
+            snapshot
+                .as_ref()
+                .map(|value| value.runtimes.clone())
+                .unwrap_or_default()
+        });
+        let manual = store.config.with(|config| {
+            config
+                .as_ref()
+                .map(|value| value.manual_runtimes.clone())
+                .unwrap_or_default()
+        });
         runtime_rows(&runtimes, &manual)
     };
 
@@ -166,10 +184,10 @@ fn runtime_list(
                     disabled=move || store.busy.get()
                     on:click=move |_| store.rescan()
                 >
-                    {icon("refresh", "icon icon-xs")}
+                    {icon(icondata::LuRefreshCw, "icon icon-xs")}
                 </button>
                 <button class="btn btn-primary btn-xs" on:click=move |_| open_editor(store, draft, editing)>
-                    {icon("plus", "icon icon-xs")}
+                    {icon(icondata::LuPlus, "icon icon-xs")}
                     <span>{t.t("panel.addRuntime")}</span>
                 </button>
             </div>
@@ -255,7 +273,7 @@ fn runtime_list(
                                                             }
                                                         }
                                                     >
-                                                        {icon("pencil", "icon icon-xs")}
+                                                        {icon(icondata::LuPencil, "icon icon-xs")}
                                                     </button>
                                                     <button
                                                         class="btn-icon btn-icon-danger"
@@ -265,7 +283,7 @@ fn runtime_list(
                                                             delete_open.set(true);
                                                         }
                                                     >
-                                                        {icon("trash", "icon icon-xs")}
+                                                        {icon(icondata::LuTrash2, "icon icon-xs")}
                                                     </button>
                                                 </span>
                                             }
@@ -303,11 +321,21 @@ fn runtime_editor(
     editing: RwSignal<bool>,
     draft: RwSignal<RuntimeDraft>,
 ) -> impl IntoView {
-    let adapter_choices =
-        move || store.adapters().unwrap_or_default().into_iter().map(Choice::same).collect::<Vec<Choice>>();
+    let adapter_choices = move || {
+        store
+            .adapters()
+            .unwrap_or_default()
+            .into_iter()
+            .map(Choice::same)
+            .collect::<Vec<Choice>>()
+    };
     let label_placeholder = {
         let current = draft.get_untracked();
-        if current.adapter_id.is_empty() { t.t("cliInfo.runtime") } else { current.adapter_id }
+        if current.adapter_id.is_empty() {
+            t.t("cliInfo.runtime")
+        } else {
+            current.adapter_id
+        }
     };
 
     // The catalogue can arrive after the editor opened: seed the form with its
@@ -327,52 +355,66 @@ fn runtime_editor(
     };
 
     view! {
-        <div class="stack">
-            <div class="view-head">
-                <button class="btn-icon" title=move || t.t("onboarding.back") on:click=move |_| editing.set(false)>
-                    {icon("back", "icon icon-xs")}
+        <div class="editor-layout">
+            <div class="view-head editor-head">
+                <button class="btn-icon" title=move || t.t("action.back") on:click=move |_| editing.set(false)>
+                    {icon(icondata::LuArrowLeft, "icon icon-xs")}
                 </button>
                 <span class="view-title truncate">
                     {move || if draft.get().is_new { t.t("panel.addRuntime") } else { t.t("panel.runtime.edit") }}
                 </span>
             </div>
 
-            <div class="field-group">
-                <div class="field">
-                    <label class="field-label">{t.t("panel.runtime.name")}</label>
-                    {text_input(
-                        move || draft.get().label,
-                        label_placeholder,
-                        move |value| draft.update(|draft| draft.label = value),
-                    )}
-                    <p class="field-hint wrap">{t.t("panel.runtime.nameHint")}</p>
-                </div>
-                <div class="field">
-                    <label class="field-label">{t.t("cliInfo.runtime")}</label>
-                    {move || select_input(
-                        move || draft.get().adapter_id,
-                        adapter_choices(),
-                        move |value| {
-                            draft.update(|draft| draft.adapter_id = value);
-                            store.clear_probe();
-                        },
-                    )}
-                </div>
-                <div class="field">
-                    <label class="field-label">{t.t("panel.runtime.path")}</label>
-                    {text_input_with_class(
-                        move || draft.get().executable_path,
-                        "/usr/local/bin/dsh".to_string(),
-                        "mono",
-                        move |value| {
-                            draft.update(|draft| draft.executable_path = value);
-                            store.clear_probe();
-                        },
-                    )}
-                    <p class="field-hint wrap">{t.t("panel.runtime.pathHint")}</p>
+            <div class="editor-content">
+            <div class="editor-grid runtime-editor-grid">
+            // Basic information
+            <div class="editor-card">
+                <h3 class="editor-card-title">{t.t("runtimes.sectionBasic")}</h3>
+                <div class="field-group">
+                    <div class="field">
+                        <label class="field-label">{t.t("panel.runtime.name")}</label>
+                        {text_input(
+                            move || draft.get().label,
+                            label_placeholder,
+                            move |value| draft.update(|draft| draft.label = value),
+                        )}
+                        <p class="field-hint wrap">{t.t("panel.runtime.nameHint")}</p>
+                    </div>
                 </div>
             </div>
 
+            // Card 2: 连接配置 (Connection Config)
+            <div class="editor-card">
+                <h3 class="editor-card-title">{t.t("runtimes.sectionConnection")}</h3>
+                <div class="field-group">
+                    <div class="field">
+                        <label class="field-label">{t.t("cliInfo.runtime")}</label>
+                        {move || select_input(
+                            move || draft.get().adapter_id,
+                            adapter_choices(),
+                            move |value| {
+                                draft.update(|draft| draft.adapter_id = value);
+                                store.clear_probe();
+                            },
+                        )}
+                    </div>
+                    <div class="field">
+                        <label class="field-label">{t.t("panel.runtime.path")}</label>
+                        {text_input_with_class(
+                            move || draft.get().executable_path,
+                            "/usr/local/bin/dsh".to_string(),
+                            "mono",
+                            move |value| {
+                                draft.update(|draft| draft.executable_path = value);
+                                store.clear_probe();
+                            },
+                        )}
+                        <p class="field-hint wrap">{t.t("panel.runtime.pathHint")}</p>
+                    </div>
+                </div>
+            </div>
+
+            </div>
             {move || {
                 store.probe.get().map(|result| {
                     let (class, message) = if result.ok {
@@ -385,7 +427,8 @@ fn runtime_editor(
                 })
             }}
 
-            <div class="row-actions">
+            </div>
+            <div class="row-actions editor-actions">
                 <button
                     class="btn btn-outline btn-sm"
                     disabled=move || {
@@ -394,11 +437,11 @@ fn runtime_editor(
                     }
                     on:click=check
                 >
-                    {icon("zap", "icon icon-xs")}
+                    {icon(icondata::LuZap, "icon icon-xs")}
                     <span>{move || if store.probing.get() { t.t("panel.runtime.checking") } else { t.t("panel.runtime.check") }}</span>
                 </button>
                 <button
-                    class="btn btn-primary btn-sm grow"
+                    class="btn btn-primary btn-sm"
                     disabled=move || {
                         let current = draft.get();
                         current.adapter_id.is_empty() || current.executable_path.is_empty() || store.busy.get()

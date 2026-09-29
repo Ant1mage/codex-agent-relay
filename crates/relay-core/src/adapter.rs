@@ -16,6 +16,7 @@ use crate::domain::{
     StartInput,
 };
 use crate::event::RelayEventType;
+use crate::worker_text::AssistantTextDelta;
 
 /// One normalized fact produced by a running worker.
 #[derive(Debug, Clone)]
@@ -44,6 +45,17 @@ impl AdapterEvent {
             data,
             native_event: Some(native),
         }
+    }
+
+    /// A `worker/message` carrying one increment of assistant text, in the
+    /// unified contract defined by [`crate::worker_text`].
+    pub fn text_delta(delta: AssistantTextDelta) -> Self {
+        Self::new(RelayEventType::WorkerMessage, delta.into_data())
+    }
+
+    /// Same, keeping the runtime's own frame for the event log.
+    pub fn text_delta_with_native(delta: AssistantTextDelta, native: serde_json::Value) -> Self {
+        Self::with_native(RelayEventType::WorkerMessage, delta.into_data(), native)
     }
 }
 
@@ -155,5 +167,21 @@ mod tests {
                 .native_event
                 .is_none()
         );
+    }
+
+    #[test]
+    fn text_deltas_use_the_shared_worker_text_contract() {
+        let chunk = AdapterEvent::text_delta(AssistantTextDelta::chunk("hi"));
+        assert_eq!(chunk.event_type, RelayEventType::WorkerMessage);
+        assert_eq!(chunk.data["kind"], crate::worker_text::DELTA_KIND);
+        assert_eq!(chunk.data["text"], "hi");
+        assert!(chunk.native_event.is_none());
+
+        let committed = AdapterEvent::text_delta_with_native(
+            AssistantTextDelta::message("whole message"),
+            serde_json::json!({ "type": "text" }),
+        );
+        assert_eq!(committed.data["messageStart"], true);
+        assert_eq!(committed.native_event.unwrap()["type"], "text");
     }
 }

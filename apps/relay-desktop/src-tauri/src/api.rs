@@ -125,6 +125,23 @@ impl RelayClient {
         .await
     }
 
+    pub async fn delete_session(
+        &self,
+        host_session_id: &str,
+    ) -> Result<serde_json::Value, ApiError> {
+        let response = self
+            .http
+            .delete(self.url(&format!(
+                "/api/sessions/{}",
+                encode_segment(host_session_id)
+            )))
+            .header("authorization", format!("Bearer {}", self.token))
+            .send()
+            .await
+            .map_err(|error| ApiError::transport(error.to_string()))?;
+        decode(response).await
+    }
+
     /// The diagnostics report is plain text: it is pasted into an issue as-is.
     pub async fn diagnostics(&self) -> Result<String, ApiError> {
         let response = self

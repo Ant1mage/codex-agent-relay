@@ -50,6 +50,8 @@ pub trait HostSessionStore: Send + Sync {
     fn get(&self, id: &str) -> Result<Option<HostSession>>;
     fn list(&self) -> Result<Vec<HostSession>>;
 
+    fn delete(&self, id: &str) -> Result<bool>;
+
     fn rename_from_codex(
         &self,
         native_session_id: &str,
@@ -102,6 +104,18 @@ impl HostSessionStore for HostSessionRegistry {
             self.sessions.read().unwrap().values().cloned().collect();
         sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
         Ok(sessions)
+    }
+
+    fn delete(&self, id: &str) -> Result<bool> {
+        let mut sessions = self.sessions.write().unwrap();
+        if sessions.remove(id).is_some() {
+            return Ok(true);
+        }
+        if !id.starts_with("codex:") {
+            let prefixed = format!("codex:{id}");
+            return Ok(sessions.remove(&prefixed).is_some());
+        }
+        Ok(false)
     }
 }
 

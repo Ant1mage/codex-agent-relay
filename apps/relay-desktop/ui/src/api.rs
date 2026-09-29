@@ -15,9 +15,9 @@ use serde::Serialize;
 use wasm_bindgen::JsCast;
 
 use relay_api::{
-    AdapterCatalog, CancelResult, CodexAction, EventBatch, Health, InspectorSnapshot, InstallResult, PolicyBody,
-    ProbeBody, RefreshResult, RelayConfigView, RuntimeBody, RuntimeMutation, RuntimeOptionsView, RuntimeProbe,
-    StreamMessage,
+    AdapterCatalog, CancelResult, CodexAction, EventBatch, Health, InspectorSnapshot,
+    InstallResult, PolicyBody, ProbeBody, RefreshResult, RelayConfigView, RuntimeBody,
+    RuntimeMutation, RuntimeOptionsView, RuntimeProbe, StreamMessage,
 };
 use relay_core::{AgentProfile, RelayPolicy, RelayPolicyOverride};
 
@@ -38,7 +38,10 @@ pub struct ApiError {
 
 impl ApiError {
     pub fn new(status: u16, message: impl Into<String>) -> Self {
-        Self { status, message: message.into() }
+        Self {
+            status,
+            message: message.into(),
+        }
     }
 }
 
@@ -62,7 +65,10 @@ pub struct Client {
 
 impl Client {
     pub fn new(base: &str, token: &str) -> Self {
-        Self { base: base.trim_end_matches('/').to_string(), token: token.to_string() }
+        Self {
+            base: base.trim_end_matches('/').to_string(),
+            token: token.to_string(),
+        }
     }
 
     fn authorization(&self) -> String {
@@ -71,8 +77,10 @@ impl Client {
 
     /// Absolute URL for an API path, carrying the token as a query parameter.
     pub fn url(&self, path: &str, params: &[(&str, String)]) -> String {
-        let mut query: Vec<String> =
-            params.iter().map(|(key, value)| format!("{}={}", dom::encode(key), dom::encode(value))).collect();
+        let mut query: Vec<String> = params
+            .iter()
+            .map(|(key, value)| format!("{}={}", dom::encode(key), dom::encode(value)))
+            .collect();
         query.push(format!("token={}", dom::encode(&self.token)));
         format!("{}{}?{}", self.base, path, query.join("&"))
     }
@@ -81,17 +89,30 @@ impl Client {
         self.url("/api/stream", &[])
     }
 
-    async fn decode<T: DeserializeOwned>(response: gloo_net::http::Response) -> Result<T, ApiError> {
+    async fn decode<T: DeserializeOwned>(
+        response: gloo_net::http::Response,
+    ) -> Result<T, ApiError> {
         let status = response.status();
-        let body = response.text().await.map_err(|error| ApiError::new(status, error.to_string()))?;
+        let body = response
+            .text()
+            .await
+            .map_err(|error| ApiError::new(status, error.to_string()))?;
         if !(200..300).contains(&status) {
-            let message = if body.is_empty() { status.to_string() } else { body };
+            let message = if body.is_empty() {
+                status.to_string()
+            } else {
+                body
+            };
             return Err(ApiError::new(status, message));
         }
         serde_json::from_str(&body).map_err(|error| ApiError::new(status, error.to_string()))
     }
 
-    async fn get<T: DeserializeOwned>(&self, path: &str, params: &[(&str, String)]) -> Result<T, ApiError> {
+    async fn get<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        params: &[(&str, String)],
+    ) -> Result<T, ApiError> {
         let url = self.url(path, params);
         let response = Request::get(&url)
             .header("authorization", &self.authorization())
@@ -109,9 +130,16 @@ impl Client {
             .await
             .map_err(|error| ApiError::new(0, error.to_string()))?;
         let status = response.status();
-        let body = response.text().await.map_err(|error| ApiError::new(status, error.to_string()))?;
+        let body = response
+            .text()
+            .await
+            .map_err(|error| ApiError::new(status, error.to_string()))?;
         if !(200..300).contains(&status) {
-            let message = if body.is_empty() { status.to_string() } else { body };
+            let message = if body.is_empty() {
+                status.to_string()
+            } else {
+                body
+            };
             return Err(ApiError::new(status, message));
         }
         Ok(body)
@@ -127,7 +155,9 @@ impl Client {
         let builder = request(method, &url).header("authorization", &self.authorization());
         let response = match body {
             Some(payload) => {
-                let request = builder.json(payload).map_err(|error| ApiError::new(0, error.to_string()))?;
+                let request = builder
+                    .json(payload)
+                    .map_err(|error| ApiError::new(0, error.to_string()))?;
                 request.send().await
             }
             None => builder.send().await,
@@ -155,7 +185,11 @@ impl Client {
     }
 
     pub async fn events(&self, run_id: &str, after: u64) -> Result<EventBatch, ApiError> {
-        self.get(&format!("/api/runs/{}/events", dom::encode(run_id)), &[("after", after.to_string())]).await
+        self.get(
+            &format!("/api/runs/{}/events", dom::encode(run_id)),
+            &[("after", after.to_string())],
+        )
+        .await
     }
 
     /// The plain-text support report; the caller copies it to the clipboard.
@@ -165,12 +199,23 @@ impl Client {
 
     /// Model and reasoning values this runtime's CLI actually advertises.
     pub async fn runtime_options(&self, runtime_id: &str) -> Result<RuntimeOptionsView, ApiError> {
-        self.get(&format!("/api/runtimes/{}/options", dom::encode(runtime_id)), &[]).await
+        self.get(
+            &format!("/api/runtimes/{}/options", dom::encode(runtime_id)),
+            &[],
+        )
+        .await
     }
 
     /// Checks an executable before it is saved, so the form can report failures.
-    pub async fn probe_runtime(&self, adapter_id: &str, executable_path: &str) -> Result<RuntimeProbe, ApiError> {
-        let body = ProbeBody { adapter_id: adapter_id.to_string(), executable_path: executable_path.to_string() };
+    pub async fn probe_runtime(
+        &self,
+        adapter_id: &str,
+        executable_path: &str,
+    ) -> Result<RuntimeProbe, ApiError> {
+        let body = ProbeBody {
+            adapter_id: adapter_id.to_string(),
+            executable_path: executable_path.to_string(),
+        };
         self.send("POST", "/api/runtimes/probe", Some(&body)).await
     }
 
@@ -187,7 +232,12 @@ impl Client {
             executable_path: executable_path.to_string(),
             label,
         };
-        self.send("PUT", &format!("/api/config/runtimes/{}", dom::encode(id)), Some(&body)).await
+        self.send(
+            "PUT",
+            &format!("/api/config/runtimes/{}", dom::encode(id)),
+            Some(&body),
+        )
+        .await
     }
 
     pub async fn delete_runtime(&self, runtime_id: &str) -> Result<RelayConfigView, ApiError> {
@@ -200,7 +250,12 @@ impl Client {
     }
 
     pub async fn save_profile(&self, profile: &AgentProfile) -> Result<RelayConfigView, ApiError> {
-        self.send("PUT", &format!("/api/config/profiles/{}", dom::encode(&profile.id)), Some(profile)).await
+        self.send(
+            "PUT",
+            &format!("/api/config/profiles/{}", dom::encode(&profile.id)),
+            Some(profile),
+        )
+        .await
     }
 
     pub async fn delete_profile(&self, profile_id: &str) -> Result<RelayConfigView, ApiError> {
@@ -217,26 +272,80 @@ impl Client {
         policy: &RelayPolicy,
         workspace_overrides: &BTreeMap<String, RelayPolicyOverride>,
     ) -> Result<RelayConfigView, ApiError> {
-        let body = PolicyBody { policy: *policy, workspace_overrides: workspace_overrides.clone() };
+        let body = PolicyBody {
+            policy: *policy,
+            workspace_overrides: workspace_overrides.clone(),
+        };
         self.send("PUT", "/api/config/policy", Some(&body)).await
     }
 
     /// Re-detects runtimes and re-reads configuration.
     pub async fn refresh(&self) -> Result<RefreshResult, ApiError> {
-        self.send::<RefreshResult, ()>("POST", "/api/refresh", None).await
+        self.send::<RefreshResult, ()>("POST", "/api/refresh", None)
+            .await
     }
 
     /// Codex integration lifecycle: install, repair, update, remove.
     pub async fn codex(&self, action: CodexAction) -> Result<InstallResult, ApiError> {
-        let name = serde_json::to_value(action).ok().and_then(|value| value.as_str().map(str::to_string));
+        let name = serde_json::to_value(action)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string));
         let name = name.unwrap_or_else(|| "install".to_string());
-        self.send::<InstallResult, ()>("POST", &format!("/api/codex/{name}"), None).await
+        self.send::<InstallResult, ()>("POST", &format!("/api/codex/{name}"), None)
+            .await
     }
 
     pub async fn cancel_worker(&self, worker_session_id: &str) -> Result<CancelResult, ApiError> {
         self.send::<CancelResult, ()>(
             "POST",
             &format!("/api/workers/{}/cancel", dom::encode(worker_session_id)),
+            None,
+        )
+        .await
+    }
+
+    pub async fn accept_worker(
+        &self,
+        worker_session_id: &str,
+    ) -> Result<serde_json::Value, ApiError> {
+        self.send::<serde_json::Value, ()>(
+            "POST",
+            &format!("/api/workers/{}/accept", dom::encode(worker_session_id)),
+            None,
+        )
+        .await
+    }
+
+    pub async fn resume_worker(
+        &self,
+        worker_session_id: &str,
+        feedback: &str,
+    ) -> Result<serde_json::Value, ApiError> {
+        let body = serde_json::json!({ "feedback": feedback });
+        self.send(
+            "POST",
+            &format!("/api/workers/{}/resume", dom::encode(worker_session_id)),
+            Some(&body),
+        )
+        .await
+    }
+
+    pub async fn cancel_session(&self, host_session_id: &str) -> Result<CancelResult, ApiError> {
+        self.send::<CancelResult, ()>(
+            "POST",
+            &format!("/api/sessions/{}/cancel", dom::encode(host_session_id)),
+            None,
+        )
+        .await
+    }
+
+    pub async fn delete_session(
+        &self,
+        host_session_id: &str,
+    ) -> Result<serde_json::Value, ApiError> {
+        self.send::<serde_json::Value, ()>(
+            "DELETE",
+            &format!("/api/sessions/{}", dom::encode(host_session_id)),
             None,
         )
         .await
@@ -265,7 +374,8 @@ pub fn connect_stream(
     on_error: impl Fn(String) + 'static,
     on_message: impl Fn(StreamMessage) + 'static,
 ) -> Result<Stream, ApiError> {
-    let source = web_sys::EventSource::new(url).map_err(|error| ApiError::new(0, dom::error_message(&error)))?;
+    let source = web_sys::EventSource::new(url)
+        .map_err(|error| ApiError::new(0, dom::error_message(&error)))?;
     let on_error = Rc::new(on_error);
 
     let opened = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || on_open());
@@ -283,16 +393,18 @@ pub fn connect_stream(
 
     let received = {
         let on_error = Rc::clone(&on_error);
-        wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
-            let Ok(text) = event.data().dyn_into::<js_sys::JsString>() else {
-                on_error("the event stream sent an unreadable frame".to_string());
-                return;
-            };
-            match serde_json::from_str::<StreamMessage>(&String::from(text)) {
-                Ok(message) => on_message(message),
-                Err(error) => on_error(error.to_string()),
-            }
-        })
+        wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::MessageEvent)>::new(
+            move |event: web_sys::MessageEvent| {
+                let Ok(text) = event.data().dyn_into::<js_sys::JsString>() else {
+                    on_error("the event stream sent an unreadable frame".to_string());
+                    return;
+                };
+                match serde_json::from_str::<StreamMessage>(&String::from(text)) {
+                    Ok(message) => on_message(message),
+                    Err(error) => on_error(error.to_string()),
+                }
+            },
+        )
     };
     source.set_onmessage(Some(received.as_ref().unchecked_ref()));
     received.forget();
