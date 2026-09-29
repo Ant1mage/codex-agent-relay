@@ -10,9 +10,10 @@
 **Codex chooses what to delegate. Relay runs and supervises the external agent.**
 
 Relay is a local MCP agent runtime and desktop control plane for delegating
-coding, research, and review tasks from OpenAI Codex to agent CLIs such as
-DeepSeek Harness. It manages agent profiles, runtime discovery, permissions,
-worker processes, and results while keeping planning and orchestration in Codex.
+coding, research, and review tasks from OpenAI Codex to supported agent CLIs:
+DeepSeek Harness, Grok Build, and Antigravity CLI. It manages agent profiles,
+runtime discovery, permissions, worker processes, and results while keeping
+planning and orchestration in Codex.
 
 Relay is not an AI IDE or a second agent loop. It connects Codex to the agent
 runtimes already available on your machine.
@@ -21,9 +22,17 @@ runtimes already available on your machine.
 
 - Adds a `$relay` skill and MCP tools to Codex for bounded task delegation.
 - Runs external agent CLIs as supervised local processes.
-- Stores model, reasoning, and capability settings in reusable agent profiles.
-- Applies workspace and session policies for read-only, propose, and write tasks.
-- Tracks runs, worker output, and file changes in a local inspector and control panel.
+- Gives every runtime the same Codex-facing tools for starting, waiting on,
+  reviewing, resuming, and cancelling tasks where the runtime supports them.
+- Stores runtime, model, reasoning, and capability choices in reusable agent
+  profiles.
+- Applies global, workspace, and session policies for access, command and network
+  permissions, and concurrency.
+- Streams worker updates into one session timeline and keeps separate tasks and
+  their history visible instead of replacing earlier runs.
+- Shows final responses, observable tool activity, file changes, and raw events
+  in the local inspector; the menu bar app manages profiles, runtimes, policy,
+  and Codex integration.
 
 ## Status
 
@@ -39,10 +48,12 @@ Antigravity CLI support and the unified desktop UI are included in **v0.1.3**.
 | Agent runtime | CLI | Adapter | Status |
 | --- | --- | --- | --- |
 | DeepSeek Harness | `dsh` | `deepseek-harness` | Supported; end-to-end verified |
-| Kimi Code | `kimi` | `kimi-code` | Experimental; not end-to-end verified |
 | Antigravity CLI | `agy` | `antigravity-cli` | Supported; file writes and allowlisted commands verified |
-| Z.ai / GLM | `zai-cli` | `zai-cli` | Experimental; not end-to-end verified |
 | Grok Build | `grok` | `grok-cli` | Supported; end-to-end verified |
+
+Relay reuses the supported CLI's existing login and model catalogue where the
+runtime exposes them. Profiles select the CLI and its supported model and
+reasoning options; Relay does not replace the provider's own agent loop.
 
 Grok reuses the CLI's existing login. Model and reasoning choices come from
 `grok models` and its matching native model metadata. On macOS, Relay also
@@ -95,12 +106,14 @@ the tested scope and remaining limitations.
 
 ## Quick start
 
-1. Install and sign in to Codex and the agent CLI you want to run.
-2. Launch Relay. In **Runtimes**, check that Relay detects your CLI; register its
-   executable manually if needed.
-3. In **Agents**, create a profile and choose its runtime, model, reasoning level,
-   and capabilities.
-4. In **Codex**, install the Relay plugin and MCP integration.
+1. Download the Apple silicon DMG from the [latest GitHub Release](https://github.com/Ant1mage/codex-agent-relay/releases/latest),
+   move Relay to Applications, and launch it. The app is ad-hoc signed and not
+   notarized; macOS may ask you to approve it on first launch.
+2. Install and sign in to Codex and the agent CLI you plan to use.
+3. In Relay's **Runtimes** page, confirm the CLI is detected. In **Agents**, make
+   a profile and choose its runtime, model, reasoning level, and capabilities.
+4. In **Codex** inside Relay, install the plugin and MCP integration. The status
+   checks show whether Codex, MCP, the skill, plugin, and hooks are current.
 5. Ask Codex to delegate a bounded task:
 
    ```text
@@ -109,6 +122,27 @@ the tested scope and remaining limitations.
 
 Codex reads the worker result from Relay for review, decides whether more work is
 needed, and writes the final response.
+
+### A typical delegation
+
+```text
+You ── task request ──► Codex
+                          │ $relay: bounded task + profile
+                          ▼
+                       Relay ──► local agent CLI
+                          ▲             │
+                          └── progress, tools, final result
+                          │
+                     Codex reviews result
+                          │
+                          ▼
+                    final response to you
+```
+
+Each delegation is recorded as its own run under the originating Codex session.
+The inspector lets you follow progress, review the answer and file changes, and
+see why a task succeeded, failed, or was denied. Codex remains responsible for
+deciding whether to accept the result or delegate follow-up work.
 
 ## How it works
 
@@ -133,7 +167,7 @@ stable Rust, the `wasm32-unknown-unknown` target, Trunk, and the Tauri CLI.
 ```bash
 cargo build --workspace
 cargo test --workspace
-./scripts/dev.sh
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 Package one app profile per invocation:
@@ -151,6 +185,16 @@ requirements.
 - [Architecture](docs/architecture.md) — components, delegation flow, policy, and security.
 - [Codex integration](docs/codex-integration.md) — plugin, MCP tools, setup, and troubleshooting.
 - [Development](docs/development.md) — build, test, run, and package Relay.
+
+## Local data and security
+
+Relay keeps its configuration, event history, and Codex integration under
+`~/.relay` by default. The daemon listens on loopback only and protects its local
+API with a per-start token. Runtime permission enforcement depends on each CLI's
+capabilities: Relay refuses access modes it cannot enforce instead of claiming
+that an unsupported sandbox is active. For example, Antigravity Write runs
+approve file edits with `--mode accept-edits`, while shell commands continue to
+follow Antigravity's own permission rules.
 
 ## License
 

@@ -10,8 +10,9 @@
 **Codex 决定委派什么，Relay 负责启动和监管外部 Agent。**
 
 Relay 是面向 OpenAI Codex 的本地 MCP Agent 运行时与桌面控制面板，可将编码、
-研究和代码审查任务委派给 DeepSeek Harness 等 Agent CLI。它管理 Agent 配置、
-运行时发现、权限策略、worker 进程和结果；任务规划与后续编排仍由 Codex 负责。
+研究和代码审查任务委派给 DeepSeek Harness、Grok Build 和 Antigravity CLI。
+它管理 Agent 配置、运行时发现、权限策略、worker 进程和结果；任务规划与后续
+编排仍由 Codex 负责。
 
 Relay 不是 AI IDE，也不创建第二套 Agent loop；它将 Codex 与本机已有的 Agent
 运行时连接起来。
@@ -20,9 +21,13 @@ Relay 不是 AI IDE，也不创建第二套 Agent loop；它将 Codex 与本机�
 
 - 为 Codex 提供 `$relay` skill 和 MCP 工具，用于委派范围明确的任务。
 - 在本机启动并监管外部 Agent CLI。
-- 通过可复用的 Agent 配置保存模型、推理强度和能力设置。
-- 为只读、建议和写入任务应用工作区及会话策略。
-- 在本地 inspector 和控制面板中查看运行状态、worker 输出和文件变更。
+- 为不同运行时提供统一的 Codex 工具，用于派发、等待、审查、继续和取消任务
+  （具体操作取决于运行时能力）。
+- 通过可复用的 Agent 配置保存运行时、模型、推理强度和能力设置。
+- 按全局、工作区和会话应用访问、命令、网络与并发策略。
+- 将 worker 更新持续显示在会话时间线中；同一会话的多次任务及历史都会保留。
+- 在本地 inspector 中查看最终答复、可观测的工具过程、文件变更和原始事件；
+  通过菜单栏应用管理配置、运行时、策略与 Codex 集成。
 
 ## 项目状态
 
@@ -37,10 +42,11 @@ Antigravity CLI 接入和统一桌面 UI 已包含在 **v0.1.3** 中。
 | Agent 运行时 | CLI | Adapter | 状态 |
 | --- | --- | --- | --- |
 | DeepSeek Harness | `dsh` | `deepseek-harness` | 已支持并完成端到端验证 |
-| Kimi Code | `kimi` | `kimi-code` | 实验性，尚未完成端到端验证 |
 | Antigravity CLI | `agy` | `antigravity-cli` | 已支持；文件写入及白名单命令已验证 |
-| Z.ai / GLM | `zai-cli` | `zai-cli` | 实验性，尚未完成端到端验证 |
 | Grok Build | `grok` | `grok-cli` | 已支持并完成端到端验证 |
+
+在运行时支持的情况下，Relay 复用 CLI 已有的登录和模型目录。Agent 配置用于
+选择运行时及其支持的模型和推理选项；Relay 不会替代 provider 自己的 Agent loop。
 
 Grok 复用 CLI 已有的登录。模型和推理强度取自 `grok models` 及同版本的
 原生模型元数据。macOS 下，未显式设置代理环境变量时，Relay 会把已启用的
@@ -79,10 +85,14 @@ shell 或网络权限；不添加 `--dangerously-skip-permissions`，也不会�
 
 ## 快速开始
 
-1. 安装并登录 Codex，以及你计划运行的 Agent CLI。
-2. 启动 Relay，在 **Runtimes** 中确认 CLI 已被发现；如有需要，可手动登记可执行文件。
-3. 在 **Agents** 中创建配置，选择运行时、模型、推理强度和能力。
-4. 在 **Codex** 页面安装 Relay 插件与 MCP 集成。
+1. 从[最新 GitHub Release](https://github.com/Ant1mage/codex-agent-relay/releases/latest)
+   下载 Apple 芯片 Mac 的 DMG，将 Relay 拖到“应用程序”并启动。应用采用临时签名，
+   尚未公证；首次启动时 macOS 可能要求在系统设置中批准。
+2. 安装并登录 Codex，以及你计划使用的 Agent CLI。
+3. 在 Relay 的 **Runtimes** 页面确认 CLI 已发现；在 **Agents** 中创建配置，选择
+   运行时、模型、推理强度和能力。
+4. 在 Relay 的 **Codex** 页面安装插件与 MCP 集成。状态检查会显示 Codex、MCP、
+   skill、plugin 和 hooks 是否已安装且为最新版本。
 5. 告诉 Codex 委派一个边界清晰的任务：
 
    ```text
@@ -90,6 +100,26 @@ shell 或网络权限；不添加 `--dangerously-skip-permissions`，也不会�
    ```
 
 Codex 从 Relay 读取 worker 结果并进行审查，决定是否继续编排，再向用户整理最终答复。
+
+### 一次典型的委派
+
+```text
+你 ── 任务请求 ──► Codex
+                     │ $relay：任务范围 + Agent 配置
+                     ▼
+                  Relay ──► 本机 Agent CLI
+                     ▲             │
+                     └── 进度、工具事件、最终结果
+                     │
+                Codex 审查结果
+                     │
+                     ▼
+                  最终答复
+```
+
+每次委派都会作为独立任务保存在发起它的 Codex 会话中。Inspector 可用于跟踪进度、
+审查答复和文件变更，并查看任务成功、失败或被拒绝的原因。Codex 决定是否接受结果，
+以及是否继续派发后续任务。
 
 ## 工作方式
 
@@ -113,7 +143,7 @@ Relay 当前面向 Apple 芯片 Mac。源码构建需要 stable Rust、
 ```bash
 cargo build --workspace
 cargo test --workspace
-./scripts/dev.sh
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 每次打包指定一种模式：
@@ -130,6 +160,13 @@ cargo test --workspace
 - [架构](docs/architecture.md) — 组件、委派链路、策略与安全边界。
 - [Codex 集成](docs/codex-integration.md) — 插件、MCP 工具、安装与故障排查。
 - [开发指南](docs/development.md) — 构建、测试、运行与打包。
+
+## 本地数据与安全
+
+Relay 默认将配置、事件历史和 Codex 集成保存在 `~/.relay`。Daemon 仅监听本机回环
+地址，API 使用每次启动时生成的 token 保护。运行时权限由各 CLI 自身能力决定：Relay
+无法强制的访问模式会直接拒绝，不会假称沙箱已启用。例如 Antigravity 的 Write 任务
+通过 `--mode accept-edits` 确认文件编辑，shell 命令仍遵循 Antigravity 自己的权限规则。
 
 ## 许可
 
