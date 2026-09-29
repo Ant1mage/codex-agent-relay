@@ -16,3 +16,6 @@ apps/relay-desktop/src-tauri/gen/
 *.swp
 .idea/
 .vscode/
+
+# Audit & issue notes
+issues/

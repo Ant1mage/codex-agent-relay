@@ -29,7 +29,7 @@ pub fn inspector_app() -> AnyView {
                 </div>
             </div>
         }
-            .into_any();
+        .into_any();
     };
 
     let route = RwSignal::new(dom::parse_path(&dom::pathname()));
@@ -64,9 +64,16 @@ pub fn inspector_app() -> AnyView {
         let current_step = store.step.get_untracked();
         let step_exists = current_step
             .as_ref()
-            .map(|id| run.map(|view| view.steps.iter().any(|step| &step.id == id)).unwrap_or(false))
+            .map(|id| {
+                run.map(|view| view.steps.iter().any(|step| &step.id == id))
+                    .unwrap_or(false)
+            })
             .unwrap_or(false);
-        let step = if step_exists { current_step } else { run.and_then(|view| view.steps.first().map(|step| step.id.clone())) };
+        let step = if step_exists {
+            current_step
+        } else {
+            run.and_then(|view| view.steps.first().map(|step| step.id.clone()))
+        };
         store.session.set(Some(session.session.id.clone()));
         store.run.set(run.map(|view| view.run.id.clone()));
         store.step.set(step.clone());
@@ -85,9 +92,11 @@ pub fn inspector_app() -> AnyView {
         let Some(run_id) = store.run.get() else {
             return;
         };
-        let cached = store
-            .events
-            .with_untracked(|all| all.get(&run_id).map(|bucket| !bucket.is_empty()).unwrap_or(false));
+        let cached = store.events.with_untracked(|all| {
+            all.get(&run_id)
+                .map(|bucket| !bucket.is_empty())
+                .unwrap_or(false)
+        });
         if cached {
             return;
         }
@@ -109,10 +118,10 @@ pub fn inspector_app() -> AnyView {
                     .then(|| {
                         view! {
                             <div class="codex-banner">
-                                {icon("warning", "icon icon-xs tone-warn")}
+                                {icon(icondata::LuTriangleAlert, "icon icon-xs tone-warn")}
                                 <span class="banner-strong">{t.t("inspector.codexMissing")}</span>
                                 <span class="dim">{t.t("inspector.codexMissingBody")}</span>
-                                <span class="banner-tail">{t.t("inspector.codexFixInMenuBar")}</span>
+                                <span class="banner-tail">{t.t("codex.fixHint")}</span>
                             </div>
                         }
                     })

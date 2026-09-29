@@ -17,6 +17,7 @@ pub mod projection;
 pub mod registry;
 pub mod run;
 pub mod store;
+pub mod worker_text;
 
 #[cfg(test)]
 mod test_support;
@@ -36,3 +37,6 @@ pub use projection::{project_run, RunProjection};
 pub use registry::{AdapterRegistry, ProfileRegistry, RuntimeRegistry, SyncReport};
 pub use run::{ActiveRun, RunController};
 pub use store::{EventStore, MemoryEventStore};
+pub use worker_text::{
+    assistant_text, AssistantMessage, AssistantTextDelta, AssistantTextSource, WorkerAssistantText,
+};

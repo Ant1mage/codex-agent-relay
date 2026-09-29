@@ -52,7 +52,9 @@ Grok 复用 CLI 已有的登录。模型和推理强度取自 `grok models` 及�
 
 Antigravity CLI（`agy`）通过其原生 headless 流接入：任务作为一条私有
 `user` 事件写入 stdin，CLI 的 `init`、`step_update`、`result` NDJSON 帧
-转换为 Relay 事件；文本增量合并为一条完整回复。模型 ID 严格解析 `agy models`
+转换为 Relay 事件；`agent_response.text_delta` 增量统一走 Relay 的 worker 文本
+契约（每个 `agent_response` 步骤一条助手消息，`result` 帧仍是权威结果），
+与 DeepSeek Harness、Grok 共用同一条展示路径。模型 ID 严格解析 `agy models`
 的 `<id>\t<label>` 两列表格，通过 CLI 自身的 `--model` 应用；reasoning 取值
 严格采用 CLI help 枚举的 `--effort`（`low|medium|high|max`），绝不从模型 ID
 后缀推断。Relay 先等待并校验 `init` 的会话 UUID，通过后才把任务写入 stdin：
@@ -118,6 +120,13 @@ Relay 当前面向 Apple 芯片 Mac。源码构建需要 stable Rust、
 cargo build --workspace
 cargo test --workspace
 ./scripts/dev.sh
+```
+
+每次打包指定一种模式：
+
+```bash
+./scripts/package-app.sh --mode dev       # debug 版：Relay Dev.app
+./scripts/package-app.sh --mode release   # release 版：Relay.app 和 DMG
 ```
 
 完整的桌面构建、打包和发布要求见[开发文档](docs/development.md)。

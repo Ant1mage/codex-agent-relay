@@ -30,7 +30,7 @@ pub fn codex_view(store: PanelStore) -> AnyView {
                                             {if check.ok { "✓" } else { "✗" }}
                                         </i>
                                         <span class="check-label truncate">{t.t(label_key(check.id))}</span>
-                                        {badge(status_name(check.status), "outline")}
+                                        {badge(t.t(status_key(check.status)), "outline")}
                                     </div>
                                     <p class="check-detail wrap">{check.detail.clone()}</p>
                                     {check.hint.map(|hint| view! { <p class="check-hint wrap">{hint}</p> })}
@@ -54,21 +54,44 @@ pub fn codex_view(store: PanelStore) -> AnyView {
                     </span>
                 </div>
                 <div class=if highlight { "actions-highlight" } else { "actions-plain" }>
-                    <button
-                        class="btn btn-primary btn-sm full"
-                        disabled=move || store.busy.get()
-                        on:click=move |_| store.run_codex(CodexAction::Install)
-                    >
-                        {icon("download", "icon icon-xs")}
-                        <span>{t.t("panel.install")}</span>
-                    </button>
+                    {move || {
+                        let checks = store
+                            .codex
+                            .with(|status| status.as_ref().map(|value| value.checks.clone()).unwrap_or_default());
+                        let all_ok = !checks.is_empty() && checks.iter().all(|c| c.ok);
+                        if all_ok {
+                            view! {
+                                <button
+                                    class="btn btn-outline btn-sm full btn-ready-state"
+                                    disabled=move || store.busy.get()
+                                    on:click=move |_| store.run_codex(CodexAction::Install)
+                                >
+                                    {icon(icondata::LuCheck, "icon icon-xs tone-ok")}
+                                    <span>{t.t("codex.allReady")}</span>
+                                </button>
+                            }
+                            .into_any()
+                        } else {
+                            view! {
+                                <button
+                                    class="btn btn-primary btn-sm full"
+                                    disabled=move || store.busy.get()
+                                    on:click=move |_| store.run_codex(CodexAction::Install)
+                                >
+                                    {icon(icondata::LuDownload, "icon icon-xs")}
+                                    <span>{t.t("panel.install")}</span>
+                                </button>
+                            }
+                            .into_any()
+                        }
+                    }}
                     <div class="row-actions">
                         <button
                             class="btn btn-outline btn-sm grow"
                             disabled=move || store.busy.get()
                             on:click=move |_| store.run_codex(CodexAction::Repair)
                         >
-                            {icon("wrench", "icon icon-xs")}
+                            {icon(icondata::LuWrench, "icon icon-xs")}
                             <span>{t.t("panel.repair")}</span>
                         </button>
                         <button
@@ -76,7 +99,7 @@ pub fn codex_view(store: PanelStore) -> AnyView {
                             disabled=move || store.busy.get()
                             on:click=move |_| store.run_codex(CodexAction::Update)
                         >
-                            {icon("refresh", "icon icon-xs")}
+                            {icon(icondata::LuRefreshCw, "icon icon-xs")}
                             <span>{t.t("panel.update")}</span>
                         </button>
                     </div>
@@ -85,7 +108,7 @@ pub fn codex_view(store: PanelStore) -> AnyView {
                         disabled=move || store.busy.get()
                         on:click=move |_| remove_open.set(true)
                     >
-                        {icon("trash", "icon icon-xs")}
+                        {icon(icondata::LuTrash2, "icon icon-xs")}
                         <span>{t.t("panel.remove")}</span>
                     </button>
                 </div>
@@ -108,13 +131,13 @@ fn label_key(id: CodexCheckId) -> &'static str {
     id.label_key()
 }
 
-fn status_name(status: CodexCheckStatus) -> &'static str {
+pub(crate) fn status_key(status: CodexCheckStatus) -> &'static str {
     match status {
-        CodexCheckStatus::Ok => "ok",
-        CodexCheckStatus::Missing => "missing",
-        CodexCheckStatus::Stale => "stale",
-        CodexCheckStatus::Outdated => "outdated",
-        CodexCheckStatus::Legacy => "legacy",
+        CodexCheckStatus::Ok => "codex.status.ok",
+        CodexCheckStatus::Missing => "codex.status.missing",
+        CodexCheckStatus::Stale => "codex.status.stale",
+        CodexCheckStatus::Outdated => "codex.status.outdated",
+        CodexCheckStatus::Legacy => "codex.status.legacy",
     }
 }
 

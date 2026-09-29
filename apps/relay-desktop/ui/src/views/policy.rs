@@ -6,30 +6,58 @@
 use leptos::prelude::*;
 use relay_core::{RelayPolicy, RelayPolicyOverride};
 
-use crate::components::controls::{icon, number_field, switch};
+use crate::components::controls::{icon, number_field, select_input, switch, Choice};
 use crate::state::PanelStore;
 
 pub fn policy_view(store: PanelStore) -> AnyView {
     let t = store.translator();
 
-    let policy = RwSignal::new(store.config.get_untracked().map(|config| config.policy).unwrap_or_default());
-    let overrides = RwSignal::new(
-        store.config.get_untracked().map(|config| config.workspace_overrides).unwrap_or_default(),
+    let policy = RwSignal::new(
+        store
+            .config
+            .get_untracked()
+            .map(|config| config.policy)
+            .unwrap_or_default(),
     );
+    let overrides = RwSignal::new(
+        store
+            .config
+            .get_untracked()
+            .map(|config| config.workspace_overrides)
+            .unwrap_or_default(),
+    );
+    let config_synced = RwSignal::new(store.config.get_untracked().is_some());
+    Effect::new(move |_| {
+        if let Some(config) = store.config.get() {
+            if !config_synced.get_untracked() {
+                policy.set(config.policy);
+                overrides.set(config.workspace_overrides);
+                config_synced.set(true);
+            }
+        }
+    });
     let workspace = RwSignal::new(
         store
             .snapshot
             .get_untracked()
-            .and_then(|snapshot| snapshot.sessions.first().map(|view| view.session.cwd.clone()))
+            .and_then(|snapshot| {
+                snapshot
+                    .sessions
+                    .first()
+                    .map(|view| view.session.cwd.clone())
+            })
             .unwrap_or_default(),
     );
 
     // Policy is a boundary only where the runtime has one. Saying so is the
     // difference between a security setting and a wish.
     let enforcement_note = move || {
-        let runtimes = store
-            .snapshot
-            .with(|snapshot| snapshot.as_ref().map(|value| value.runtimes.clone()).unwrap_or_default());
+        let runtimes = store.snapshot.with(|snapshot| {
+            snapshot
+                .as_ref()
+                .map(|value| value.runtimes.clone())
+                .unwrap_or_default()
+        });
         if runtimes.is_empty() {
             return None;
         }
@@ -79,7 +107,8 @@ pub fn policy_view(store: PanelStore) -> AnyView {
                 entry.max_concurrent_writers = change.max_concurrent_writers;
             }
             if change.require_worktree_for_parallel_writers.is_some() {
-                entry.require_worktree_for_parallel_writers = change.require_worktree_for_parallel_writers;
+                entry.require_worktree_for_parallel_writers =
+                    change.require_worktree_for_parallel_writers;
             }
             if change.allow_write.is_some() {
                 entry.allow_write = change.allow_write;
@@ -101,13 +130,19 @@ pub fn policy_view(store: PanelStore) -> AnyView {
     ];
 
     view! {
-        <div class="stack">
-            <div class="card">
-                <h2 class="card-title">{t.t("settings.global")}</h2>
+        <div class="editor-layout">
+            <div class="view-head editor-head">
+                <span class="view-title">{t.t("nav.policy")}</span>
+            </div>
+            <div class="editor-content">
+            <div class="editor-grid">
+            <div class="editor-card">
+                <h2 class="editor-card-title">{t.t("settings.global")}</h2>
                 <div class="field-group">
                     <div class="field">
                         <label class="field-label">{t.t("settings.maxRuns")}</label>
                         {number_field(
+                            t,
                             move || policy.get().max_concurrent_runs,
                             1,
                             32,
@@ -117,6 +152,7 @@ pub fn policy_view(store: PanelStore) -> AnyView {
                     <div class="field">
                         <label class="field-label">{t.t("settings.maxWriters")}</label>
                         {number_field(
+                            t,
                             move || policy.get().max_concurrent_writers,
                             1,
                             16,
@@ -143,34 +179,14 @@ pub fn policy_view(store: PanelStore) -> AnyView {
                 </div>
             </div>
 
-            <div class="card">
-                <h2 class="card-title">{t.t("settings.workspaceSection")}</h2>
+            <div class="editor-card">
+                <h2 class="editor-card-title">{t.t("settings.workspaceSection")}</h2>
                 <div class="field-group">
-                    <select
-                        class="input"
-                        prop:value=move || workspace.get()
-                        on:change=move |event| workspace.set(event_target_value(&event))
-                    >
-                        {move || {
-                            workspaces()
-                                .into_iter()
-                                .map(|path| {
-                                    let option_value = path.clone();
-                                    // See `controls::select_input`: the option owns its
-                                    // selected state so a late-arriving list still lands
-                                    // on the right workspace.
-                                    view! {
-                                        <option
-                                            value=path.clone()
-                                            prop:selected=move || workspace.get() == option_value
-                                        >
-                                            {path.clone()}
-                                        </option>
-                                    }
-                                })
-                                .collect_view()
-                        }}
-                    </select>
+                    {move || select_input(
+                        move || workspace.get(),
+                        workspaces().into_iter().map(Choice::same).collect(),
+                        move |value| workspace.set(value),
+                    )}
 
                     {move || {
                         let current = workspace.get();
@@ -205,7 +221,7 @@ pub fn policy_view(store: PanelStore) -> AnyView {
                                             });
                                         }
                                     >
-                                        {icon("close", "icon icon-xs")}
+                                        {icon(icondata::LuX, "icon icon-xs")}
                                         <span>{t.t("panel.workspace.clear")}</span>
                                     </button>
                                 </div>
@@ -215,15 +231,19 @@ pub fn policy_view(store: PanelStore) -> AnyView {
                     }}
                 </div>
             </div>
-
+            </div>
+            </div>
+            <div class="row-actions editor-actions">
             <button
                 class="btn btn-primary btn-sm"
+                disabled=move || store.busy.get() || store.config.get().is_none()
                 on:click=move |_| {
                     store.save_policy(policy.get_untracked(), overrides.get_untracked());
                 }
             >
                 {t.t("action.save")}
             </button>
+            </div>
         </div>
     }
     .into_any()
@@ -263,9 +283,18 @@ fn override_flag(overrides: RelayPolicyOverride, policy: RelayPolicy, key: &str)
 /// the global policy.
 fn override_flag_patch(key: &str, value: bool) -> RelayPolicyOverride {
     match key {
-        "allow_write" => RelayPolicyOverride { allow_write: Some(value), ..Default::default() },
-        "allow_commands" => RelayPolicyOverride { allow_commands: Some(value), ..Default::default() },
-        "allow_network" => RelayPolicyOverride { allow_network: Some(value), ..Default::default() },
+        "allow_write" => RelayPolicyOverride {
+            allow_write: Some(value),
+            ..Default::default()
+        },
+        "allow_commands" => RelayPolicyOverride {
+            allow_commands: Some(value),
+            ..Default::default()
+        },
+        "allow_network" => RelayPolicyOverride {
+            allow_network: Some(value),
+            ..Default::default()
+        },
         _ => RelayPolicyOverride {
             require_worktree_for_parallel_writers: Some(value),
             ..Default::default()

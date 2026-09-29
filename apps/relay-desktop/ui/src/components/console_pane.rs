@@ -38,7 +38,11 @@ pub fn console_pane() -> impl IntoView {
         let (Some(view), Some(step)) = (selected_view(), selected_step()) else {
             return None;
         };
-        view.workers.iter().filter(|worker| worker.step_id == step.id).next_back().cloned()
+        view.workers
+            .iter()
+            .filter(|worker| worker.step_id == step.id)
+            .next_back()
+            .cloned()
     };
     let sticking = RwSignal::new(true);
     let scroller = NodeRef::<leptos::html::Div>::new();
@@ -73,7 +77,7 @@ pub fn console_pane() -> impl IntoView {
                     .as_ref()
                     .map(|worker| worker.runtime_id.clone())
                     .unwrap_or_else(|| t.t("inspector.stopWorker"));
-                let duration = format::elapsed(&step.created_at, worker.as_ref().and_then(|w| w.ended_at.as_deref()));
+                let duration = format::elapsed(&step.created_at, worker.as_ref().and_then(|w| w.ended_at.as_deref()), t.locale.get());
                 let stop_id = worker.as_ref().map(|worker| worker.id.clone());
                 let steps = view.steps.clone();
                 let current_step = step.id.clone();
@@ -89,8 +93,7 @@ pub fn console_pane() -> impl IntoView {
                         <span class="dim">{duration}</span>
                         <span class="console-head-right">
                             <span class="dim tabular">
-                                {move || rows.get().len()} " · " {move || step_events.get().len()} " "
-                                {t.t("inspector.events")}
+                                {move || rows.get().len()} " · " {move || t.tp("counts.events", step_events.get().len())}
                             </span>
                             {running
                                 .then(|| {
@@ -100,7 +103,7 @@ pub fn console_pane() -> impl IntoView {
                                             class="btn btn-outline btn-sm"
                                             on:click=move |_| state::cancel_worker(store, worker_id.clone())
                                         >
-                                            {icon("stop", "icon icon-xs")}
+                                            {icon(icondata::LuSquare, "icon icon-xs")}
                                             <span>{t.t("inspector.stopWorker")}</span>
                                         </button>
                                     }
@@ -125,7 +128,7 @@ pub fn console_pane() -> impl IntoView {
                                                     class=if active { "chip chip-active" } else { "chip" }
                                                     on:click=move |_| store.step.set(Some(id.clone()))
                                                 >
-                                                    <span>{t.t("steps.step")} " " {number}</span>
+                                                    <span>{t.tv("timeline.stepFormat", &[("step", &number.to_string())])}</span>
                                                     <i class="not-italic tone-muted">{glyph}</i>
                                                 </button>
                                             }
@@ -217,7 +220,7 @@ fn rows_view(rows: Vec<ConsoleRow>, t: &crate::i18n::Translator) -> impl IntoVie
                         {count
                             .map(|count| {
                                 view! {
-                                    <i class="log-note">" " {count} " " {t.t("console.files")}</i>
+                                    <i class="log-note">" " {t.tp("counts.files", count)}</i>
                                 }
                             })}
                         {(!diff.is_empty()).then(|| view! { <i class="log-note tabular">{diff}</i> })}

@@ -147,9 +147,38 @@ retry them.
 
 Capabilities are declared, not assumed: Relay only offers `send_agent` or
 `resume_agent` when the adapter reports that the CLI supports it, and every
-tool event keeps the original native payload. Grok combines text chunks into
-complete response messages and copies only public usage/result fields; signed
-usage blobs and cached authentication fields never enter the event log.
+tool event keeps the original native payload.
+
+### Assistant text
+
+Runtimes disagree about how they report an answer, so Relay normalizes all of
+them onto one contract on `worker/message`:
+
+```json
+{ "kind": "delta", "text": "<increment>", "messageStart": true }
+```
+
+`messageStart` opens a new assistant message; the increments after it extend that
+message. `kind: "final"` stays the authoritative complete answer. Each adapter
+parses its own JSON and keeps the provider frame (`nativeEvent`); `relay-core`
+only ever sees the normalized contract, and no provider field name crosses that
+boundary.
+
+| Runtime | Native source | Mapped as |
+| --- | --- | --- |
+| DeepSeek Harness | one `--json` `text` frame per **committed message** (no token-level stream) | one delta with `messageStart` per frame |
+| Antigravity | `step_update.agent_response.text_delta` | chunks; a new `step_index` opens a message |
+| Grok | native `type: "text"` chunks | chunks; a new model response opens a message |
+| Kimi, Z.ai | legacy `text` / `final` frames | read through the same contract |
+
+`relay_core::worker_text::assistant_text` is the shared aggregation every surface
+consumes: it merges the increments in order, lets an authoritative `final`
+supersede the stream that spelled it out, and reports which `worker/completed`
+summaries merely repeat a message. The console renders the merged messages as
+assistant bubbles — never one row per chunk — and a completion that repeats an
+answer is shown as a status instead of the same text twice. Grok copies only
+public usage/result fields: signed usage blobs and cached authentication fields
+never enter the event log.
 
 **Runtime ≠ Agent Profile.** A runtime is a CLI on this machine; a profile is a
 user-facing capability on top of it. One runtime can back several profiles.
@@ -240,6 +269,9 @@ browser, and the UI never touches SQLite.
 2. Declare capabilities honestly — Relay degrades (no `send`, no `resume`)
    instead of pretending.
 3. Add parser fixtures for the native event stream; keep the native payload.
-4. Ship a profile preset if the runtime deserves one.
-5. Only then mark it supported: an adapter that compiles but has no end-to-end
+4. Map assistant text onto the worker-text contract (section 6) instead of a
+   surface-specific shape, and say whether the runtime publishes increments or
+   whole committed messages.
+5. Ship a profile preset if the runtime deserves one.
+6. Only then mark it supported: an adapter that compiles but has no end-to-end
    verification stays "Planned" in the README.

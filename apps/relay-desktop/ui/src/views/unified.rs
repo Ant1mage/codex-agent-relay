@@ -1,13 +1,12 @@
 //! The Unified Desktop Application view for Relay.
 //!
 //! Consolidates the popover panel and web inspector into a single modern desktop client
-//! (1050x720, traffic light overlay, left navigation rail, continuous timeline stream).
+//! (1200x800, traffic light overlay, left navigation rail, continuous timeline stream).
 
 use leptos::prelude::*;
 
 use crate::api::Route;
 use crate::components::controls::icon;
-use crate::components::notice::notice_pill;
 use crate::components::session_rail::session_rail_collapsible;
 use crate::components::timeline_stream::TimelineStream;
 use crate::dom;
@@ -86,7 +85,10 @@ pub fn unified_app() -> AnyView {
         let current_step = store.step.get_untracked();
         let step_exists = current_step
             .as_ref()
-            .map(|id| run.map(|view| view.steps.iter().any(|step| &step.id == id)).unwrap_or(false))
+            .map(|id| {
+                run.map(|view| view.steps.iter().any(|step| &step.id == id))
+                    .unwrap_or(false)
+            })
             .unwrap_or(false);
         let step = if step_exists {
             current_step
@@ -111,9 +113,11 @@ pub fn unified_app() -> AnyView {
         let Some(run_id) = store.run.get() else {
             return;
         };
-        let cached = store
-            .events
-            .with_untracked(|all| all.get(&run_id).map(|bucket| !bucket.is_empty()).unwrap_or(false));
+        let cached = store.events.with_untracked(|all| {
+            all.get(&run_id)
+                .map(|bucket| !bucket.is_empty())
+                .unwrap_or(false)
+        });
         if cached {
             return;
         }
@@ -143,11 +147,47 @@ pub fn unified_app() -> AnyView {
 
     view! {
         <div class="unified-layout">
-            // Left Navigation Rail
-            <aside class="unified-rail">
-                <div class="unified-rail-header">
-                    {crate::components::controls::relay_logo("unified-rail-logo")}
+            // Top Window Titlebar (macOS traffic lights overlay integration & sidebar toggle)
+            <header class="unified-titlebar" class:native-macos=dom::query("desktop").as_deref() == Some("macos")
+                on:mousedown=move |event| {
+                    if event.button() == 0 {
+                        event.prevent_default();
+                        dom::shell_action("drag");
+                    }
+                }
+            >
+                <div class="titlebar-traffic-lights-spacer" data-tauri-drag-region="true"></div>
+                <div class="titlebar-actions" on:mousedown=move |event| event.stop_propagation()>
+                    <button
+                        type="button"
+                        class="titlebar-sidebar-toggle"
+                        aria-label=move || if sidebar_open.get() { t.t("timeline.collapse") } else { t.t("timeline.expand") }
+                        aria-expanded=move || sidebar_open.get().to_string()
+                        aria-controls="session-sidebar"
+                        disabled=move || panel_store.tab.get() != PanelTab::Sessions
+                        title=move || if sidebar_open.get() { t.t("timeline.collapse") } else { t.t("timeline.expand") }
+                        on:click=move |_| sidebar_open.set(!sidebar_open.get())
+                    >
+                        {move || if sidebar_open.get() {
+                            icon(icondata::LuPanelLeftClose, "icon icon-sm")
+                        } else {
+                            icon(icondata::LuPanelLeftOpen, "icon icon-sm")
+                        }}
+                    </button>
                 </div>
+                <div class="titlebar-center" data-tauri-drag-region="true">
+                    <span class="titlebar-app-name">"Relay"</span>
+                    <span class="titlebar-tab-separator">"·"</span>
+                    <span class="titlebar-tab-name">{move || t.t(panel_store.tab.get().key())}</span>
+                </div>
+            </header>
+
+            <div class="unified-body">
+                // Left Navigation Rail
+                <aside class="unified-rail">
+                    <div class="unified-rail-header">
+                        {crate::components::controls::relay_logo("unified-rail-logo")}
+                    </div>
 
                 <div class="unified-rail-nav">
                     {PanelTab::ORDER
@@ -155,12 +195,12 @@ pub fn unified_app() -> AnyView {
                         .map(|tab| {
                             let is_active = move || panel_store.tab.get() == tab;
                             let icon_name = match tab {
-                                PanelTab::Sessions => "message-square",
-                                PanelTab::Agents => "bot",
-                                PanelTab::Runtimes => "cpu",
-                                PanelTab::Policy => "shield",
-                                PanelTab::Codex => "sliders",
-                                PanelTab::Status => "activity",
+                                PanelTab::Sessions => icondata::LuMessageSquare,
+                                PanelTab::Agents => icondata::LuBot,
+                                PanelTab::Runtimes => icondata::LuCpu,
+                                PanelTab::Policy => icondata::LuShield,
+                                PanelTab::Codex => icondata::LuSlidersHorizontal,
+                                PanelTab::Status => icondata::LuActivity,
                             };
                             view! {
                                 <button
@@ -179,7 +219,6 @@ pub fn unified_app() -> AnyView {
                                     }
                                 >
                                     {icon(icon_name, "icon unified-rail-icon")}
-                                    <span class="unified-rail-label">{move || t.t(tab.key())}</span>
                                 </button>
                             }
                         })
@@ -206,10 +245,24 @@ pub fn unified_app() -> AnyView {
                         ></i>
                     </div>
 
+                    // Theme Toggle (Auto / Light / Dark)
+                    <button
+                        type="button"
+                        class="unified-rail-btn"
+                        title=move || match store.theme.get() { dom::ThemeMode::Auto => t.t("theme.auto"), dom::ThemeMode::Light => t.t("theme.lightNext"), dom::ThemeMode::Dark => t.t("theme.darkNext") }
+                        on:click=move |_| store.toggle_theme()
+                    >
+                        {move || match store.theme.get() {
+                            dom::ThemeMode::Auto => icon(icondata::LuMonitor, "icon unified-rail-icon"),
+                            dom::ThemeMode::Light => icon(icondata::LuSun, "icon unified-rail-icon"),
+                            dom::ThemeMode::Dark => icon(icondata::LuMoon, "icon unified-rail-icon"),
+                        }}
+                    </button>
+
                     // Locale Toggle
                     <button
                         type="button"
-                        class="unified-rail-sub-btn"
+                        class="unified-rail-btn"
                         title=move || {
                             if store.locale.get() == Locale::En {
                                 t.t("language.zh-CN")
@@ -227,27 +280,54 @@ pub fn unified_app() -> AnyView {
                     // Open in external browser
                     <button
                         type="button"
-                        class="unified-rail-sub-btn"
+                        class="unified-rail-btn"
                         title=move || t.t("panel.openInspector")
                         on:click=move |_| panel_store.open_inspector()
                     >
-                        {icon("external", "icon icon-xs")}
+                        {icon(icondata::LuExternalLink, "icon unified-rail-icon")}
                     </button>
 
                     // Refresh Button
                     <button
                         type="button"
-                        class="unified-rail-sub-btn"
+                        class="unified-rail-btn"
                         title=move || t.t("common.refresh")
                         on:click=refresh_all
                     >
-                        {icon("refresh", "icon icon-xs")}
+                        {icon(icondata::LuRefreshCw, "icon unified-rail-icon")}
                     </button>
                 </div>
             </aside>
 
             // Main View Surface
             <main class="unified-main">
+                // API error banner
+                {move || {
+                    let err = panel_store.error.get().or_else(|| store.error.get());
+                    err.map(|msg| {
+                        view! {
+                            <div class="panel-error-banner">
+                                <div class="panel-error-banner-content">
+                                    {icon(icondata::LuCircleAlert, "icon icon-xs")}
+                                    <span>{msg}</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn-icon"
+                                    title=t.t("common.retry")
+                                    on:click=move |_| {
+                                        panel_store.error.set(None);
+                                        store.error.set(None);
+                                        panel_store.reload();
+                                    }
+                                >
+                                    {icon(icondata::LuRefreshCw, "icon icon-xs")}
+                                </button>
+                            </div>
+                        }
+                    })
+                }}
+
                 // System / Codex warning banner
                 {move || {
                     let missing = !codex_configured();
@@ -258,10 +338,19 @@ pub fn unified_app() -> AnyView {
                     if missing {
                         view! {
                             <div class="codex-banner">
-                                {icon("warning", "icon icon-xs tone-warn")}
-                                <span class="banner-strong">{t.t("inspector.codexMissing")}</span>
-                                <span class="dim">{t.t("inspector.codexMissingBody")}</span>
-                                <span class="banner-tail">{t.t("inspector.codexFixInMenuBar")}</span>
+                                <div class="codex-banner-content">
+                                    {icon(icondata::LuTriangleAlert, "icon icon-xs tone-warn")}
+                                    <span class="banner-strong">{t.t("inspector.codexMissing")}</span>
+                                    <span class="dim">{t.t("inspector.codexMissingBody")}</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-outline btn-xs codex-banner-btn"
+                                    on:click=move |_| panel_store.tab.set(PanelTab::Codex)
+                                >
+                                    <span>{t.t("codex.configureNow")}</span>
+                                    {icon(icondata::LuChevronRight, "icon icon-xs")}
+                                </button>
                             </div>
                         }
                         .into_any()
@@ -273,7 +362,7 @@ pub fn unified_app() -> AnyView {
                                     .map(|warning| {
                                         view! {
                                             <p class="panel-warning">
-                                                {icon("warning", "icon icon-xs")}
+                                                {icon(icondata::LuTriangleAlert, "icon icon-xs")}
                                                 <span class="wrap">{warning}</span>
                                             </p>
                                         }
@@ -295,20 +384,7 @@ pub fn unified_app() -> AnyView {
                                 <div class=move || format!("unified-sessions-pane {}", if sidebar_open.get() { "" } else { "sidebar-collapsed" })>
                                     {session_rail_collapsible(route, Some(sidebar_open))}
                                     <div class="unified-timeline-column">
-                                        {move || (!sidebar_open.get()).then(|| view! {
-                                            <div class="sidebar-expand-bar">
-                                                <button
-                                                    type="button"
-                                                    class="btn btn-outline btn-xs sidebar-expand-btn"
-                                                    title=t.t("timeline.expand")
-                                                    on:click=move |_| sidebar_open.set(true)
-                                                >
-                                                    {icon("chevron-right", "icon icon-xs")}
-                                                    <span>{t.t("nav.sessions")}</span>
-                                                </button>
-                                            </div>
-                                        })}
-                                        <TimelineStream route=route />
+                                        <TimelineStream route=route sidebar_open=sidebar_open />
                                     </div>
                                 </div>
                             }
@@ -357,9 +433,16 @@ pub fn unified_app() -> AnyView {
                     }}
                 </div>
             </main>
+            </div>
 
             // Global Notice Pill
-            {notice_pill(move || store.notice.get().or_else(|| panel_store.notice.get()))}
+            {crate::components::notice::notice_pill_closable(
+                move || store.notice.get().or_else(|| panel_store.notice.get()),
+                move || {
+                    store.notice.set(None);
+                    panel_store.notice.set(None);
+                },
+            )}
         </div>
     }
     .into_any()

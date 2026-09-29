@@ -16,7 +16,6 @@ pub fn status_view(store: PanelStore) -> AnyView {
     store.load_health();
 
     let base = store.base();
-    let healthy = move || store.health.get().map(|value| value.ok).unwrap_or(false);
 
     view! {
         <div class="stack">
@@ -24,10 +23,10 @@ pub fn status_view(store: PanelStore) -> AnyView {
                 <div class="status-head">
                     <h2 class="card-title">{t.t("status.daemon")}</h2>
                     {move || {
-                        if healthy() {
-                            badge(t.t("status.healthy"), "success")
-                        } else {
-                            badge(t.t("status.unreachable"), "destructive")
+                        match (store.health.get(), store.health_error.get()) {
+                            (Some(health), _) if health.ok => badge(t.t("status.healthy"), "success").into_any(),
+                            (None, None) => badge(t.t("common.loading"), "outline").into_any(),
+                            _ => badge(t.t("status.unreachable"), "destructive").into_any(),
                         }
                     }}
                 </div>
@@ -42,7 +41,7 @@ pub fn status_view(store: PanelStore) -> AnyView {
                                     {status_row(t.t("status.version"), value.version)}
                                     {status_row(t.t("status.port"), value.port.to_string())}
                                     {status_row(t.t("status.pid"), value.pid.to_string())}
-                                    {status_row(t.t("status.started"), crate::format::date_time(&value.started_at))}
+                                    {status_row(t.t("status.started"), crate::format::date_time(&value.started_at, t.locale.get()))}
                                     {status_row(t.t("status.database"), value.database)}
                                 </div>
                             }
@@ -58,19 +57,19 @@ pub fn status_view(store: PanelStore) -> AnyView {
                 <div class="status-grid">
                     {status_cell(
                         t.t("status.sessions"),
-                        move || store.health.get().map(|value| value.sessions as usize).unwrap_or(0),
+                        move || store.health.get().map(|value| (value.sessions as usize).to_string()).unwrap_or_else(|| "-".to_string()),
                     )}
                     {status_cell(
                         t.t("status.runs"),
-                        move || store.health.get().map(|value| value.runs as usize).unwrap_or(0),
+                        move || store.health.get().map(|value| (value.runs as usize).to_string()).unwrap_or_else(|| "-".to_string()),
                     )}
                     {status_cell(
                         t.t("status.runtimes"),
-                        move || store.snapshot.with(|snapshot| snapshot.as_ref().map(|value| value.runtimes.len()).unwrap_or(0)),
+                        move || store.snapshot.with(|snapshot| snapshot.as_ref().map(|value| value.runtimes.len().to_string()).unwrap_or_else(|| "-".to_string())),
                     )}
                     {status_cell(
                         t.t("status.profiles"),
-                        move || store.snapshot.with(|snapshot| snapshot.as_ref().map(|value| value.profiles.len()).unwrap_or(0)),
+                        move || store.snapshot.with(|snapshot| snapshot.as_ref().map(|value| value.profiles.len().to_string()).unwrap_or_else(|| "-".to_string())),
                     )}
                 </div>
             </div>
@@ -93,7 +92,7 @@ pub fn status_view(store: PanelStore) -> AnyView {
             </div>
 
             <button class="btn btn-outline btn-sm full" on:click=move |_| store.copy_diagnostics()>
-                {icon("copy", "icon icon-xs")}
+                {icon(icondata::LuCopy, "icon icon-xs")}
                 <span>{t.t("inspector.copyDiagnostics")}</span>
             </button>
         </div>
@@ -110,7 +109,7 @@ fn status_row(label: String, value: String) -> impl IntoView {
     }
 }
 
-fn status_cell(label: String, value: impl Fn() -> usize + Send + Sync + 'static) -> impl IntoView {
+fn status_cell(label: String, value: impl Fn() -> String + Send + Sync + 'static) -> impl IntoView {
     view! {
         <div class="status-cell">
             <span class="status-cell-value tabular">{move || value()}</span>

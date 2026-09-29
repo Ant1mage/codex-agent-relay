@@ -27,7 +27,7 @@ pub fn run_strip(route: RwSignal<Route>) -> impl IntoView {
             });
             let selected_run = store.run.get();
             let runs = view.runs.clone();
-            let started = format::date_time(&view.session.started_at);
+            let started = format::date_time(&view.session.started_at, t.locale.get());
             view! {
                 <div class="run-strip">
                     <div class="run-strip-head">
@@ -49,7 +49,7 @@ pub fn run_strip(route: RwSignal<Route>) -> impl IntoView {
                                             run: Some(run_view.run.id.clone()),
                                         };
                                         let worker_end = run_view.workers.last().and_then(|worker| worker.ended_at.clone());
-                                        let duration = format::elapsed(&run_view.run.created_at, worker_end.as_deref());
+                                        let duration = format::elapsed(&run_view.run.created_at, worker_end.as_deref(), t.locale.get());
                                         let status = format::run_status(run_view.run.status);
                                         let relative = format::relative_time(&run_view.run.updated_at, status, &t);
                                         let profile = profiles

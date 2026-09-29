@@ -57,8 +57,11 @@ are not offered. See the
 
 Antigravity CLI (`agy`) is driven through its native headless stream: the task is
 written as one private `user` event on stdin, and the CLI's `init`, `step_update`
-and `result` NDJSON frames become Relay events. Text deltas are merged into one
-final answer. Model ids are parsed from the `agy models` `<id>\t<label>` table
+and `result` NDJSON frames become Relay events. `agent_response.text_delta`
+chunks stream through Relay's unified worker-text contract — one assistant
+message per `agent_response` step, with the `result` frame as the authoritative
+answer — so they display through the same path as DeepSeek Harness and Grok.
+Model ids are parsed from the `agy models` `<id>\t<label>` table
 and applied with the CLI's own `--model` flag; reasoning levels are exactly the
 `--effort` values the CLI's own help enumerates (`low|medium|high|max`) — Relay
 never infers them from model id suffixes. Relay waits for the CLI's `init` and
@@ -139,6 +142,13 @@ stable Rust, the `wasm32-unknown-unknown` target, Trunk, and the Tauri CLI.
 cargo build --workspace
 cargo test --workspace
 ./scripts/dev.sh
+```
+
+Package one app profile per invocation:
+
+```bash
+./scripts/package-app.sh --mode dev       # debug app: Relay Dev.app
+./scripts/package-app.sh --mode release   # release app and DMG
 ```
 
 See [Development](docs/development.md) for desktop builds, packaging, and release

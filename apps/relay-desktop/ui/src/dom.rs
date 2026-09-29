@@ -15,13 +15,17 @@ use crate::api::Route;
 pub const TOKEN_KEY: &str = "relay.token";
 /// `relay.locale`: the inspector remembers the language, the panel does not.
 pub const LOCALE_KEY: &str = "relay.locale";
+/// `relay.theme`: user theme preference ('light', 'dark', 'auto').
+pub const THEME_KEY: &str = "relay.theme";
 
 pub fn window() -> web_sys::Window {
     web_sys::window().expect("the relay ui only runs inside a window")
 }
 
 pub fn document() -> web_sys::Document {
-    window().document().expect("the relay ui only runs inside a document")
+    window()
+        .document()
+        .expect("the relay ui only runs inside a document")
 }
 
 pub fn location() -> web_sys::Location {
@@ -45,7 +49,8 @@ pub fn search() -> String {
 }
 
 fn search_params() -> UrlSearchParams {
-    UrlSearchParams::new_with_str(&search()).unwrap_or_else(|_| UrlSearchParams::new().expect("constructor"))
+    UrlSearchParams::new_with_str(&search())
+        .unwrap_or_else(|_| UrlSearchParams::new().expect("constructor"))
 }
 
 /// One query parameter, with an empty value treated as absent.
@@ -114,14 +119,20 @@ pub fn resolve_token() -> Option<String> {
         replace_url(&without_token(&current));
         return Some(token);
     }
-    get_stored(TOKEN_KEY).map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
+    get_stored(TOKEN_KEY)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 /// Raw `localStorage.getItem`. `gloo-storage`'s typed helpers JSON-encode the
 /// value, which would store the token as `\"…\"` and break the `relay.token`
 /// contract every Relay surface shares.
 pub fn get_stored(key: &str) -> Option<String> {
-    window().local_storage().ok().flatten().and_then(|storage| storage.get_item(key).ok().flatten())
+    window()
+        .local_storage()
+        .ok()
+        .flatten()
+        .and_then(|storage| storage.get_item(key).ok().flatten())
 }
 
 pub fn set_stored(key: &str, value: &str) {
@@ -133,7 +144,10 @@ pub fn set_stored(key: &str, value: &str) {
 /// `parsePath` from the TypeScript router: only `/s/<session>` and
 /// `/s/<session>/r/<run>` mean anything, everything else is the newest session.
 pub fn parse_path(pathname: &str) -> Route {
-    let parts: Vec<&str> = pathname.split('/').filter(|part| !part.is_empty()).collect();
+    let parts: Vec<&str> = pathname
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
     if parts.first() != Some(&"s") {
         return Route::default();
     }
@@ -141,9 +155,15 @@ pub fn parse_path(pathname: &str) -> Route {
         return Route::default();
     };
     if parts.get(2) != Some(&"r") || parts.get(3).is_none() {
-        return Route { session: Some(decode(session)), run: None };
+        return Route {
+            session: Some(decode(session)),
+            run: None,
+        };
     }
-    Route { session: Some(decode(session)), run: parts.get(3).map(|value| decode(value)) }
+    Route {
+        session: Some(decode(session)),
+        run: parts.get(3).map(|value| decode(value)),
+    }
 }
 
 fn decode(value: &str) -> String {
@@ -175,15 +195,17 @@ pub fn is_panel_path(pathname: &str) -> bool {
     pathname == "/panel" || pathname.starts_with("/panel/")
 }
 
-pub fn on_popstate(callback: impl Fn() + 'static) {
-    let closure = Closure::<dyn FnMut()>::new(callback);
-    let _ = window()
-        .add_event_listener_with_callback("popstate", closure.as_ref().unchecked_ref());
-    closure.forget();
+pub fn on_popstate(callback: impl Fn() + Send + Sync + 'static) {
+    let _ = leptos_use::use_event_listener(window(), leptos::ev::popstate, move |_| callback());
 }
 
-/// `?lang=en` selects English; anything else is the panel's zh-CN default.
+/// Returns the active locale, prioritizing user localStorage preference over the URL query.
 pub fn panel_locale() -> crate::i18n::Locale {
+    if let Some(stored) =
+        get_stored(LOCALE_KEY).and_then(|code| crate::i18n::Locale::from_code(&code))
+    {
+        return stored;
+    }
     match query("lang").as_deref() {
         Some("en") => crate::i18n::Locale::En,
         _ => crate::i18n::Locale::ZhCn,
@@ -192,7 +214,9 @@ pub fn panel_locale() -> crate::i18n::Locale {
 
 /// The inspector follows the browser's language, then remembers the choice.
 pub fn inspector_locale() -> crate::i18n::Locale {
-    if let Some(stored) = get_stored(LOCALE_KEY).and_then(|code| crate::i18n::Locale::from_code(&code)) {
+    if let Some(stored) =
+        get_stored(LOCALE_KEY).and_then(|code| crate::i18n::Locale::from_code(&code))
+    {
         return stored;
     }
     crate::i18n::resolve_locale(&window().navigator().language().unwrap_or_default())
@@ -204,32 +228,74 @@ pub fn set_document_lang(locale: crate::i18n::Locale) {
     }
 }
 
-fn prefers_dark() -> bool {
-    window()
-        .match_media("(prefers-color-scheme: dark)")
-        .ok()
-        .flatten()
-        .map(|media| media.matches())
-        .unwrap_or(false)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeMode {
+    Light,
+    Dark,
+    Auto,
 }
 
-/// The inspector has no theme switch: it follows the browser, like any log view.
-pub fn apply_theme() {
-    let dark = prefers_dark();
-    if let Some(root) = document().document_element() {
-        let _ = root.class_list().toggle_with_force("dark", dark);
-        let _ = root.set_attribute("style", if dark { "color-scheme: dark" } else { "color-scheme: light" });
+impl ThemeMode {
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            "auto" => Some(Self::Auto),
+            _ => None,
+        }
+    }
+
+    pub fn as_code(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+            Self::Auto => "auto",
+        }
     }
 }
 
-pub fn watch_theme() {
-    apply_theme();
-    let Ok(Some(media)) = window().match_media("(prefers-color-scheme: dark)") else {
-        return;
-    };
-    let closure = Closure::<dyn FnMut()>::new(apply_theme);
-    let _ = media.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref());
-    closure.forget();
+#[derive(Clone, Copy)]
+pub struct ThemeControl {
+    pub set_mode: leptos::prelude::WriteSignal<leptos_use::ColorMode>,
+    pub dark: leptos::prelude::Signal<bool>,
+}
+
+pub fn current_theme() -> ThemeMode {
+    get_stored(THEME_KEY)
+        .and_then(|code| ThemeMode::from_code(&code))
+        .unwrap_or(ThemeMode::Auto)
+}
+
+pub fn is_dark(mode: ThemeMode) -> bool {
+    use leptos::prelude::*;
+    match mode {
+        ThemeMode::Dark => true,
+        ThemeMode::Light => false,
+        ThemeMode::Auto => use_context::<ThemeControl>().is_some_and(|theme| theme.dark.get()),
+    }
+}
+
+pub fn set_theme(mode: ThemeMode) {
+    use leptos::prelude::*;
+    if let Some(theme) = use_context::<ThemeControl>() {
+        theme.set_mode.set(match mode {
+            ThemeMode::Dark => leptos_use::ColorMode::Dark,
+            ThemeMode::Light => leptos_use::ColorMode::Light,
+            ThemeMode::Auto => leptos_use::ColorMode::Auto,
+        });
+    }
+}
+
+/// Dedicated native actions are intercepted by the desktop shell. Browsers
+/// never navigate to this scheme, and there is no general-purpose IPC bridge.
+pub fn shell_action(action: &str) {
+    if query("desktop").is_some() {
+        let _ = location().set_href(&format!("relay-ui://panel/{action}"));
+    }
+}
+
+pub fn sync_native_locale(locale: crate::i18n::Locale) {
+    shell_action(&format!("locale/{}", locale.code()));
 }
 
 pub fn open_new_tab(url: &str) {
@@ -252,7 +318,10 @@ pub fn error_message(value: &JsValue) -> String {
 /// caller can surface it in the notice pill.
 pub async fn write_clipboard(text: &str) -> Result<(), String> {
     let promise = window().navigator().clipboard().write_text(text);
-    wasm_bindgen_futures::JsFuture::from(promise).await.map(|_| ()).map_err(|error| error_message(&error))
+    wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .map(|_| ())
+        .map_err(|error| error_message(&error))
 }
 
 /// Milliseconds since the epoch, the `Date.now()` the formatting helpers used.
@@ -296,18 +365,29 @@ pub struct PanelNavDetail {
     pub run: Option<String>,
 }
 
-pub fn on_panel_nav(callback: impl Fn(PanelNavDetail) + 'static) {
-    let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-        if let Ok(detail) = js_sys::Reflect::get(event.as_ref(), &wasm_bindgen::JsValue::from_str("detail")) {
-            if let Ok(json_str) = js_sys::JSON::stringify(&detail) {
-                if let Some(s) = json_str.as_string() {
-                    if let Ok(parsed) = serde_json::from_str::<PanelNavDetail>(&s) {
-                        callback(parsed);
+pub fn on_panel_nav(callback: impl Fn(PanelNavDetail) + Send + Sync + 'static) {
+    let _ = leptos_use::use_event_listener(
+        window(),
+        leptos::ev::Custom::<web_sys::Event>::new("relay:panel"),
+        move |event| {
+            if let Ok(detail) = js_sys::Reflect::get(event.as_ref(), &JsValue::from_str("detail")) {
+                if let Ok(json) = js_sys::JSON::stringify(&detail) {
+                    if let Some(json) = json.as_string() {
+                        if let Ok(detail) = serde_json::from_str(&json) {
+                            callback(detail);
+                        }
                     }
                 }
             }
-        }
-    });
-    let _ = window().add_event_listener_with_callback("relay:panel", closure.as_ref().unchecked_ref());
-    closure.forget();
+        },
+    );
+}
+
+/// Fire `f` after `ms` milliseconds (one-shot).
+pub fn set_timeout(ms: i32, f: impl FnOnce() + 'static) {
+    let closure = Closure::once_into_js(f);
+    let _ = window().set_timeout_with_callback_and_timeout_and_arguments_0(
+        closure.as_ref().unchecked_ref(),
+        ms,
+    );
 }

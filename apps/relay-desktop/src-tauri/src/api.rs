@@ -125,7 +125,10 @@ impl RelayClient {
         .await
     }
 
-    pub async fn delete_session(&self, host_session_id: &str) -> Result<serde_json::Value, ApiError> {
+    pub async fn delete_session(
+        &self,
+        host_session_id: &str,
+    ) -> Result<serde_json::Value, ApiError> {
         let response = self
             .http
             .delete(self.url(&format!(

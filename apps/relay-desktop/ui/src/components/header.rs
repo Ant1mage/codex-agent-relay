@@ -12,15 +12,40 @@ pub fn header() -> impl IntoView {
     let t = store.translator();
     let refreshing = RwSignal::new(false);
 
-    let sessions = move || store.snapshot.with(|snapshot| snapshot.as_ref().map(|value| value.sessions.len()).unwrap_or(0));
+    let sessions = move || {
+        store.snapshot.with(|snapshot| {
+            snapshot
+                .as_ref()
+                .map(|value| value.sessions.len())
+                .unwrap_or(0)
+        })
+    };
     let runs = move || {
-        store
-            .snapshot
-            .with(|snapshot| snapshot.as_ref().map(|value| value.sessions.iter().map(|view| view.runs.len()).sum::<usize>()).unwrap_or(0))
+        store.snapshot.with(|snapshot| {
+            snapshot
+                .as_ref()
+                .map(|value| {
+                    value
+                        .sessions
+                        .iter()
+                        .map(|view| view.runs.len())
+                        .sum::<usize>()
+                })
+                .unwrap_or(0)
+        })
     };
     let active = move || {
         store.snapshot.with(|snapshot| {
-            snapshot.as_ref().map(|value| value.sessions.iter().map(|view| view.active_workers).sum::<u32>()).unwrap_or(0)
+            snapshot
+                .as_ref()
+                .map(|value| {
+                    value
+                        .sessions
+                        .iter()
+                        .map(|view| view.active_workers)
+                        .sum::<u32>()
+                })
+                .unwrap_or(0)
         })
     };
     let codex_ready = move || store.codex_configured();
@@ -51,7 +76,7 @@ pub fn header() -> impl IntoView {
             <div class="header-counts">
                 <span>{sessions} " " {t.t("nav.sessions")}</span>
                 <span aria-hidden="true">"·"</span>
-                <span>{runs} " " {t.t("runs.title")}</span>
+                <span>{move || t.tp("counts.runs", runs())}</span>
                 <span aria-hidden="true">"·"</span>
                 <span class="tabular">{active} " " {t.t("common.active")}</span>
             </div>
@@ -61,8 +86,8 @@ pub fn header() -> impl IntoView {
                     {move || {
                         if codex_ready() {
                             view! {
-                                {icon("check-circle", "icon icon-xs")}
-                                <span>{t.t("onboarding.check.codex-cli")}</span>
+                                {icon(icondata::LuCircleCheck, "icon icon-xs")}
+                                <span>{t.t("codex.check.codex-cli")}</span>
                             }
                                 .into_any()
                         } else {
@@ -77,21 +102,21 @@ pub fn header() -> impl IntoView {
                     }
                     on:click=toggle_locale
                 >
-                    {icon("globe", "icon")}
+                    {icon(icondata::LuGlobe, "icon")}
                 </button>
                 <button
                     class="btn-icon"
                     title=move || t.t("inspector.copyDiagnostics")
                     on:click=move |_| state::copy_diagnostics(store)
                 >
-                    {icon("copy", "icon")}
+                    {icon(icondata::LuCopy, "icon")}
                 </button>
                 <button
                     class=move || if refreshing.get() { "btn-icon spin" } else { "btn-icon" }
                     title=move || t.t("common.refresh")
                     on:click=refresh
                 >
-                    {icon("refresh", "icon")}
+                    {icon(icondata::LuRefreshCw, "icon")}
                 </button>
             </div>
         </header>

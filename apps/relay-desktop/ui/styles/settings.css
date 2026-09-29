@@ -1,0 +1,225 @@
+/* ==========================================================================
+   Desktop-Grade Management Views (Agents, Runtimes, Policy, Codex, Status)
+   ========================================================================== */
+
+.unified-settings-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 32px 48px;
+  max-width: 920px;
+  width: 100%;
+  margin: 0 auto;
+  min-height: 0;
+}
+
+.unified-settings-scroll .stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.unified-settings-scroll .view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.unified-settings-scroll .view-title {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+}
+
+.unified-settings-scroll .card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.unified-settings-scroll .item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.unified-settings-scroll .item {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.unified-settings-scroll .item:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--card) 94%, var(--foreground));
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.unified-settings-scroll .item-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.unified-settings-scroll .field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.unified-settings-scroll .field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+  margin-bottom: 5px;
+}
+
+.unified-settings-scroll .switch-row {
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+.unified-settings-scroll .switch-row:last-child {
+  border-bottom: none;
+}
+
+.unified-settings-scroll .switch-label {
+  font-size: 13px;
+  font-weight: 450;
+}
+
+.unified-settings-scroll .status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.unified-settings-scroll .status-cell {
+  background: color-mix(in srgb, var(--background) 50%, var(--card));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.unified-settings-scroll .status-cell-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.unified-settings-scroll .status-cell-label {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.unified-settings-scroll .diagnostics-line {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--background) 60%, var(--card));
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.unified-settings-scroll .actions-block {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-top: 16px;
+}
+
+/* Editors: header and actions stay visible; only the form scrolls. */
+.unified-settings-scroll:has(.editor-layout) {
+  padding: 0;
+  max-width: none;
+  overflow: hidden;
+}
+.editor-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.editor-layout .editor-head {
+  justify-content: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-8) var(--space-4);
+  border: none;
+  flex: 0 0 auto;
+}
+.editor-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-8) var(--space-6);
+  scrollbar-gutter: stable;
+}
+.editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  align-items: start;
+  gap: var(--space-4);
+  max-width: 976px;
+  margin: 0 auto;
+}
+.editor-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  min-width: 0;
+}
+.editor-card-wide { grid-column: 1 / -1; }
+.editor-card-title {
+  margin: 0 0 var(--space-4);
+  font-size: var(--font-body);
+  font-weight: 600;
+}
+.editor-card .field-group { gap: var(--space-4); }
+.editor-card .field-label { font-size: 13px; color: var(--foreground); }
+.editor-card .field-hint { font-size: var(--font-caption); line-height: 1.6; }
+.editor-card .permissions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-6);
+}
+.editor-card .switch-row { padding: var(--space-2) 0; }
+.editor-card .switch-label { font-size: 13px; }
+.editor-layout .editor-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding: var(--space-4) var(--space-8);
+  background: var(--background);
+  gap: var(--space-3);
+}
+.editor-actions .btn { min-width: 92px; min-height: 36px; }
+.editor-actions .btn-outline:first-child:not(:last-child) { margin-right: auto; }
+.editor-content > .probe { max-width: 976px; margin: var(--space-4) auto 0; }
+@media (max-width: 960px) {
+  .unified-settings-scroll { padding: var(--space-6); }
+  .editor-grid { grid-template-columns: minmax(0, 1fr); }
+  .editor-layout .editor-head { padding: var(--space-6); }
+  .editor-content { padding: 0 var(--space-6) var(--space-6); }
+  .editor-layout .editor-actions { padding: var(--space-4) var(--space-6); }
+  .unified-settings-scroll .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .editor-card { padding: var(--space-4); }
+  .editor-card .permissions-grid { grid-template-columns: minmax(0, 1fr); }
+  .editor-actions { flex-wrap: wrap; }
+}

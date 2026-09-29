@@ -21,13 +21,29 @@ use crate::state::{PanelIntent, PanelStore, PanelTab, Store};
 fn main() {
     // Panics become readable console errors instead of `unreachable executed`.
     console_error_panic_hook::set_once();
-    // The inspector has no theme switch: it follows the browser, like any log view.
-    dom::watch_theme();
     leptos::mount::mount_to_body(App);
 }
 
 #[component]
 fn App() -> AnyView {
+    let theme_mode = leptos_use::use_color_mode_with_options(
+        leptos_use::UseColorModeOptions::default()
+            .storage_key(dom::THEME_KEY)
+            .emit_auto(true),
+    );
+    let dark = Signal::derive(move || theme_mode.state.get() == leptos_use::ColorMode::Dark);
+    provide_context(dom::ThemeControl {
+        set_mode: theme_mode.set_mode,
+        dark,
+    });
+    let theme = RwSignal::new(thaw::Theme::light());
+    Effect::new(move |_| {
+        theme.set(if dark.get() {
+            thaw::Theme::dark()
+        } else {
+            thaw::Theme::light()
+        })
+    });
     let pathname = dom::pathname();
     // The daemon (or the tray) hands the token over in the URL; it is stored and
     // taken back out of the address bar before anything renders.
@@ -49,8 +65,17 @@ fn App() -> AnyView {
     let store = Store::new(client, locale);
 
     dom::set_document_lang(locale);
+    dom::sync_native_locale(locale);
     provide_context(panel_store);
     provide_context(store);
 
-    views::unified::unified_app().into_any()
+    Effect::new(move |_| {
+        let mode = match theme_mode.mode.get() {
+            leptos_use::ColorMode::Dark => dom::ThemeMode::Dark,
+            leptos_use::ColorMode::Light => dom::ThemeMode::Light,
+            _ => dom::ThemeMode::Auto,
+        };
+        store.theme.set(mode);
+    });
+    view! { <thaw::ConfigProvider theme=theme class="relay-theme">{views::unified::unified_app()}</thaw::ConfigProvider> }.into_any()
 }

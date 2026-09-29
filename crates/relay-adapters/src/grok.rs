@@ -1,4 +1,8 @@
 //! Grok Build's native headless CLI, using its existing login and session store.
+//!
+//! Native `text` chunks stream through Relay's unified worker-text contract
+//! ([`relay_core::worker_text`]): each chunk is an assistant-text increment, one
+//! message per model response, so every surface merges them the same way.
 
 mod catalog;
 mod environment;
@@ -9,9 +13,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, EnforcementSet,
-    OptionsSource, RelayError, RelayEventType, Result, ResumeInput, Runtime, RuntimeHealth,
-    RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, AssistantTextDelta, DetectionResult,
+    EnforcementSet, OptionsSource, RelayError, RelayEventType, Result, ResumeInput, Runtime,
+    RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
 use serde_json::{json, Value};
 
@@ -26,22 +30,15 @@ pub const RUNTIME_ID: &str = "runtime:grok-cli";
 
 #[derive(Default)]
 struct StreamState {
+    /// The merged text of the response currently streaming, kept for the
+    /// terminal summary.
     text: String,
+    /// Set when the previous response ended: the next chunk clears the merged
+    /// text and opens a new assistant message.
     next_response: bool,
-    message_emitted: bool,
 }
 
 impl StreamState {
-    fn flush_text(&mut self, parsed: &mut ParsedOutput) {
-        if !self.text.is_empty() && !self.message_emitted {
-            parsed.events.push(AdapterEvent::new(
-                RelayEventType::WorkerMessage,
-                json!({"text":self.text}),
-            ));
-            self.message_emitted = true;
-        }
-    }
-
     fn parse(&mut self, line: &str) -> ParsedOutput {
         let mut parsed = ParsedOutput::default();
         let Ok(raw) = serde_json::from_str::<Value>(line) else {
@@ -54,11 +51,20 @@ impl StreamState {
                     if self.next_response {
                         self.text.clear();
                         self.next_response = false;
-                        self.message_emitted = false;
                     }
+                    // Chunks stream as they arrive; the shared aggregation merges
+                    // them into one message per response.
+                    let starts_message = self.text.is_empty();
                     self.text.push_str(text);
-                    // The console renders one row per message. Buffer token
-                    // chunks until the response boundary; tools still stream.
+                    if !text.is_empty() {
+                        parsed
+                            .events
+                            .push(AdapterEvent::text_delta(if starts_message {
+                                AssistantTextDelta::message(text)
+                            } else {
+                                AssistantTextDelta::chunk(text)
+                            }));
+                    }
                 }
             }
             Some("thought" | "thinking") => {
@@ -85,14 +91,12 @@ impl StreamState {
                 parsed.events.push(AdapterEvent::with_native(if terminal { RelayEventType::ToolResult } else { RelayEventType::WorkerStatus }, json!({"callId":raw.get("toolCallId"), "status":raw.get("status"), "output":raw.get("rawOutput").or_else(|| raw.get("content")), "isError":raw.get("status").and_then(Value::as_str) == Some("failed")}), raw));
             }
             Some("usage") => {
-                self.flush_text(&mut parsed);
                 self.next_response = true;
                 // Provider signatures authenticate usage upstream; they have no
                 // role in Relay's event log and must not be copied into it.
                 parsed.events.push(AdapterEvent::new(RelayEventType::WorkerStatus, json!({"kind":"usage", "usage":raw.get("usage"), "stopReason":raw.get("stopReason")})));
             }
             Some("end") => {
-                self.flush_text(&mut parsed);
                 parsed.session_id = raw
                     .get("sessionId")
                     .and_then(Value::as_str)
@@ -101,6 +105,8 @@ impl StreamState {
                     .get("stopReason")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
+                // Every chunk was already emitted; the merged text is the
+                // terminal summary, not a second copy of the answer.
                 parsed.final_text = Some(self.text.clone());
                 parsed.events.push(AdapterEvent::new(RelayEventType::WorkerStatus, json!({"kind":"result", "sessionId":parsed.session_id, "stopReason":parsed.turn_end_kind, "usage":raw.get("usage"), "numTurns":raw.get("num_turns"), "totalCostUsd":raw.get("total_cost_usd"), "usageIncomplete":raw.get("usage_is_incomplete")})));
             }
@@ -652,21 +658,61 @@ printf '{"type":"end","sessionId":"%s","stopReason":"end_turn"}\n' "$session"
     }
 
     #[test]
-    fn chunks_accumulate_and_usage_separates_model_responses() {
+    fn chunks_stream_as_deltas_and_usage_separates_model_responses() {
         let mut state = StreamState::default();
-        state.parse(r#"{"type":"text","data":"I will read."}"#);
+        let first = state.parse(r#"{"type":"text","data":"I will read."}"#);
+        assert_eq!(first.events.len(), 1);
+        assert_eq!(first.events[0].event_type, RelayEventType::WorkerMessage);
+        assert_eq!(first.events[0].data["kind"], "delta");
+        assert_eq!(first.events[0].data["text"], "I will read.");
+        assert_eq!(first.events[0].data["messageStart"], true);
+
         let usage = state.parse(
             r#"{"type":"usage","usage":{"output_tokens":3},"signature":"PRIVATE_SIGNATURE"}"#,
         );
         assert!(!format!("{:?}", usage.events).contains("PRIVATE_SIGNATURE"));
-        state.parse(r#"{"type":"text","data":"RELAY_"}"#);
-        state.parse(r#"{"type":"text","data":"GROK_OK"}"#);
+
+        let opening = state.parse(r#"{"type":"text","data":"RELAY_"}"#);
+        assert_eq!(
+            opening.events[0].data["messageStart"], true,
+            "a new model response opens a new assistant message"
+        );
+        let continuation = state.parse(r#"{"type":"text","data":"GROK_OK"}"#);
+        assert!(
+            continuation.events[0].data.get("messageStart").is_none(),
+            "later chunks extend that message"
+        );
+
         let end = state.parse(r#"{"type":"end","sessionId":"s1","stopReason":"end_turn"}"#);
         assert_eq!(end.final_text.as_deref(), Some("RELAY_GROK_OK"));
         assert_eq!(end.session_id.as_deref(), Some("s1"));
         assert_eq!(end.turn_end_kind.as_deref(), Some("end_turn"));
-        assert_eq!(end.events[0].event_type, RelayEventType::WorkerMessage);
-        assert_eq!(end.events[0].data["text"], "RELAY_GROK_OK");
+        assert_eq!(end.events[0].event_type, RelayEventType::WorkerStatus);
+        assert_eq!(end.events[0].data["kind"], "result");
+    }
+
+    /// The native chunks reach the shared assistant-message path: one response
+    /// is one message, and its terminal summary is reported as a repeat rather
+    /// than displayed again.
+    #[test]
+    fn text_chunks_reach_the_shared_assistant_message_path() {
+        let mut state = StreamState::default();
+        let mut seq = 0;
+        let mut events = Vec::new();
+        for frame in [
+            r#"{"type":"text","data":"RELAY_"}"#,
+            r#"{"type":"text","data":"GROK_OK"}"#,
+            r#"{"type":"end","sessionId":"s1","stopReason":"end_turn"}"#,
+        ] {
+            for event in state.parse(frame).events {
+                seq += 1;
+                events.push(crate::test_support::relay_event(seq, event));
+            }
+        }
+        assert_eq!(
+            crate::test_support::assistant_messages(&events),
+            vec!["RELAY_GROK_OK".to_string()]
+        );
     }
 
     #[tokio::test]

@@ -5,10 +5,12 @@
 //! of `step_update` frames and a terminal `result`. It supersedes the retired
 //! Gemini CLI adapter.
 //!
-//! Only what the CLI actually prints becomes an event. Text deltas are merged
-//! into one final message, the `result` frame is the authoritative answer, and a
-//! worker is successful only when that frame says `SUCCESS`, the process exited
-//! zero and nothing failed along the way.
+//! Only what the CLI actually prints becomes an event. Text deltas stream as
+//! assistant-text increments in Relay's unified worker-text contract
+//! ([`relay_core::worker_text`]) — one message per `agent_response` step — and
+//! the `result` frame stays the authoritative answer. A worker is successful
+//! only when that frame says `SUCCESS`, the process exited zero and nothing
+//! failed along the way.
 
 mod catalog;
 
@@ -17,9 +19,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use relay_core::{
-    AdapterCapabilities, AdapterEvent, AgentAdapter, DetectionResult, EnforcementSet,
-    OptionsSource, RelayError, RelayEventType, Result, ResumeInput, Runtime, RuntimeHealth,
-    RuntimeOptions, StartInput, WorkerHandle,
+    AdapterCapabilities, AdapterEvent, AgentAdapter, AssistantTextDelta, DetectionResult,
+    EnforcementSet, OptionsSource, RelayError, RelayEventType, Result, ResumeInput, Runtime,
+    RuntimeHealth, RuntimeOptions, StartInput, WorkerHandle,
 };
 use serde_json::{json, Map, Value};
 
@@ -230,6 +232,11 @@ struct StreamState {
     /// rejected, so a wrong new id is never persisted as a legitimate resume.
     rejected: bool,
     text: String,
+    /// The `step_index` whose `agent_response` text is currently streaming, and
+    /// whether any increment of it has arrived. A new step index opens a new
+    /// assistant message in the unified worker-text contract.
+    text_message_step: Option<u64>,
+    text_message_open: bool,
     /// Tool step indexes whose call event has already been emitted, so the
     /// terminal update does not repeat the call.
     reported_tools: std::collections::BTreeSet<u64>,
@@ -336,11 +343,27 @@ impl StreamState {
                 }
 
                 match string_field(&step, "step_type").as_deref() {
-                    // The answer streams as deltas; Relay merges them and emits
-                    // the complete reply once, from the authoritative result.
+                    // The answer streams as deltas; Relay emits each increment in
+                    // the unified worker-text contract and also preserves the
+                    // authoritative final result. One `agent_response` step is
+                    // one assistant message.
                     Some("agent_response") => {
                         if let Some(delta) = string_field(&step, "text_delta") {
                             self.text.push_str(&delta);
+                            if !delta.is_empty() {
+                                let step_index = step.get("step_index").and_then(Value::as_u64);
+                                let starts_message =
+                                    !self.text_message_open || self.text_message_step != step_index;
+                                self.text_message_open = true;
+                                self.text_message_step = step_index;
+                                parsed
+                                    .events
+                                    .push(AdapterEvent::text_delta(if starts_message {
+                                        AssistantTextDelta::message(delta)
+                                    } else {
+                                        AssistantTextDelta::chunk(delta)
+                                    }));
+                            }
                         }
                     }
                     Some("tool") => {
@@ -1749,7 +1772,29 @@ printf '{"event":"result","result":{"conversation_id":"%s","status":"SUCCESS","r
         let delta = state.parse(&format!(
             r#"{{"event":"step_update","step_update":{{"conversation_id":"{OTHER_CONVERSATION}","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"RELAY_AGY_HOST_REVIEW_OK"}}}}"#
         ));
-        assert!(delta.events.is_empty(), "deltas are merged, not emitted");
+        assert_eq!(delta.events.len(), 1);
+        assert_eq!(delta.events[0].event_type, RelayEventType::WorkerMessage);
+        assert_eq!(delta.events[0].data["kind"], "delta");
+        assert_eq!(delta.events[0].data["text"], "RELAY_AGY_HOST_REVIEW_OK");
+        assert_eq!(
+            delta.events[0].data["messageStart"], true,
+            "the first increment of a step opens one assistant message"
+        );
+        let continuation = state.parse(&format!(
+            r#"{{"event":"step_update","step_update":{{"conversation_id":"{OTHER_CONVERSATION}","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":" RELAY_AGY"}}}}"#
+        ));
+        assert_eq!(continuation.events[0].data["text"], " RELAY_AGY");
+        assert!(
+            continuation.events[0].data.get("messageStart").is_none(),
+            "later increments of the same step extend that message"
+        );
+        let next_step = state.parse(&format!(
+            r#"{{"event":"step_update","step_update":{{"conversation_id":"{OTHER_CONVERSATION}","step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"SECOND"}}}}"#
+        ));
+        assert_eq!(
+            next_step.events[0].data["messageStart"], true,
+            "a new agent_response step is a new message"
+        );
         let result = state.parse(&format!(
             r#"{{"event":"result","result":{{"conversation_id":"{OTHER_CONVERSATION}","status":"SUCCESS","response":"RELAY_AGY_HOST_REVIEW_OK"}}}}"#
         ));
@@ -1760,6 +1805,37 @@ printf '{"event":"result","result":{"conversation_id":"%s","status":"SUCCESS","r
         assert_eq!(result.result_status.as_deref(), Some("SUCCESS"));
         assert_eq!(result.events[0].event_type, RelayEventType::WorkerMessage);
         assert_eq!(result.events[0].data["kind"], "final");
+    }
+
+    /// The `text_delta` frames reach the shared assistant-message path: the
+    /// chunks of one `agent_response` step merge into one message, and a new
+    /// step opens another.
+    #[test]
+    fn agent_response_chunks_reach_the_shared_assistant_message_path() {
+        let mut state = StreamState::default();
+        let mut seq = 0;
+        let mut events = Vec::new();
+        for frame in [
+            format!(r#"{{"event":"init","conversation_id":"{OTHER_CONVERSATION}"}}"#),
+            format!(
+                r#"{{"event":"step_update","step_update":{{"conversation_id":"{OTHER_CONVERSATION}","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"RELAY_"}}}}"#
+            ),
+            format!(
+                r#"{{"event":"step_update","step_update":{{"conversation_id":"{OTHER_CONVERSATION}","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"AGY_OK"}}}}"#
+            ),
+            format!(
+                r#"{{"event":"step_update","step_update":{{"conversation_id":"{OTHER_CONVERSATION}","step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"SECOND"}}}}"#
+            ),
+        ] {
+            for event in state.parse(&frame).events {
+                seq += 1;
+                events.push(crate::test_support::relay_event(seq, event));
+            }
+        }
+        assert_eq!(
+            crate::test_support::assistant_messages(&events),
+            vec!["RELAY_AGY_OK".to_string(), "SECOND".to_string()]
+        );
     }
 
     /// An init that is not the requested conversation, and one that is not even a

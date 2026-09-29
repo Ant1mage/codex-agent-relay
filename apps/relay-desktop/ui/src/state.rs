@@ -11,8 +11,8 @@ use std::future::Future;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use relay_api::{
-    CodexStatus, Health, InspectorSnapshot, InstallResult, RelayConfigView, RuntimeOptionsView, RuntimeProbe,
-    StreamMessage,
+    CodexStatus, Health, InspectorSnapshot, InstallResult, RelayConfigView, RuntimeOptionsView,
+    RuntimeProbe, StreamMessage,
 };
 use relay_core::{AgentProfile, RelayEvent, RelayPolicy, RelayPolicyOverride, RunStatus};
 
@@ -40,8 +40,11 @@ pub enum InspectorTab {
 
 impl InspectorTab {
     /// The console's three views, in the order the tabs are shown.
-    pub const ALL: [InspectorTab; 3] = [InspectorTab::Console, InspectorTab::Changes, InspectorTab::Raw];
-
+    pub const ALL: [InspectorTab; 3] = [
+        InspectorTab::Console,
+        InspectorTab::Changes,
+        InspectorTab::Raw,
+    ];
 }
 
 /// The run a session should open on: whatever is still moving, else the newest.
@@ -68,6 +71,7 @@ pub struct Store {
     pub step: RwSignal<Option<String>>,
     pub tab: RwSignal<InspectorTab>,
     pub locale: RwSignal<Locale>,
+    pub theme: RwSignal<dom::ThemeMode>,
     pub notice: RwSignal<Option<String>>,
     notice_seq: RwSignal<u64>,
 }
@@ -85,6 +89,7 @@ impl Store {
             step: RwSignal::new(None),
             tab: RwSignal::new(InspectorTab::Console),
             locale: RwSignal::new(locale),
+            theme: RwSignal::new(dom::current_theme()),
             notice: RwSignal::new(None),
             notice_seq: RwSignal::new(0),
         }
@@ -101,7 +106,19 @@ impl Store {
     /// The inspector remembers the language; the panel's comes from `?lang`.
     pub fn set_locale(&self, locale: Locale) {
         dom::set_stored(dom::LOCALE_KEY, locale.code());
+        dom::sync_native_locale(locale);
         self.locale.set(locale);
+    }
+
+    pub fn toggle_theme(&self) {
+        let current = self.theme.get_untracked();
+        let next = match current {
+            dom::ThemeMode::Auto => dom::ThemeMode::Light,
+            dom::ThemeMode::Light => dom::ThemeMode::Dark,
+            dom::ThemeMode::Dark => dom::ThemeMode::Auto,
+        };
+        dom::set_theme(next);
+        self.theme.set(next);
     }
 
     /// A bottom-centre notice pill that clears itself after 3.5s. The sequence
@@ -134,18 +151,30 @@ impl Store {
 
     /// Everything cached for one run, oldest first.
     pub fn run_events(&self, run_id: &str) -> Vec<RelayEvent> {
-        self.events
-            .with(|all| all.get(run_id).map(|bucket| bucket.values().cloned().collect()).unwrap_or_default())
+        self.events.with(|all| {
+            all.get(run_id)
+                .map(|bucket| bucket.values().cloned().collect())
+                .unwrap_or_default()
+        })
     }
 
     pub fn codex_configured(&self) -> bool {
-        self.snapshot.with(|snapshot| snapshot.as_ref().map(|value| value.codex.configured).unwrap_or(false))
+        self.snapshot.with(|snapshot| {
+            snapshot
+                .as_ref()
+                .map(|value| value.codex.configured)
+                .unwrap_or(false)
+        })
     }
 
     pub fn session_view(&self, session_id: &str) -> Option<relay_api::SessionView> {
         self.snapshot.with(|snapshot| {
             snapshot.as_ref().and_then(|value| {
-                value.sessions.iter().find(|view| view.session.id == session_id).cloned()
+                value
+                    .sessions
+                    .iter()
+                    .find(|view| view.session.id == session_id)
+                    .cloned()
             })
         })
     }
@@ -302,7 +331,7 @@ pub fn delete_session(store: Store, host_session_id: String) {
                     store.step.set(None);
                 }
             }
-            Err(error) => store.notify(format!("Failed: {error}")),
+            Err(error) => store.notify(format!("{}: {error}", store.translator().t("common.failed"))),
         }
     });
 }
@@ -320,17 +349,23 @@ pub enum PanelTab {
 impl PanelTab {
     /// Tabs in the order the panel shows them. `runtime` is the id the old panel
     /// used in `?tab=`, so existing deep links keep working.
-    pub const ORDER: [PanelTab; 6] =
-        [PanelTab::Sessions, PanelTab::Agents, PanelTab::Runtimes, PanelTab::Policy, PanelTab::Codex, PanelTab::Status];
+    pub const ORDER: [PanelTab; 6] = [
+        PanelTab::Sessions,
+        PanelTab::Agents,
+        PanelTab::Runtimes,
+        PanelTab::Policy,
+        PanelTab::Codex,
+        PanelTab::Status,
+    ];
 
     pub fn key(self) -> &'static str {
         match self {
             PanelTab::Sessions => "nav.sessions",
             PanelTab::Agents => "nav.agents",
-            PanelTab::Runtimes => "panel.runtime",
-            PanelTab::Policy => "panel.policy",
-            PanelTab::Codex => "menu.codex",
-            PanelTab::Status => "panel.status",
+            PanelTab::Runtimes => "nav.runtimes",
+            PanelTab::Policy => "nav.policy",
+            PanelTab::Codex => "nav.codex",
+            PanelTab::Status => "nav.status",
         }
     }
 
@@ -418,6 +453,7 @@ pub struct PanelStore {
     pub snapshot: RwSignal<Option<InspectorSnapshot>>,
     pub codex: RwSignal<Option<CodexStatus>>,
     pub notice: RwSignal<Option<String>>,
+    notice_seq: RwSignal<u64>,
     pub error: RwSignal<Option<String>>,
     pub busy: RwSignal<bool>,
     /// The panel is served by the daemon: without the token nothing can load.
@@ -463,6 +499,7 @@ impl PanelStore {
             snapshot: RwSignal::new(None),
             codex: RwSignal::new(None),
             notice: RwSignal::new(None),
+            notice_seq: RwSignal::new(0),
             error: RwSignal::new(None),
             busy: RwSignal::new(false),
             missing_token: RwSignal::new(missing_token),
@@ -502,14 +539,25 @@ impl PanelStore {
     }
 
     pub fn net_codex_configured(&self) -> bool {
-        self.snapshot.with(|snapshot| snapshot.as_ref().map(|value| value.codex.configured).unwrap_or(false))
+        self.snapshot.with(|snapshot| {
+            snapshot
+                .as_ref()
+                .map(|value| value.codex.configured)
+                .unwrap_or(false)
+        })
     }
 
-    /// The panel's footer notice stays until the next action replaces it, which
-    /// is what the old panel did: an install/repair report is worth reading twice.
-    /// (The inspector's pill does auto-dismiss; see `Store::notify`.)
+    /// A notice pill that clears itself after 3.5s (NOTICE_DURATION_MS).
     pub fn notify(&self, message: impl Into<String>) {
+        let next = self.notice_seq.get_untracked() + 1;
+        self.notice_seq.set(next);
         self.notice.set(Some(message.into()));
+        let store = *self;
+        dom::set_timeout(NOTICE_MS as i32, move || {
+            if store.notice_seq.get_untracked() == next {
+                store.notice.set(None);
+            }
+        });
     }
 
     pub fn consume_intent(&self) {
@@ -552,7 +600,10 @@ impl PanelStore {
         let store = *self;
         spawn_local(async move {
             if let Err(message) = task.await {
-                store.notify(format!("{}: {message}", store.translator().t("panel.saveFailed")));
+                store.notify(format!(
+                    "{}: {message}",
+                    store.translator().t("panel.saveFailed")
+                ));
             }
             store.busy.set(false);
         });
@@ -562,7 +613,10 @@ impl PanelStore {
         let store = *self;
         self.guard(async move {
             let client = store.client().ok_or_else(|| "missing token".to_string())?;
-            let config = client.save_profile(&profile).await.map_err(|error| error.to_string())?;
+            let config = client
+                .save_profile(&profile)
+                .await
+                .map_err(|error| error.to_string())?;
             store.config.set(Some(config));
             store.consume_intent();
             store.reload();
@@ -575,7 +629,10 @@ impl PanelStore {
         let store = *self;
         self.guard(async move {
             let client = store.client().ok_or_else(|| "missing token".to_string())?;
-            let config = client.delete_profile(&profile_id).await.map_err(|error| error.to_string())?;
+            let config = client
+                .delete_profile(&profile_id)
+                .await
+                .map_err(|error| error.to_string())?;
             store.config.set(Some(config));
             store.consume_intent();
             store.reload();
@@ -584,7 +641,11 @@ impl PanelStore {
         });
     }
 
-    pub fn save_policy(&self, policy: RelayPolicy, workspace_overrides: BTreeMap<String, RelayPolicyOverride>) {
+    pub fn save_policy(
+        &self,
+        policy: RelayPolicy,
+        workspace_overrides: BTreeMap<String, RelayPolicyOverride>,
+    ) {
         let store = *self;
         self.guard(async move {
             let client = store.client().ok_or_else(|| "missing token".to_string())?;
@@ -599,7 +660,13 @@ impl PanelStore {
         });
     }
 
-    pub fn save_runtime(&self, id: String, adapter_id: String, executable_path: String, label: Option<String>) {
+    pub fn save_runtime(
+        &self,
+        id: String,
+        adapter_id: String,
+        executable_path: String,
+        label: Option<String>,
+    ) {
         let store = *self;
         self.guard(async move {
             let client = store.client().ok_or_else(|| "missing token".to_string())?;
@@ -611,9 +678,16 @@ impl PanelStore {
             store.reload();
             let translator = store.translator();
             let message = if mutation.probe.ok {
-                format!("{} · {}", translator.t("panel.saved"), mutation.probe.version.unwrap_or_default())
+                format!(
+                    "{} · {}",
+                    translator.t("panel.saved"),
+                    mutation.probe.version.unwrap_or_default()
+                )
             } else {
-                mutation.probe.error.unwrap_or_else(|| translator.t("panel.saveFailed"))
+                mutation
+                    .probe
+                    .error
+                    .unwrap_or_else(|| translator.t("panel.saveFailed"))
             };
             store.notify(message);
             Ok(())
@@ -624,7 +698,10 @@ impl PanelStore {
         let store = *self;
         self.guard(async move {
             let client = store.client().ok_or_else(|| "missing token".to_string())?;
-            let config = client.delete_runtime(&runtime_id).await.map_err(|error| error.to_string())?;
+            let config = client
+                .delete_runtime(&runtime_id)
+                .await
+                .map_err(|error| error.to_string())?;
             store.config.set(Some(config));
             store.reload();
             store.notify(store.translator().t("panel.saved"));
@@ -638,7 +715,10 @@ impl PanelStore {
         let store = *self;
         self.guard(async move {
             let client = store.client().ok_or_else(|| "missing token".to_string())?;
-            let result: InstallResult = client.codex(action).await.map_err(|error| error.to_string())?;
+            let result: InstallResult = client
+                .codex(action)
+                .await
+                .map_err(|error| error.to_string())?;
             store.codex.set(Some(result.status));
             store.notify(result.messages.join(" · "));
             store.reload();
@@ -652,7 +732,11 @@ impl PanelStore {
             let client = store.client().ok_or_else(|| "missing token".to_string())?;
             let result = client.refresh().await.map_err(|error| error.to_string())?;
             store.reload();
-            store.notify(format!("{} runtimes · {} profiles", result.runtimes, result.profiles));
+            store.notify(format!(
+                "{} · {}",
+                store.translator().tp("counts.runtimes", result.runtimes as usize),
+                store.translator().tp("counts.profiles", result.profiles as usize),
+            ));
             Ok(())
         });
     }
@@ -665,15 +749,20 @@ impl PanelStore {
         if runtime_id.is_empty() {
             return None;
         }
-        self.runtime_options.with(|all| all.get(runtime_id).and_then(|entry| entry.state.ready().cloned()))
+        self.runtime_options.with(|all| {
+            all.get(runtime_id)
+                .and_then(|entry| entry.state.ready().cloned())
+        })
     }
 
     /// True while that runtime's model-options request is in flight.
     pub fn runtime_options_loading(&self, runtime_id: &str) -> bool {
         !runtime_id.is_empty()
-            && self
-                .runtime_options
-                .with(|all| all.get(runtime_id).map(|entry| entry.state.is_loading()).unwrap_or(false))
+            && self.runtime_options.with(|all| {
+                all.get(runtime_id)
+                    .map(|entry| entry.state.is_loading())
+                    .unwrap_or(false)
+            })
     }
 
     /// Asks for one runtime's model/reasoning values, at most one request at a
@@ -686,9 +775,11 @@ impl PanelStore {
         if runtime_id.is_empty() {
             return;
         }
-        let settled = self
-            .runtime_options
-            .with_untracked(|all| all.get(&runtime_id).map(|entry| entry.state.is_settled()).unwrap_or(false));
+        let settled = self.runtime_options.with_untracked(|all| {
+            all.get(&runtime_id)
+                .map(|entry| entry.state.is_settled())
+                .unwrap_or(false)
+        });
         if settled {
             return;
         }
@@ -697,12 +788,21 @@ impl PanelStore {
         let store = *self;
         let id = runtime_id.clone();
         store.runtime_options.update(|all| {
-            all.insert(id, RuntimeOptionsEntry { request, state: Remote::Loading });
+            all.insert(
+                id,
+                RuntimeOptionsEntry {
+                    request,
+                    state: Remote::Loading,
+                },
+            );
         });
         spawn_local(async move {
             let client = store.client.get_untracked();
             let result = match client {
-                Some(client) => client.runtime_options(&runtime_id).await.map_err(|error| error.to_string()),
+                Some(client) => client
+                    .runtime_options(&runtime_id)
+                    .await
+                    .map_err(|error| error.to_string()),
                 None => Err("missing token".to_string()),
             };
             store.finish_runtime_options(runtime_id, request, result);
@@ -711,10 +811,17 @@ impl PanelStore {
 
     /// The stale-response guard for ensure_runtime_options: only the request
     /// that still owns the runtime's entry may write to it.
-    fn finish_runtime_options(&self, runtime_id: String, request: u64, result: Result<RuntimeOptionsView, String>) {
-        let owned = self
-            .runtime_options
-            .with_untracked(|all| all.get(&runtime_id).map(|entry| entry.request == request).unwrap_or(false));
+    fn finish_runtime_options(
+        &self,
+        runtime_id: String,
+        request: u64,
+        result: Result<RuntimeOptionsView, String>,
+    ) {
+        let owned = self.runtime_options.with_untracked(|all| {
+            all.get(&runtime_id)
+                .map(|entry| entry.request == request)
+                .unwrap_or(false)
+        });
         if !owned {
             return;
         }
@@ -735,7 +842,8 @@ impl PanelStore {
 
     /// The same value for event handlers, which must not subscribe.
     pub fn adapters_cached(&self) -> Option<Vec<String>> {
-        self.adapter_catalog.with_untracked(|state| state.ready().cloned())
+        self.adapter_catalog
+            .with_untracked(|state| state.ready().cloned())
     }
 
     /// Fetches the adapter catalogue unless a request is in flight or a list is
@@ -743,7 +851,10 @@ impl PanelStore {
     /// again: nothing reactive watches this state, so a daemon that is down
     /// cannot turn a failure into a request loop.
     pub fn ensure_adapters(&self) {
-        if self.adapter_catalog.with_untracked(|state| state.is_settled()) {
+        if self
+            .adapter_catalog
+            .with_untracked(|state| state.is_settled())
+        {
             return;
         }
         let request = self.adapters_seq.get_untracked() + 1;
@@ -753,7 +864,11 @@ impl PanelStore {
         spawn_local(async move {
             let client = store.client.get_untracked();
             let result = match client {
-                Some(client) => client.adapters().await.map(|catalog| catalog.adapters).map_err(|error| error.to_string()),
+                Some(client) => client
+                    .adapters()
+                    .await
+                    .map(|catalog| catalog.adapters)
+                    .map_err(|error| error.to_string()),
                 None => Err("missing token".to_string()),
             };
             store.finish_adapters(request, result);
@@ -788,9 +903,10 @@ impl PanelStore {
         spawn_local(async move {
             let client = store.client.get_untracked();
             let result = match client {
-                Some(client) => {
-                    client.probe_runtime(&adapter_id, &executable_path).await.map_err(|error| error.to_string())
-                }
+                Some(client) => client
+                    .probe_runtime(&adapter_id, &executable_path)
+                    .await
+                    .map_err(|error| error.to_string()),
                 None => Err("missing token".to_string()),
             };
             // A probe the user has already superseded (path edited, adapter
@@ -800,7 +916,11 @@ impl PanelStore {
             }
             let probe = match result {
                 Ok(probe) => probe,
-                Err(message) => RuntimeProbe { ok: false, version: None, error: Some(message) },
+                Err(message) => RuntimeProbe {
+                    ok: false,
+                    version: None,
+                    error: Some(message),
+                },
             };
             store.probe.set(Some(probe));
             store.probing.set(false);

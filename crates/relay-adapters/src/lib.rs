@@ -24,6 +24,37 @@ pub use cli::{ProcessSupervisor, StreamMode, StreamSpec};
 pub use deepseek::DeepSeekAdapter;
 pub use grok::GrokAdapter;
 
+/// Helpers that let an adapter test feed the frames it actually maps into the
+/// shared worker-text aggregation, the same way the controller does.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use relay_core::{AdapterEvent, RelayEvent};
+
+    /// Wraps one mapped adapter event as the log row a run would append.
+    pub fn relay_event(seq: u64, event: AdapterEvent) -> RelayEvent {
+        RelayEvent {
+            id: format!("e{seq}"),
+            run_id: "run-1".to_string(),
+            step_id: None,
+            worker_session_id: Some("worker-1".to_string()),
+            seq,
+            timestamp: "2026-01-01T00:00:00.000Z".to_string(),
+            event_type: event.event_type,
+            data: event.data,
+            native_event: event.native_event,
+        }
+    }
+
+    /// The assistant messages the shared aggregation resolves, in display order.
+    pub fn assistant_messages(events: &[RelayEvent]) -> Vec<String> {
+        relay_core::worker_text::assistant_text(events)
+            .into_iter()
+            .flat_map(|worker| worker.messages)
+            .map(|message| message.text)
+            .collect()
+    }
+}
+
 /// Every adapter this build supports, freshly constructed.
 pub fn adapters() -> Vec<Arc<dyn AgentAdapter>> {
     vec![

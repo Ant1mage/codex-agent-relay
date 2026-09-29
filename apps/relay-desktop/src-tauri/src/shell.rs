@@ -300,7 +300,7 @@ fn open_url_in_browser(app: &AppHandle, url: &str) {
 
 fn open_inspector(app: &AppHandle, host_session_id: Option<&str>, run_id: Option<&str>) {
     let Some(info) = info(app) else {
-        set_last_error(app, Some("daemon 未运行，无法打开工作台".to_string()));
+        set_last_error(app, Some(crate::i18n::message("shell.daemonDownInspector")));
         refresh_now(app);
         return;
     };
@@ -327,7 +327,7 @@ fn open_control_panel(
     profile_id: Option<String>,
 ) {
     let Some(info) = info(app) else {
-        set_last_error(app, Some("daemon 未运行，无法打开配置面板".to_string()));
+        set_last_error(app, Some(crate::i18n::message("shell.daemonDownPanel")));
         refresh_now(app);
         return;
     };
@@ -358,7 +358,13 @@ where
     F: FnOnce(RelayClient) -> ClientAction + Send + 'static,
 {
     let Some(client) = client(app) else {
-        set_last_error(app, Some(format!("{label}: daemon 未运行")));
+        set_last_error(
+            app,
+            Some(format!(
+                "{label}: {}",
+                crate::i18n::message("shell.daemonDown")
+            )),
+        );
         refresh_now(app);
         return;
     };
@@ -465,7 +471,14 @@ pub fn dispatch(app: &AppHandle, action: MenuBarAction) {
         }
         MenuBarAction::CopyDiagnostics => {
             let Some(client) = client(app) else {
-                set_last_error(app, Some("diagnostics: daemon 未运行".to_string()));
+                set_last_error(
+                    app,
+                    Some(format!(
+                        "{}: {}",
+                        crate::i18n::message(crate::i18n::key::MENU_DIAGNOSTICS),
+                        crate::i18n::message("shell.daemonDown")
+                    )),
+                );
                 refresh_now(app);
                 return;
             };
@@ -512,6 +525,15 @@ pub fn dispatch(app: &AppHandle, action: MenuBarAction) {
             tauri::async_runtime::spawn(async move { quit(&handle).await });
         }
     }
+}
+
+/// Called only by the panel's intercepted preference navigation.
+pub fn set_locale(app: &AppHandle, locale: Locale) {
+    if let Err(error) = crate::i18n::set_locale(locale) {
+        set_last_error(app, Some(error));
+    }
+    with_state(app, |state| state.locale = locale);
+    refresh_now(app);
 }
 
 /// A double click opens the inspector for the first session.
@@ -587,7 +609,7 @@ pub fn on_exit(app: &AppHandle) {
 
 /// Startup: first paint, one update check, bring the daemon up, then poll.
 async fn start(app: AppHandle) {
-    with_state(&app, |state| state.locale = crate::i18n::system_locale());
+    with_state(&app, |state| state.locale = crate::i18n::current_locale());
     refresh(&app, true).await;
 
     // relayd is this app's own backend, not a service the user has to remember to
@@ -620,7 +642,9 @@ async fn start(app: AppHandle) {
 
     let mut initial_window_shown = false;
     loop {
-        if !initial_window_shown && with_state(&app, |state| state.probe.status == DaemonStatus::Running) {
+        if !initial_window_shown
+            && with_state(&app, |state| state.probe.status == DaemonStatus::Running)
+        {
             show_panel(&app);
             initial_window_shown = true;
         }
@@ -631,11 +655,12 @@ async fn start(app: AppHandle) {
 
 #[cfg(target_os = "macos")]
 fn set_macos_dock_icon() {
-    use std::ffi::c_void;
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
+    use std::ffi::c_void;
 
-    const ICON_PNG: &[u8] = include_bytes!("../../../../assets/appicon/png/light/relay-icon-512.png");
+    const ICON_PNG: &[u8] =
+        include_bytes!("../../../../assets/appicon/png/light/relay-icon-512.png");
     unsafe {
         let nsdata_cls = class!(NSData);
         let data: *mut AnyObject = msg_send![nsdata_cls, dataWithBytes: ICON_PNG.as_ptr() as *const c_void, length: ICON_PNG.len()];

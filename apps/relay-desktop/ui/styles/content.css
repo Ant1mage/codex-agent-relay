@@ -1,0 +1,414 @@
+/* Markdown and Rich Log Output */
+.log-row-markdown {
+  align-items: start;
+}
+
+.log-content-wrap {
+  width: 100%;
+  min-width: 0;
+}
+
+.log-markdown-block {
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--foreground);
+  word-break: break-word;
+  white-space: normal;
+  max-width: 100%;
+}
+
+.log-markdown-block h1,
+.log-markdown-block h2,
+.log-markdown-block h3,
+.log-markdown-block h4 {
+  font-weight: 600;
+  margin-top: 6px;
+  margin-bottom: 4px;
+  color: var(--foreground);
+}
+.log-markdown-block h1 { font-size: 15px; }
+.log-markdown-block h2 { font-size: 14px; }
+.log-markdown-block h3 { font-size: 13px; }
+
+.log-markdown-block p {
+  margin: 4px 0;
+}
+
+.log-markdown-block ul,
+.log-markdown-block ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.log-markdown-block li {
+  margin: 2px 0;
+}
+
+.log-markdown-block .md-code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--muted);
+  padding: 2px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.log-markdown-block .md-pre {
+  background: var(--surface-raised, #18181b);
+  color: var(--foreground, #ededed);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 6px 0;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.log-markdown-block .md-link {
+  color: var(--primary, #3b82f6);
+  text-decoration: underline;
+}
+
+/* ==========================================================================
+   AI Step Response, Terminal ANSI & Code Diff Preview
+   ========================================================================== */
+
+/* AI Response Section: Separated from system execution logs */
+.step-ai-section {
+  padding: 14px 18px;
+  margin-bottom: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.step-ai-bubble {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--foreground);
+}
+
+/* Model Thinking / Reasoning Drawer */
+.step-thinking-drawer {
+  margin-bottom: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, #7c3aed 20%);
+  border-left: 3px solid color-mix(in srgb, var(--border) 40%, #7c3aed 60%);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card) 96%, #7c3aed 4%);
+  overflow: hidden;
+}
+
+.step-thinking-drawer[open] {
+  background: var(--card);
+}
+
+.step-thinking-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+  list-style: none;
+  transition: background 0.12s ease;
+}
+
+.step-thinking-summary::marker,
+.step-thinking-summary::-webkit-details-marker {
+  display: none;
+}
+
+.step-thinking-summary::before {
+  content: "▸";
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  transition: transform 0.15s ease;
+  flex: 0 0 auto;
+}
+
+.step-thinking-drawer[open] > .step-thinking-summary::before {
+  transform: rotate(90deg);
+}
+
+.step-thinking-summary:hover {
+  background: var(--accent);
+}
+
+.step-thinking-icon {
+  flex: 0 0 auto;
+}
+
+.step-thinking-title {
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.step-thinking-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.step-thinking-content {
+  padding: 12px 18px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--muted-foreground);
+  border-top: 1px solid var(--border);
+}
+
+.step-thinking-content p {
+  margin: 6px 0;
+}
+
+/* Changed Files & Code Diff Preview */
+.step-change-item-wrap {
+  list-style: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.step-change-item-wrap:last-child {
+  border-bottom: none;
+}
+
+.step-change-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  border-radius: 6px;
+}
+
+.step-change-item:hover {
+  background: var(--accent);
+}
+
+.diff-preview-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.step-inline-diff-viewer {
+  margin: 6px 12px 12px 12px;
+  border: 1px solid var(--border-strong, #30363d);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0d1117;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.diff-container {
+  overflow-x: auto;
+  line-height: 1.5;
+  padding: 4px 0;
+}
+
+.diff-line {
+  display: flex;
+  padding: 1px 10px;
+  min-height: 20px;
+}
+
+.diff-file-header {
+  background: #161b22;
+  color: #8b949e;
+  font-weight: 600;
+  padding: 4px 10px;
+}
+
+.diff-hunk {
+  background: rgba(56, 139, 253, 0.15);
+  color: #79c0ff;
+  font-weight: 500;
+  padding: 3px 10px;
+}
+
+.diff-add {
+  background: rgba(46, 160, 67, 0.18);
+  color: #e6edf3;
+}
+
+.diff-add .diff-sign {
+  color: #3fb950;
+  font-weight: bold;
+  margin-right: 8px;
+}
+
+.diff-del {
+  background: rgba(248, 81, 73, 0.18);
+  color: #e6edf3;
+}
+
+.diff-del .diff-sign {
+  color: #f85149;
+  font-weight: bold;
+  margin-right: 8px;
+}
+
+.diff-context {
+  color: #c9d1d9;
+}
+
+.diff-context .diff-sign {
+  margin-right: 8px;
+  opacity: 0.3;
+}
+
+/* Terminal ANSI Execution Stream */
+.step-activity-section {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.step-activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--card);
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+}
+
+.step-activity-header:hover {
+  color: var(--foreground);
+}
+
+.step-activity-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.activity-header-title {
+  font-weight: 600;
+}
+
+.terminal-capsule-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px !important;
+  align-items: stretch !important;
+}
+
+.terminal-capsule {
+  width: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0d1117;
+  border: 1px solid #30363d;
+}
+
+.terminal-cmd-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.terminal-prompt {
+  color: #3fb950;
+  font-weight: bold;
+  user-select: none;
+}
+
+.terminal-cmd-text {
+  color: #e6edf3;
+  font-weight: 500;
+}
+
+.terminal-output {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #c9d1d9;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #0d1117;
+}
+
+/* ANSI SGR Color Classes */
+.ansi-bold { font-weight: 600; }
+.ansi-dim { opacity: 0.7; }
+.ansi-italic { font-style: italic; }
+.ansi-underline { text-decoration: underline; }
+.ansi-fg-black { color: #484f58; }
+.ansi-fg-red { color: #ff7b72; }
+.ansi-fg-green { color: #3fb950; }
+.ansi-fg-yellow { color: #d29922; }
+.ansi-fg-blue { color: #58a6ff; }
+.ansi-fg-magenta { color: #bc8cff; }
+.ansi-fg-cyan { color: #39c5cf; }
+.ansi-fg-white { color: #f0f6fc; }
+.ansi-fg-bright-black { color: #6e7681; }
+.ansi-fg-bright-red { color: #ffa198; }
+.ansi-fg-bright-green { color: #56d364; }
+.ansi-fg-bright-yellow { color: #e3b341; }
+.ansi-fg-bright-blue { color: #79c0ff; }
+.ansi-fg-bright-magenta { color: #d2a8ff; }
+.ansi-fg-bright-cyan { color: #56d4dd; }
+.ansi-fg-bright-white { color: #ffffff; }
+
+/* Sticky Form Bottom Action Bar */
+.sticky-actions-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--background) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 14px 0 8px 0;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+
+/* CommonMark elements, including GFM tables and task lists. */
+.markdown-body { overflow-wrap: anywhere; }
+.markdown-body :is(h1,h2,h3,h4,h5,h6) { margin: 1em 0 .5em; line-height: 1.3; font-weight: 600; }
+.markdown-body h1 { font-size: 1.5em; }
+.markdown-body h2 { font-size: 1.3em; }
+.markdown-body :is(h3,h4,h5,h6) { font-size: 1.1em; }
+.markdown-body p { margin: .5em 0; }
+.markdown-body :is(ul,ol) { padding-left: 1.6em; }
+.markdown-body code { background: var(--muted); border-radius: 4px; padding: 2px 4px; font-family: var(--mono); font-size: .95em; }
+.markdown-body pre { white-space: pre; overflow-x: auto; background: var(--muted); padding: var(--space-3); border-radius: var(--radius-md); }
+.markdown-body pre code { padding: 0; background: transparent; }
+.markdown-body a { color: var(--foreground); text-decoration: underline; }
+.markdown-body blockquote { border-left: 3px solid var(--border-strong); margin: var(--space-3) 0; padding-left: var(--space-3); color: var(--muted-foreground); }
+.markdown-body table { display: block; overflow-x: auto; border-collapse: collapse; max-width: 100%; }
+.markdown-body :is(th,td) { border: 1px solid var(--border); padding: 6px 10px; }
+.markdown-body th { background: var(--muted); }
+.markdown-body img { max-width: 100%; height: auto; }

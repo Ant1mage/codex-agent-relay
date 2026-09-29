@@ -11,15 +11,16 @@
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::menu_model::{PanelIntent, PanelTab};
 
 pub const PANEL_LABEL: &str = "panel";
 /// The unified desktop window geometry.
-pub const PANEL_WIDTH: f64 = 1050.0;
-pub const PANEL_HEIGHT: f64 = 720.0;
-pub const MIN_WIDTH: f64 = 800.0;
-pub const MIN_HEIGHT: f64 = 560.0;
+pub const PANEL_WIDTH: f64 = 1200.0;
+pub const PANEL_HEIGHT: f64 = 800.0;
+pub const MIN_WIDTH: f64 = 960.0;
+pub const MIN_HEIGHT: f64 = 640.0;
 
 /// Which daemon generation the open panel is talking to. A restart may reuse the
 /// port but always rotates the token, so the URL has to be rebuilt.
@@ -122,13 +123,13 @@ pub fn open(app: &AppHandle, target: PanelTarget) -> Result<(), String> {
         let changed = panel_connection_changed(state.target().as_ref(), &target);
         state.set_target(Some(target.clone()));
         if changed {
-            let url = Url::parse(&panel_url(&target)).map_err(|error| error.to_string())?;
+            let url = window_url(&target)?;
             // Hidden first: showing a renderer that still holds the old token
             // would flash an unauthenticated page before the reload lands.
             let _ = window.hide();
             window.navigate(url).map_err(|error| error.to_string())?;
         } else {
-            let _ = window.eval(&navigation_event_script(&target));
+            let _ = window.eval(navigation_event_script(&target));
             let _ = window.unminimize();
             let _ = window.show();
             let _ = window.set_focus();
@@ -136,9 +137,9 @@ pub fn open(app: &AppHandle, target: PanelTarget) -> Result<(), String> {
         return Ok(());
     }
 
-    let url = Url::parse(&panel_url(&target)).map_err(|error| error.to_string())?;
-    state.set_target(Some(target));
-    let _builder = WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::External(url))
+    let url = window_url(&target)?;
+    #[allow(unused_mut)]
+    let mut builder = WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::External(url))
         .title("Relay")
         .inner_size(PANEL_WIDTH, PANEL_HEIGHT)
         .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
@@ -150,7 +151,44 @@ pub fn open(app: &AppHandle, target: PanelTarget) -> Result<(), String> {
         .always_on_top(false)
         .center()
         .visible(false)
-        .focused(true)
+        .focused(true);
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+
+    let handle = app.clone();
+    let _window = builder
+        // A small navigation bridge keeps the WASM app pure Rust and grants no
+        // remote page access to general Tauri IPC or plugins.
+        .on_navigation(move |url| {
+            if url.scheme() == "http" || url.scheme() == "https" {
+                let host = url.host_str().unwrap_or_default();
+                let is_local = host == "127.0.0.1" || host == "localhost";
+                if !is_local {
+                    let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                    return false;
+                }
+                return true;
+            }
+            if url.scheme() != "relay-ui" {
+                return true;
+            }
+            if let Some(action) = shell_action(url) {
+                match action {
+                    ShellAction::Locale(locale) => crate::shell::set_locale(&handle, locale),
+                    ShellAction::Drag => {
+                        if let Some(window) = handle.get_webview_window(PANEL_LABEL) {
+                            let _ = window.start_dragging();
+                        }
+                    }
+                }
+            }
+            false
+        })
         .on_page_load(|window, _payload| {
             let _ = window.show();
             let _ = window.set_focus();
@@ -158,6 +196,37 @@ pub fn open(app: &AppHandle, target: PanelTarget) -> Result<(), String> {
         .build()
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn window_url(target: &PanelTarget) -> Result<Url, String> {
+    let mut url = Url::parse(&panel_url(target)).map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    url.query_pairs_mut().append_pair("desktop", "macos");
+    #[cfg(not(target_os = "macos"))]
+    url.query_pairs_mut().append_pair("desktop", "native");
+    Ok(url)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ShellAction {
+    Locale(crate::i18n::Locale),
+    Drag,
+}
+
+fn shell_action(url: &Url) -> Option<ShellAction> {
+    if url.scheme() != "relay-ui"
+        || url.host_str() != Some("panel")
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    match url.path() {
+        "/locale/en" => Some(ShellAction::Locale(crate::i18n::Locale::En)),
+        "/locale/zh-CN" => Some(ShellAction::Locale(crate::i18n::Locale::ZhCn)),
+        "/drag" => Some(ShellAction::Drag),
+        _ => None,
+    }
 }
 
 /// Hides the panel window.
@@ -191,10 +260,7 @@ pub fn navigation_event_script(target: &PanelTarget) -> String {
         );
     }
     if let Some(run_id) = target.run_id.as_deref() {
-        payload.insert(
-            "run".into(),
-            serde_json::Value::String(run_id.to_string()),
-        );
+        payload.insert("run".into(), serde_json::Value::String(run_id.to_string()));
     }
     // Double-encoded: the JSON is embedded as a string literal, so the payload
     // cannot break out of the script no matter what an id contains.
@@ -219,6 +285,26 @@ mod tests {
             profile_id: None,
             session_id: None,
             run_id: None,
+        }
+    }
+
+    #[test]
+    fn navigation_bridge_accepts_only_known_panel_actions() {
+        assert_eq!(
+            shell_action(&Url::parse("relay-ui://panel/locale/en").unwrap()),
+            Some(ShellAction::Locale(crate::i18n::Locale::En))
+        );
+        assert_eq!(
+            shell_action(&Url::parse("relay-ui://panel/drag").unwrap()),
+            Some(ShellAction::Drag)
+        );
+        for invalid in [
+            "relay-ui://panel/locale/fr",
+            "relay-ui://other/drag",
+            "https://panel/drag",
+            "relay-ui://panel/drag?command=quit",
+        ] {
+            assert_eq!(shell_action(&Url::parse(invalid).unwrap()), None);
         }
     }
 
