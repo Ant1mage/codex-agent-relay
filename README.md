@@ -27,21 +27,20 @@ runtimes already available on your machine.
 
 ## Status
 
-The current release is **v0.1.2**. End-to-end delegation is verified on
+The current release is **v0.1.3**. End-to-end delegation is verified on
 **macOS Apple silicon + Codex**, using **DeepSeek Harness**, **Grok Build**, or
-**Antigravity CLI** — for Antigravity the online-verified scope is echo/read-file
-plus the session `run`/`resume`/`cancel`/`accept` flow (see its scope note below).
+**Antigravity CLI** — Antigravity file writes, allowlisted command execution,
+and the session `run`/`resume`/`cancel`/`accept` flow have passed end-to-end
+checks (see its scope note below).
 Relay itself is written in Rust, with a Tauri menu bar app and a local daemon.
 
-Antigravity CLI support is on the current development branch and is **not part of
-the published v0.1.2 DMG** — downloading v0.1.2 does not yet provide this
-integration.
+Antigravity CLI support and the unified desktop UI are included in **v0.1.3**.
 
 | Agent runtime | CLI | Adapter | Status |
 | --- | --- | --- | --- |
 | DeepSeek Harness | `dsh` | `deepseek-harness` | Supported; end-to-end verified |
 | Kimi Code | `kimi` | `kimi-code` | Experimental; not end-to-end verified |
-| Antigravity CLI | `agy` | `antigravity-cli` | Supported on this development branch (write runs); see the scope note below |
+| Antigravity CLI | `agy` | `antigravity-cli` | Supported; file writes and allowlisted commands verified |
 | Z.ai / GLM | `zai-cli` | `zai-cli` | Experimental; not end-to-end verified |
 | Grok Build | `grok` | `grok-cli` | Supported; end-to-end verified |
 
@@ -79,25 +78,18 @@ stayed on the same native conversation, an invalid model failed instead of
 reporting success, and cancellation reaped the native process.
 
 **Permission and validation scope.** Native headless runs inherit the user's
-existing Antigravity permission settings. Relay does not pass
-`--dangerously-skip-permissions` or any other bypass, and it never auto-approves
-a denied tool. Per the official headless guide's *Permissions in headless mode*,
-permission defaults are inherited from the user's settings; a confirmation that
-headless mode cannot obtain may be soft-denied while the process still exits 0.
-On the host used for this validation, the `request-review` policy denied test
-writes in both a temporary directory and a path under the repository's
-`target/`; shell commands can likewise require an existing allow rule, and the
-real captured `run_command` sample was denied. Denials do **not** trigger an
-automatic re-login or a permission bypass. Because no write or shell coding task
-completed online, this integration does not claim the whole tool lifecycle is
-verified. A denied tool followed by an empty `SUCCESS` result is no longer
-reported as a completed task; that fix is covered by the captured denial samples
-and offline regression tests. Echo and read-file tasks, and the current-session
-`run`/`resume`/`cancel`/`accept` flow, have passed end to end. Read-only and
-propose runs are refused because headless Antigravity cannot enforce a read-only
-workspace, so only write runs are offered. Live message injection is not offered;
-child-agent step updates are mapped when the CLI reports them, but the child-agent
-lifecycle has not been verified end to end. See the
+existing Antigravity permission settings. Relay uses `--mode accept-edits` for
+Write runs, which enables file-edit confirmation without granting shell or
+network permissions. It does not pass `--dangerously-skip-permissions` or
+auto-approve denied tools. File creation through Relay and execution of a command
+already present in the host's exact allowlist both passed end-to-end; an
+unallowlisted `pwd` was denied as expected. A headless permission denial may
+still leave the CLI process with exit code 0, so Relay treats a denied tool plus
+an empty result as failure. Read-only and propose runs are refused because
+headless Antigravity cannot enforce a read-only workspace, so only write runs
+are offered. Live message injection is not offered; child-agent step updates are
+mapped when the CLI reports them, but the child-agent lifecycle has not been
+verified end to end. See the
 [Antigravity validation report](docs/reports/antigravity-cli-2026-09-28.md) for
 the tested scope and remaining limitations.
 

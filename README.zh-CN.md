@@ -26,20 +26,19 @@ Relay 不是 AI IDE，也不创建第二套 Agent loop；它将 Codex 与本机�
 
 ## 项目状态
 
-当前版本为 **v0.1.2**。已在 **Apple 芯片 Mac + Codex** 上验证
+当前版本为 **v0.1.3**。已在 **Apple 芯片 Mac + Codex** 上验证
 **DeepSeek Harness**、**Grok Build** 和 **Antigravity CLI** 的端到端派发；
-其中 Antigravity 的在线验证范围为 echo/read-file 与会话
-`run`/`resume`/`cancel`/`accept` 流程（详见下方范围说明）。
+Antigravity 文件写入、白名单命令执行及会话
+`run`/`resume`/`cancel`/`accept` 流程均已通过验证（详见下方范围说明）。
 Relay 使用 Rust 实现，包含 Tauri 菜单栏应用和本地 daemon。
 
-Antigravity CLI 接入属于当前开发分支，**尚未包含在已发布的 v0.1.2 DMG 中**：
-下载 v0.1.2 还不会获得此接入。
+Antigravity CLI 接入和统一桌面 UI 已包含在 **v0.1.3** 中。
 
 | Agent 运行时 | CLI | Adapter | 状态 |
 | --- | --- | --- | --- |
 | DeepSeek Harness | `dsh` | `deepseek-harness` | 已支持并完成端到端验证 |
 | Kimi Code | `kimi` | `kimi-code` | 实验性，尚未完成端到端验证 |
-| Antigravity CLI | `agy` | `antigravity-cli` | 当前开发分支已支持（仅写入模式）；范围见下方说明 |
+| Antigravity CLI | `agy` | `antigravity-cli` | 已支持；文件写入及白名单命令已验证 |
 | Z.ai / GLM | `zai-cli` | `zai-cli` | 实验性，尚未完成端到端验证 |
 | Grok Build | `grok` | `grok-cli` | 已支持并完成端到端验证 |
 
@@ -68,16 +67,11 @@ UUID。工具步骤会暴露真实文件路径（CLI 发布的 `AbsolutePath` �
 会话，无效模型会失败而非误报成功，取消会回收原生进程。
 
 **权限与验证范围。** 原生 headless 运行继承用户已有的 Antigravity 权限设置。
-Relay 不添加 `--dangerously-skip-permissions` 或任何绕过参数，也绝不自动批准
-被拒绝的工具。按官方 headless 文档 *Permissions in headless mode*：权限默认继承
-用户 settings；headless 无法获取确认时可能 soft-denied，但进程仍可能 exit 0。
-在本轮验证所用主机上，`request-review` 策略拒绝了测试写入——临时目录与仓库
-`target/` 下的路径均被拒；shell 命令同样可能需要既有 allow 规则，实测的真实
-`run_command` 样本即被拒绝。拒绝**不会**触发自动重新登录，也不会自动绕过权限。
-由于没有在线完成任何写入或 shell 编码任务，本接入不声称整个工具生命周期均已
-验证。工具被拒且最终 `SUCCESS` 回复为空时，不再误报为任务完成；该修复由实测
-拒绝样本与离线回归测试覆盖。echo 与 read-file 任务，以及当前会话的
-`run`/`resume`/`cancel`/`accept` 流程已端到端通过。由于 headless Antigravity
+Relay 的 Write 任务使用 `--mode accept-edits`，允许文件编辑确认，但不授予
+shell 或网络权限；不添加 `--dangerously-skip-permissions`，也不会自动批准
+被拒绝的工具。经 Relay 创建文件、执行本机已有精确白名单中的命令均已通过端到端
+验证；未获准的 `pwd` 按预期被拒绝。Headless 权限拒绝后 CLI 仍可能返回 exit 0，
+因此工具失败且最终结果为空时 Relay 会判为失败。由于 headless Antigravity
 无法强制只读工作区，只读与建议模式会被诚实拒绝，仅提供写入模式。不提供运行中
 发送消息；CLI 报告子 Agent 步骤时会映射为 child 事件，但子 Agent 生命周期
 尚未完成端到端验证。实测范围与保留限制见

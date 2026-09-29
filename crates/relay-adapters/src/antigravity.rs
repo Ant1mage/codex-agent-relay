@@ -652,12 +652,19 @@ impl AntigravityAdapter {
             probe_runtime_options(self.capabilities(), &evidence, RUNTIME_ID, ADAPTER_ID);
         *self.options.lock().unwrap() = Some(options.clone());
 
-        // Headless Antigravity auto-allows workspace writes and no verified flag
-        // makes it read-only, so Relay refuses to pretend it can enforce one.
+        // There is no verified Antigravity headless read-only mode, so Relay
+        // refuses to pretend it can enforce one. Authorized Write runs use the
+        // CLI's edit-only `accept-edits` mode below.
         if !input.access_mode.is_write() {
             return Err(RelayError::new(
                 "ADAPTER_FAILURE",
                 "Antigravity headless cannot enforce a read-only workspace; Relay refuses to run this access mode",
+            ));
+        }
+        if !evidence.text.contains("--mode") || !evidence.text.contains("accept-edits") {
+            return Err(RelayError::new(
+                "ADAPTER_FAILURE",
+                "This Antigravity CLI does not advertise `--mode accept-edits`, which Relay needs to honor Write access in headless mode",
             ));
         }
         if input.model.is_some() && options.model_flag.is_none() {
@@ -699,6 +706,14 @@ impl AntigravityAdapter {
             "stream-json".to_string(),
             "--output-format".to_string(),
             "stream-json".to_string(),
+            // Relay's Write access mode means file changes are authorized for
+            // this run. In Antigravity headless mode, the default `request-review`
+            // may require an interactive diff confirmation that headless cannot
+            // present, leaving a denied edit with SUCCESS and no file. The
+            // override approves file-edit confirmations only; shell commands
+            // and non-workspace access remain governed by the user's CLI policy.
+            "--mode".to_string(),
+            "accept-edits".to_string(),
         ];
         if let Some(conversation) = &conversation_id {
             base.push("--conversation".to_string());
@@ -1107,6 +1122,7 @@ printf '{"event":"result","result":{"conversation_id":"%s","status":"SUCCESS","r
         assert!(!args.contains("-p"));
         assert!(args.contains("--input-format\nstream-json"));
         assert!(args.contains("--output-format\nstream-json"));
+        assert!(args.contains("--mode\naccept-edits"));
         assert!(args.contains("--model\ngemini-3.8-flash-high"));
         assert!(args.contains("--effort\nhigh"));
         let stdin = std::fs::read_to_string(directory.path().join("stdin.json")).unwrap();
