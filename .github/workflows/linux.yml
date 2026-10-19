@@ -1,0 +1,73 @@
+name: Linux package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-package-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libwebkit2gtk-4.1-dev libssl-dev librsvg2-dev \
+            libayatana-appindicator3-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            apps/relay-desktop/ui -> target
+      - uses: taiki-e/install-action@trunk
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked --workspace
+      - name: UI tests
+        run: cargo test --locked
+        working-directory: apps/relay-desktop/ui
+      - name: Build the UI
+        run: env -u NO_COLOR trunk build --release --locked
+        working-directory: apps/relay-desktop/ui
+      - name: Build the daemon and MCP server
+        run: cargo build --locked --release -p relayd -p relay-mcp
+      - name: Build the Debian package
+        run: npx --yes @tauri-apps/cli@2 build --bundles deb --ci
+        working-directory: apps/relay-desktop
+      - name: Verify packaged binaries, resources, API and UI
+        run: python3 scripts/smoke-linux-package.py target/release/bundle/deb/*.deb
+      - name: Record checksums
+        working-directory: target/release/bundle/deb
+        run: sha256sum *.deb > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Relay-Linux-amd64
+          path: |
+            target/release/bundle/deb/*.deb
+            target/release/bundle/deb/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
