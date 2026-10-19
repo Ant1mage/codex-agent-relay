@@ -1000,7 +1000,7 @@ case "${1:-} ${2:-} ${3:-}" in
   "mcp add relay")
     printf '%s' "$5" > "$state/mcp"
     mkdir -p "$CODEX_HOME"
-    printf '[mcp_servers.relay]\ncommand = \"%s\"\n' "$5" > "$CODEX_HOME/config.toml" ;;
+    printf '[mcp_servers.relay]\ncommand = "%s"\n' "$5" > "$CODEX_HOME/config.toml" ;;
   *) printf 'unexpected codex invocation: %s\n' "$*" >&2; exit 2 ;;
 esac
 "#,
@@ -1040,7 +1040,11 @@ esac
         }
 
         for result in [&first, &second] {
-            assert!(result.status.configured, "{:?}", result.messages);
+            assert!(
+                result.status.configured,
+                "{:?}: {:?}",
+                result.messages, result.status.checks
+            );
             assert!(result.status.checks.iter().all(|check| check.ok));
         }
         assert!(marketplace.join("plugins/relay/plugin.json").is_file());

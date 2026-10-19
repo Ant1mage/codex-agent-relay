@@ -121,6 +121,29 @@ maps them from `target/release` to `bin/` inside the bundle, which is why
 
 ## Releases and update checks
 
+### Linux validation packages
+
+The `Linux package` workflow builds on Ubuntu 24.04 x86_64 for pull requests,
+pushes to `main`, and manual runs. It checks formatting, Clippy, workspace and UI
+tests, builds the WASM UI and native binaries, then produces a Debian package.
+The package smoke check extracts the archive and verifies the bundled binaries,
+icons, integration assets, daemon HTTP API and UI using temporary state.
+Download the `Relay-Linux-amd64` artifact from the successful workflow run,
+check its `SHA256SUMS`, and install the `.deb` on Ubuntu 24.04:
+
+```bash
+sha256sum -c SHA256SUMS
+sudo apt install ./Relay_*.deb
+relay-desktop
+```
+
+Installation needs the runtime libraries only; Rust, Trunk and the development
+headers are needed on the build runner. External agent CLIs and their login
+remain separate requirements for real delegation. The macOS packaging script
+continues to build macOS bundles only.
+
+### macOS releases
+
 The release workflow ad-hoc signs the macOS app bundle, packages it in a DMG,
 and uploads the DMG to the GitHub Release for its version tag. Ad-hoc signing
 seals the bundle without an Apple certificate; the app is not notarized, so

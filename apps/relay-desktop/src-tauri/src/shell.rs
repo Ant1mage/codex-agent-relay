@@ -707,6 +707,7 @@ pub fn run() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
+            daemon::set_app_resources_dir(handle.path().resource_dir()?);
             #[cfg(target_os = "macos")]
             {
                 let _ = handle.set_activation_policy(tauri::ActivationPolicy::Regular);
@@ -737,6 +738,7 @@ pub fn run() {
                 api.prevent_close();
                 panel::hide(app);
             }
+            #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => {
                 show_panel(app);
             }

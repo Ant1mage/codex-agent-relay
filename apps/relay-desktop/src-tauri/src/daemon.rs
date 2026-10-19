@@ -10,6 +10,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use relay_api::server_info::{is_process_alive, read_server_info, ServerInfo};
@@ -42,6 +43,16 @@ const BROWSERS: [&str; 4] = [
     "Chromium",
     "Brave Browser",
 ];
+
+static APP_RESOURCES_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Tauri resolves the installed resource directory on each supported platform.
+/// A development executable has no bundled daemon and keeps using the checkout.
+pub fn set_app_resources_dir(directory: PathBuf) {
+    if directory.join("bin/relayd").is_file() {
+        let _ = APP_RESOURCES_DIR.set(directory);
+    }
+}
 
 /// What one probe learned. `verified` is the only thing that authorises a signal.
 #[derive(Debug, Clone, PartialEq)]
@@ -162,7 +173,8 @@ pub async fn verify() -> Option<ServerInfo> {
 
 /// True when this process runs from an installed `.app` bundle.
 pub fn is_packaged() -> bool {
-    is_packaged_exe(&std::env::current_exe().unwrap_or_default())
+    APP_RESOURCES_DIR.get().is_some()
+        || is_packaged_exe(&std::env::current_exe().unwrap_or_default())
 }
 
 pub fn is_packaged_exe(exe: &Path) -> bool {
@@ -178,6 +190,9 @@ pub fn resources_dir() -> PathBuf {
         if !explicit.is_empty() {
             return PathBuf::from(explicit);
         }
+    }
+    if let Some(directory) = APP_RESOURCES_DIR.get() {
+        return directory.clone();
     }
     if is_packaged() {
         if let Ok(exe) = std::env::current_exe() {
@@ -242,7 +257,7 @@ pub fn daemon_command_with(
 
 fn daemon_command() -> Option<DaemonCommand> {
     let exe = std::env::current_exe().unwrap_or_default();
-    let packaged = is_packaged_exe(&exe);
+    let packaged = is_packaged();
     let override_command = std::env::var(DAEMON_COMMAND_ENV).ok();
     daemon_command_with(
         &exe,
@@ -367,6 +382,7 @@ pub fn browser_name() -> String {
 /// Returns false when `open` could not be spawned at all, so the caller can fall
 /// back to the opener plugin. `open` cannot fail in a way that should take the
 /// tray down.
+#[cfg(target_os = "macos")]
 pub fn open_in_browser(url: &str) -> bool {
     let mut command = Command::new("open");
     if let Some(browser) = installed_browser() {
@@ -389,6 +405,12 @@ pub fn open_in_browser(url: &str) -> bool {
             false
         }
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn open_in_browser(_url: &str) -> bool {
+    // The shell uses the opener plugin to launch the system's default browser.
+    false
 }
 
 /// One asset from the repository (development) or the bundle (packaged).
@@ -496,6 +518,30 @@ mod tests {
                 .unwrap()
                 .program,
             macos.join("relayd")
+        );
+    }
+
+    #[test]
+    fn linux_packages_resolve_the_daemon_and_forward_the_resource_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let resources = directory.path().join("usr/lib/Relay");
+        std::fs::create_dir_all(resources.join("bin")).unwrap();
+        std::fs::write(resources.join("bin/relayd"), b"#!/bin/sh\n").unwrap();
+
+        let command = daemon_command_with(
+            &directory.path().join("usr/bin/relay-desktop"),
+            true,
+            None,
+            &resources,
+        )
+        .unwrap();
+        assert_eq!(command.program, resources.join("bin/relayd"));
+        assert_eq!(
+            command.env,
+            vec![(
+                RESOURCES_DIR_ENV.to_string(),
+                resources.to_string_lossy().to_string()
+            )]
         );
     }
 
